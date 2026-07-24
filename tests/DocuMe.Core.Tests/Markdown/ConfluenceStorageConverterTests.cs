@@ -106,6 +106,87 @@ public sealed class ConfluenceStorageConverterTests
         storage.ShouldNotContain("[CDATA[a]]>b");
     }
 
+    [Theory]
+
+    // Enabling the pipe-table extension makes '|' significant during inline
+    // parsing, so a paragraph that merely contains pipes must still round-trip as
+    // text: Markdig turns the unused delimiters back into literals, and if one
+    // ever leaked through it would hit the fail-loud catch-all and fail the page.
+    [InlineData("Run `ls | wc -l` to count.", "Run <code>ls | wc -l</code> to count.")]
+    [InlineData("Either a | b applies.", "Either a | b applies.")]
+
+    // No header separator (`|---|`), so this is not a table — RequireHeaderSeparator
+    // defaults to true, keeping GFM semantics.
+    [InlineData("| a | b |", "| a | b |")]
+    public void Convert_keeps_pipes_in_a_non_table_paragraph_as_text(string markdown, string expectedInner)
+    {
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe($"<p>{expectedInner}</p>\n");
+    }
+
+    [Fact]
+    public void Convert_renders_a_table_nested_in_a_tight_list_item_without_leaking_the_implicit_paragraph()
+    {
+        // A tight list sets ImplicitParagraph for its items; the table's cells must
+        // restore it per cell so the shape is identical to a top-level table. This
+        // is the nesting class of bug that bit the blockquote renderer in M1 slice 2.
+        var storage = ConfluenceStorageConverter.Convert("- Codes:\n\n  | A | B |\n  |---|---|\n  | 1 | 2 |\n");
+
+        storage.ShouldContain("<tr>\n<th>A</th>\n<th>B</th>\n</tr>");
+        storage.ShouldContain("<tr>\n<td>1</td>\n<td>2</td>\n</tr>");
+        storage.ShouldNotContain("<th><p>");
+        storage.ShouldNotContain("<td><p>");
+    }
+
+    [Fact]
+    public void Convert_leaves_a_pipe_inside_a_fenced_code_block_alone()
+    {
+        // Shell pipelines in code samples are everywhere in this wiki; block-level
+        // parsing claims the fence before the table parser sees the '|', but pin it
+        // so enabling a future inline extension cannot quietly turn code into a table.
+        var storage = ConfluenceStorageConverter.Convert("```sh\nls | wc -l\n```\n");
+
+        storage.ShouldContain("<![CDATA[ls | wc -l]]>");
+        storage.ShouldNotContain("<table>");
+    }
+
+    [Fact]
+    public void Convert_renders_a_header_only_table()
+    {
+        // A header row with no body rows is still a valid table; it must not emit an
+        // empty <tbody> pair or trip the fail-loud catch-all.
+        var storage = ConfluenceStorageConverter.Convert("| A | B |\n|---|---|\n");
+
+        storage.ShouldBe("<table>\n<tbody>\n<tr>\n<th>A</th>\n<th>B</th>\n</tr>\n</tbody>\n</table>\n");
+    }
+
+    [Fact]
+    public void Convert_lets_a_table_interrupt_a_paragraph()
+    {
+        // KNOWN DIVERGENCE from GitHub: GFM requires a table's header to start its
+        // own block, so GitHub renders this as one paragraph of literal pipes, while
+        // Markdig splits the paragraph and builds the table. Markdig's reading is
+        // what the author meant, so it is kept rather than worked around — but it is
+        // pinned here so the difference is asserted instead of discovered on a page.
+        var storage = ConfluenceStorageConverter.Convert("Some text\n| a | b |\n|---|---|\n| 1 | 2 |\n");
+
+        storage.ShouldBe(
+            "<p>Some text </p>\n<table>\n<tbody>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n"
+            + "<tr>\n<td>1</td>\n<td>2</td>\n</tr>\n</tbody>\n</table>\n");
+    }
+
+    [Fact]
+    public void Convert_drops_column_alignment_rather_than_emitting_a_style_attribute()
+    {
+        // §7 accepted loss: storage format has no per-column alignment. Markdig's
+        // own HTML renderer would emit style="text-align: …"; ours must not, since
+        // Confluence would not honor it anyway.
+        var storage = ConfluenceStorageConverter.Convert("| A | B |\n|:-:|--:|\n| 1 | 2 |\n");
+
+        storage.ShouldNotContain("text-align");
+        storage.ShouldNotContain("style=");
+        storage.ShouldNotContain("<col");
+    }
+
     [Fact]
     public void Convert_empty_input_produces_empty_output()
     {

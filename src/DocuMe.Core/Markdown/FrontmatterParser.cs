@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using Markdig;
+using Markdig.Extensions.Tables;
 using Markdig.Extensions.Yaml;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
@@ -17,8 +18,12 @@ namespace DocuMe.Core.Markdown;
 /// </summary>
 public static class FrontmatterParser
 {
+    // Kept in lockstep with ConfluenceStorageConverter.Pipeline (see the note
+    // there): enabling an extension changes inline parsing, so the two pipelines
+    // must agree or the title's H1 could be found here and not there.
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseYamlFrontMatter()
+        .UsePipeTables(new PipeTableOptions { UseHeaderForColumnCount = true })
         .Build();
 
     private static readonly IDeserializer Yaml = new DeserializerBuilder()

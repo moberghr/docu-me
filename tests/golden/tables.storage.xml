@@ -1,0 +1,26 @@
+<h2>Endpoints</h2>
+<table>
+<tbody>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Notes</th>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/loans/{id}</code></td>
+<td>Returns a <strong>single</strong> loan</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/loans</code></td>
+<td>See <a href="https://example.com/api?a=1&amp;b=2">the API docs</a></td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/loans/{id}</code></td>
+<td>Escaped pipe a | b, ampersand a &amp; b</td>
+</tr>
+</tbody>
+</table>
+<p>Column alignment (<code>:----:</code>) and the header dash counts are an accepted loss: the table above renders plain.</p>

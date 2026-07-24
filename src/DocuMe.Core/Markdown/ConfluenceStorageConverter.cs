@@ -1,4 +1,5 @@
 using Markdig;
+using Markdig.Extensions.Tables;
 
 namespace DocuMe.Core.Markdown;
 
@@ -13,8 +14,19 @@ public static class ConfluenceStorageConverter
     // UseYamlFrontMatter keeps a stray leading '---' block parsed as frontmatter
     // (and dropped — no renderer is registered for it) rather than as markup,
     // even though callers normally pass an already-stripped body.
+    //
+    // UseHeaderForColumnCount gives GFM's ragged-row semantics — short rows are
+    // padded with empty cells and cells past the header width are dropped, which
+    // is what GitHub shows the author. Markdig's default instead widens *every*
+    // row to the widest one, so an over-wide body row would grow the header with
+    // a blank <th> that exists in neither the source nor GitHub's rendering.
+    //
+    // FrontmatterParser.Pipeline must enable the same extensions: an extension
+    // changes inline parsing, so a divergence would let the two disagree about
+    // where the title's H1 is.
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseYamlFrontMatter()
+        .UsePipeTables(new PipeTableOptions { UseHeaderForColumnCount = true })
         .Build();
 
     /// <summary>Renders <paramref name="markdown"/> to a storage-format XHTML fragment.</summary>

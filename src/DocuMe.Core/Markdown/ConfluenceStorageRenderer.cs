@@ -1,4 +1,5 @@
 using System.Text;
+using Markdig.Extensions.Tables;
 using Markdig.Renderers;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
@@ -14,9 +15,9 @@ namespace DocuMe.Core.Markdown;
 /// Covered so far: headings (H1 dropped — it is the page title, §7); paragraphs
 /// with inline text (literal, emphasis, inline code, line breaks); bullet/ordered/
 /// nested lists; blockquotes; fenced code blocks (code macro); thematic breaks;
-/// links (external, relative .md page links, autolinks). The rest of the construct
-/// table (tables, GitHub-alert panels, mermaid, task lists, images) arrives in
-/// later M1 slices. Until a construct has a
+/// links (external, relative .md page links, autolinks); GFM tables. The rest of
+/// the construct table (GitHub-alert panels, mermaid, task lists, strikethrough,
+/// images, <c>[TOC]</c>) arrives in later M1 slices. Until a construct has a
 /// dedicated renderer, <see cref="UnknownConstructRenderer"/> makes the converter
 /// <em>fail loudly</em> rather than silently drop or mis-transform it (PLAN.md §7
 /// acceptance: zero unknown-construct warnings). Output uses <c>\n</c> separators
@@ -35,6 +36,7 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
         ObjectRenderers.Add(new QuoteBlockRenderer());
         ObjectRenderers.Add(new FencedCodeBlockRenderer());
         ObjectRenderers.Add(new ThematicBreakRenderer());
+        ObjectRenderers.Add(new TableRenderer());
         ObjectRenderers.Add(new LinkReferenceDefinitionGroupRenderer());
         ObjectRenderers.Add(new EmphasisRenderer());
         ObjectRenderers.Add(new CodeInlineRenderer());
@@ -326,6 +328,74 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
         }
 
         return code.ToString();
+    }
+}
+
+/// <summary>
+/// GFM pipe tables map to a native storage-format table (§7). Confluence's own
+/// shape carries the header row <em>inside</em> <c>&lt;tbody&gt;</c> as
+/// <c>&lt;th&gt;</c> cells rather than in a <c>&lt;thead&gt;</c>
+/// (confmark <c>docs/MAPPING.md</c>), so no <c>&lt;thead&gt;</c> is emitted.
+/// <para>
+/// Two properties of <c>Table.ColumnDefinitions</c> are deliberately dropped, both
+/// accepted losses. <em>Alignment</em> (<c>|:---:|</c>) has no storage-format
+/// representation (§7, confmark's "known lossy points"). <em>Width</em> is Markdig's
+/// raw header dash count, which is source formatting rather than layout intent — a
+/// hand-aligned <c>|------|--|</c> would otherwise emit a lopsided column grid the
+/// author never asked for.
+/// </para>
+/// </summary>
+internal sealed class TableRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, Table>
+{
+    protected override void Write(ConfluenceStorageRenderer renderer, Table obj)
+    {
+        renderer.Write("<table>").Write('\n');
+        renderer.Write("<tbody>").Write('\n');
+
+        foreach (var rowObj in obj)
+        {
+            var row = (TableRow)rowObj;
+            var cellTag = row.IsHeader ? "th" : "td";
+
+            renderer.Write("<tr>").Write('\n');
+            foreach (var cellObj in row)
+            {
+                WriteCell(renderer, (TableCell)cellObj, cellTag);
+            }
+
+            renderer.Write("</tr>").Write('\n');
+        }
+
+        renderer.Write("</tbody>").Write('\n');
+        renderer.Write("</table>").Write('\n');
+    }
+
+    private static void WriteCell(ConfluenceStorageRenderer renderer, TableCell cell, string tag)
+    {
+        // Unreachable for pipe tables (a GFM cell is always 1x1) — it guards the
+        // day someone enables .UseGridTables(), where a dropped span would quietly
+        // reshape the grid instead of failing.
+        if (cell.ColumnSpan != 1 || cell.RowSpan != 1)
+        {
+            throw new NotSupportedException(
+                $"Table cell spans {cell.ColumnSpan} column(s) and {cell.RowSpan} row(s); " +
+                "merged cells are not supported by the M1 converter (GFM pipe tables cannot " +
+                "express them).");
+        }
+
+        renderer.Write('<').Write(tag).Write('>');
+
+        // A GFM cell holds inline content, which Markdig models as one paragraph;
+        // drop its <p> wrapper so the cell reads <td>text</td>. Mirrors Markdig's
+        // own HtmlTableRenderer, which only implies the paragraph for a single
+        // block so a multi-block cell still gets real <p> elements.
+        var previousImplicit = renderer.ImplicitParagraph;
+        renderer.ImplicitParagraph = cell.Count == 1;
+
+        renderer.WriteChildren(cell);
+
+        renderer.ImplicitParagraph = previousImplicit;
+        renderer.Write("</").Write(tag).Write('>').Write('\n');
     }
 }
 

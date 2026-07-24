@@ -1,0 +1,36 @@
+<h2>Rows narrower and wider than the header</h2>
+<table>
+<tbody>
+<tr>
+<th>A</th>
+<th>B</th>
+<th>C</th>
+</tr>
+<tr>
+<td>short row</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>1</td>
+<td>2</td>
+<td>3</td>
+</tr>
+<tr>
+<td>1</td>
+<td></td>
+<td>3</td>
+</tr>
+</tbody>
+</table>
+<h2>Single-column table</h2>
+<table>
+<tbody>
+<tr>
+<th>Term</th>
+</tr>
+<tr>
+<td>Loan</td>
+</tr>
+</tbody>
+</table>
