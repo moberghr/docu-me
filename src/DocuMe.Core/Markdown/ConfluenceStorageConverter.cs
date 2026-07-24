@@ -57,16 +57,23 @@ public static class ConfluenceStorageConverter
     /// a resolver the converter fails loud rather than emitting a dangling
     /// <c>ri:filename</c>. External image URLs need no resolver.
     /// </param>
+    /// <param name="mermaidResolver">
+    /// Resolves a <c>```mermaid</c> fence body to the attachment filename its rendered
+    /// diagram will be uploaded under (§7). May be <c>null</c> when the body has no mermaid
+    /// fences; if one is encountered without a resolver the converter fails loud rather than
+    /// publishing the diagram source as a code block.
+    /// </param>
     public static string Convert(
         string markdown,
         PageLinkResolver? linkResolver = null,
-        AttachmentResolver? attachmentResolver = null)
+        AttachmentResolver? attachmentResolver = null,
+        MermaidDiagramResolver? mermaidResolver = null)
     {
         ArgumentNullException.ThrowIfNull(markdown);
 
         var document = Markdig.Markdown.Parse(markdown, Pipeline);
         using var writer = new StringWriter();
-        var renderer = new ConfluenceStorageRenderer(writer, linkResolver, attachmentResolver);
+        var renderer = new ConfluenceStorageRenderer(writer, linkResolver, attachmentResolver, mermaidResolver);
         renderer.Render(document);
         writer.Flush();
         return writer.ToString();

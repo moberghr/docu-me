@@ -20,9 +20,9 @@ namespace DocuMe.Core.Markdown;
 /// breaks); bullet/ordered/nested lists and task lists; blockquotes and
 /// GitHub-alert panel macros; fenced code blocks (code macro); thematic breaks;
 /// links (external, relative .md page links, autolinks); GFM tables; a root-level
-/// <c>[TOC]</c> line (table-of-contents macro); images (attachment or external URL).
-/// The rest of
-/// the construct table (mermaid) arrives in a later M1 slice. Until a construct has a
+/// <c>[TOC]</c> line (table-of-contents macro); images (attachment or external URL);
+/// <c>```mermaid</c> fences (rendered-diagram attachment).
+/// That completes the §7 construct table. Until a construct has a
 /// dedicated renderer, <see cref="UnknownConstructRenderer"/> makes the converter
 /// <em>fail loudly</em> rather than silently drop or mis-transform it (PLAN.md §7
 /// acceptance: zero unknown-construct warnings). Output uses <c>\n</c> separators
@@ -35,11 +35,13 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
     public ConfluenceStorageRenderer(
         TextWriter writer,
         PageLinkResolver? linkResolver = null,
-        AttachmentResolver? attachmentResolver = null)
+        AttachmentResolver? attachmentResolver = null,
+        MermaidDiagramResolver? mermaidResolver = null)
         : base(writer)
     {
         LinkResolver = linkResolver;
         AttachmentResolver = attachmentResolver;
+        MermaidResolver = mermaidResolver;
 
         ObjectRenderers.Add(new HeadingRenderer());
         ObjectRenderers.Add(new ParagraphRenderer());
@@ -76,6 +78,15 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
     /// resolver.
     /// </summary>
     public AttachmentResolver? AttachmentResolver { get; }
+
+    /// <summary>
+    /// Resolves a <c>```mermaid</c> fence body to the attachment filename its rendered
+    /// diagram will be uploaded under (§7); may be <c>null</c>.
+    /// <see cref="FencedCodeBlockRenderer"/> fails loud on a mermaid fence when this is
+    /// <c>null</c> or the diagram does not render, rather than publishing the diagram
+    /// source as a code block.
+    /// </summary>
+    public MermaidDiagramResolver? MermaidResolver { get; }
 
     /// <summary>
     /// When set, paragraphs render their inline content without a <c>&lt;p&gt;</c>
@@ -554,6 +565,10 @@ internal sealed class QuoteBlockRenderer : MarkdownObjectRenderer<ConfluenceStor
 /// </summary>
 /// <remarks>
 /// <para>
+/// A <c>```mermaid</c> fence is not code at all: it becomes the rendered-diagram
+/// attachment of §7 rather than a code macro — see <see cref="TryWriteDiagram"/>.
+/// </para>
+/// <para>
 /// The first token is the language, normalized to a Confluence brush via
 /// <see cref="LanguageMap"/>. An unknown or absent language omits the
 /// <c>language</c> parameter and never throws — losing syntax highlighting is
@@ -615,9 +630,26 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
         ["txt"] = "text", ["text"] = "text", ["plaintext"] = "text",
     };
 
+    /// <summary>
+    /// Diagram-as-code fence languages that render to a picture on GitHub or GitLab but that
+    /// DocuMe has no render path for. See <see cref="RejectUnrenderedDiagramDialect"/> for why
+    /// these fail loud while an unknown <em>programming</em> language does not.
+    /// </summary>
+    private static readonly HashSet<string> DiagramDialects = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "plantuml", "puml", "graphviz", "dot", "d2",
+    };
+
     protected override void Write(ConfluenceStorageRenderer renderer, FencedCodeBlock obj)
     {
-        var attributes = ParseInfoLine(obj);
+        var infoLine = ReadInfoLine(obj);
+
+        if (TryWriteDiagram(renderer, obj, infoLine))
+        {
+            return;
+        }
+
+        var attributes = ParseInfoLine(infoLine);
 
         renderer.Write("<ac:structured-macro ac:name=\"code\">");
 
@@ -662,20 +694,144 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
     }
 
     /// <summary>
+    /// Renders a <c>```mermaid</c> fence as the diagram attachment of PLAN.md §7 and
+    /// returns <c>true</c>; returns <c>false</c> for a fence that really is code, which the
+    /// caller then renders as a code macro.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The shape is the standalone-image shape the rest of the converter already produces
+    /// for <c>![alt](file.svg)</c> alone on a line — <c>&lt;p&gt;</c> wrapping an
+    /// <c>&lt;ac:image&gt;</c> wrapping an <c>&lt;ri:attachment&gt;</c> — because a mermaid
+    /// fence <em>is</em> a standalone diagram and two spellings of the same thing would be
+    /// gratuitous. §7 line 281 additionally shows an <c>ac:width</c>, which is
+    /// <strong>omitted</strong>: measuring the rendered SVG means opening it, and this
+    /// converter never touches the filesystem. Confluence scales an attached SVG natively,
+    /// so an omitted width beats a fabricated one.
+    /// </para>
+    /// <para>
+    /// No <c>ac:alt</c> or <c>ac:title</c> either: a fence carries no alt text, and
+    /// synthesizing one ("Mermaid diagram") would put words the author never wrote into the
+    /// body and therefore into the approval hash (§8), the same reason the images slice
+    /// refused to fabricate attributes.
+    /// </para>
+    /// <para>
+    /// Everything here fails loud rather than falling back to a code macro. Publishing the
+    /// diagram <em>source</em> where a picture belongs is precisely the silent wrongness §7's
+    /// fail-loud contract exists to prevent — and it is what this renderer did before this
+    /// slice, because <see cref="MapLanguage"/> returns <c>null</c> for any language outside
+    /// <see cref="LanguageMap"/> and a null language merely omits the parameter.
+    /// </para>
+    /// </remarks>
+    private static bool TryWriteDiagram(ConfluenceStorageRenderer renderer, FencedCodeBlock obj, string infoLine)
+    {
+        var language = FirstToken(infoLine, out var rest);
+
+        if (!string.Equals(language, "mermaid", StringComparison.OrdinalIgnoreCase))
+        {
+            RejectUnrenderedDiagramDialect(language);
+            return false;
+        }
+
+        if (rest.Length > 0)
+        {
+            // The code macro's attributes (collapse, title, …) have no counterpart on an
+            // <ac:image>, so accepting them here would silently drop what the author asked
+            // for. Kept symmetric with the unknown-attribute rejection below.
+            throw new NotSupportedException(
+                $"Mermaid fence carries '{rest}' on its info line. A mermaid fence renders to a "
+                + "diagram attachment, which has no code-macro parameters (collapse, linenumbers, "
+                + "title, firstline) to apply. Write ```mermaid on its own.");
+        }
+
+        var source = ExtractCode(obj);
+        if (source.AsSpan().Trim().IsEmpty)
+        {
+            throw new NotSupportedException(
+                "Mermaid fence is empty, so there is no diagram to render. Remove the fence or "
+                + "add diagram source.");
+        }
+
+        var resolver = renderer.MermaidResolver
+            ?? throw new InvalidOperationException(
+                "A ```mermaid fence requires a mermaid diagram resolver, but none was supplied "
+                + "to ConfluenceStorageConverter.Convert. Without one the diagram source would "
+                + "publish as a code block instead of a picture.");
+        var filename = resolver(source)
+            ?? throw new InvalidOperationException(
+                "A ```mermaid fence did not render to a diagram attachment (the renderer "
+                + "reported failure). Fix the diagram source, or check that Node and "
+                + "render-mermaid.mjs are available (PLAN.md §4).");
+
+        renderer.Write("<p><ac:image><ri:attachment ri:filename=\"")
+            .WriteAttributeEscaped(filename)
+            .Write("\"/></ac:image></p>")
+            .Write('\n');
+
+        return true;
+    }
+
+    /// <summary>
+    /// Fails loud on the diagram-as-code dialects DocuMe does <em>not</em> render.
+    /// </summary>
+    /// <remarks>
+    /// Deliberate asymmetry against an unknown <em>language</em>, which keeps degrading to an
+    /// unlabelled code macro. An unknown language costs syntax highlighting and preserves
+    /// every character the author wrote — cosmetic, and failing a whole page over it would
+    /// wreck the §4.4 acceptance run for no reader-visible gain. These tokens are different
+    /// in kind: GitHub and GitLab render them as pictures, so the author wrote them expecting
+    /// a diagram, and degrading them to source text loses the meaning rather than the
+    /// styling. Mermaid is the one dialect DocuMe has a render path for (§4), so the rest
+    /// have to say so out loud.
+    /// </remarks>
+    private static void RejectUnrenderedDiagramDialect(string language)
+    {
+        if (!DiagramDialects.Contains(language))
+        {
+            return;
+        }
+
+        throw new NotSupportedException(
+            $"Fence language '{language}' is a diagram dialect DocuMe cannot render — it would "
+            + "publish as source text where a picture belongs. Only ```mermaid diagrams are "
+            + "rendered (PLAN.md §4). Convert the diagram to mermaid, or attach it as an image.");
+    }
+
+    /// <summary>
+    /// Rejoins Markdig's split info line. Its default parser splits at the first whitespace
+    /// (<c>Info</c> holds the first token, <c>Arguments</c> the trimmed remainder), so
+    /// rejoining lets the attribute syntax stay independent of where Markdig chose to split.
+    /// </summary>
+    private static string ReadInfoLine(FencedCodeBlock obj) =>
+        string.IsNullOrEmpty(obj.Arguments)
+            ? obj.Info ?? string.Empty
+            : obj.Info + " " + obj.Arguments;
+
+    /// <summary>
+    /// Splits the info line into its first whitespace-delimited token and the trimmed
+    /// remainder. Both are empty for a bare <c>```</c> fence.
+    /// </summary>
+    private static string FirstToken(string infoLine, out string rest)
+    {
+        var span = infoLine.AsSpan().TrimStart();
+        var end = span.IndexOfAny(' ', '\t');
+        if (end < 0)
+        {
+            rest = string.Empty;
+            return span.ToString();
+        }
+
+        rest = span[end..].Trim().ToString();
+        return span[..end].ToString();
+    }
+
+    /// <summary>
     /// Parses the fence info line into the code macro's parameters, throwing
     /// <see cref="NotSupportedException"/> on an attribute this converter does not
     /// understand rather than dropping it.
     /// </summary>
-    private static CodeFenceAttributes ParseInfoLine(FencedCodeBlock obj)
+    private static CodeFenceAttributes ParseInfoLine(string line)
     {
-        // Markdig's default info parser splits the line at the first whitespace:
-        // Info holds the first token, Arguments the trimmed remainder. Rejoin them
-        // and scan the whole line so the attribute syntax does not depend on where
-        // Markdig chose to split.
-        var line = string.IsNullOrEmpty(obj.Arguments)
-            ? obj.Info ?? string.Empty
-            : obj.Info + " " + obj.Arguments;
-
         string? language = null;
         string? title = null;
         int? firstLine = null;

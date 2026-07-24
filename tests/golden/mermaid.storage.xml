@@ -1,0 +1,16 @@
+<h2>Diagrams</h2>
+<p>A mermaid fence becomes a rendered diagram, not a code block:</p>
+<p><ac:image><ri:attachment ri:filename="mermaid-graph-td.svg"/></ac:image></p>
+<p>The language token is matched case-insensitively, like every other fence keyword:</p>
+<p><ac:image><ri:attachment ri:filename="mermaid-sequence.svg"/></ac:image></p>
+<p>A tilde fence works the same way:</p>
+<p><ac:image><ri:attachment ri:filename="mermaid-pie.svg"/></ac:image></p>
+<ul>
+<li><p>A diagram inside a list item:</p>
+<p><ac:image><ri:attachment ri:filename="mermaid-flowchart.svg"/></ac:image></p>
+</li>
+</ul>
+<p>A real code fence is still a code macro:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">csharp</ac:parameter><ac:plain-text-body><![CDATA[var x = 1;]]></ac:plain-text-body></ac:structured-macro>
+<p>An unknown language keeps degrading to an unlabelled code macro. The loss is only syntax highlighting; every character the author wrote survives:</p>
+<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[let x = 1;]]></ac:plain-text-body></ac:structured-macro>

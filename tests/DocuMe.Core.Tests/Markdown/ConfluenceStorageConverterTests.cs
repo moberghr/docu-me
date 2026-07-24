@@ -102,6 +102,79 @@ public sealed class ConfluenceStorageConverterTests
     }
 
     [Fact]
+    public void Convert_throws_on_a_mermaid_fence_without_a_diagram_resolver()
+    {
+        // Before this slice a mermaid fence silently published as a code block —
+        // the diagram source where a picture belongs. Nothing may fall back to that.
+        var ex = Should.Throw<InvalidOperationException>(
+            () => ConfluenceStorageConverter.Convert("```mermaid\ngraph TD;\nA-->B;\n```"));
+        ex.Message.ShouldContain("requires a mermaid diagram resolver");
+    }
+
+    [Fact]
+    public void Convert_throws_when_a_mermaid_diagram_does_not_render()
+    {
+        // A null return means the renderer failed, either on bad diagram source or
+        // because Node is missing. Publishing the source text instead would hide that.
+        var ex = Should.Throw<InvalidOperationException>(
+            () => ConfluenceStorageConverter.Convert(
+                "```mermaid\nnot a diagram\n```",
+                mermaidResolver: _ => null));
+        ex.Message.ShouldContain("did not render to a diagram attachment");
+    }
+
+    [Fact]
+    public void Convert_throws_on_a_mermaid_fence_carrying_code_macro_attributes()
+    {
+        // collapse/title/linenumbers have no counterpart on an <ac:image>, so
+        // accepting them would drop what the author asked for.
+        var ex = Should.Throw<NotSupportedException>(
+            () => ConfluenceStorageConverter.Convert(
+                "```mermaid collapse\ngraph TD;\nA-->B;\n```",
+                mermaidResolver: _ => "d.svg"));
+        ex.Message.ShouldContain("no code-macro parameters");
+    }
+
+    [Fact]
+    public void Convert_throws_on_an_empty_mermaid_fence()
+    {
+        // Nothing to render, so there is no attachment the publisher could upload.
+        var ex = Should.Throw<NotSupportedException>(
+            () => ConfluenceStorageConverter.Convert(
+                "```mermaid\n\n```",
+                mermaidResolver: _ => "d.svg"));
+        ex.Message.ShouldContain("Mermaid fence is empty");
+    }
+
+    [Theory]
+    [InlineData("plantuml")]
+    [InlineData("puml")]
+    [InlineData("graphviz")]
+    [InlineData("dot")]
+    [InlineData("d2")]
+    public void Convert_throws_on_a_diagram_dialect_it_cannot_render(string language)
+    {
+        // GitHub/GitLab render these as pictures, so degrading them to source text
+        // loses the meaning, not just the styling. Mermaid is the only dialect
+        // DocuMe has a render path for (PLAN.md §4).
+        var ex = Should.Throw<NotSupportedException>(
+            () => ConfluenceStorageConverter.Convert($"```{language}\na -> b\n```"));
+        ex.Message.ShouldContain("diagram dialect DocuMe cannot render");
+    }
+
+    [Fact]
+    public void Convert_degrades_an_unknown_programming_language_to_an_unlabelled_code_macro()
+    {
+        // The deliberate asymmetry against the diagram dialects above: an unmapped
+        // language costs syntax highlighting and preserves every character, so
+        // failing the page over it would buy nothing. Pinned so the decision cannot
+        // drift by accident (it is what MapLanguage's null return means).
+        ConfluenceStorageConverter.Convert("```rust\nlet x = 1;\n```").ShouldBe(
+            "<ac:structured-macro ac:name=\"code\"><ac:plain-text-body><![CDATA[let x = 1;]]>"
+            + "</ac:plain-text-body></ac:structured-macro>\n");
+    }
+
+    [Fact]
     public void Convert_throws_on_relative_non_md_link()
     {
         // §7 maps relative .md links and external URLs only; a link to a source

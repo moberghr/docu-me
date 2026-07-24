@@ -30,7 +30,11 @@ public sealed class GoldenFileTests
         var expected = File.ReadAllText(Path.Combine(GoldenDir, caseName + ".storage.xml"));
 
         var parsed = FrontmatterParser.Parse(markdown);
-        var actual = ConfluenceStorageConverter.Convert(parsed.Body, ResolveGoldenLink, ResolveGoldenAttachment);
+        var actual = ConfluenceStorageConverter.Convert(
+            parsed.Body,
+            ResolveGoldenLink,
+            ResolveGoldenAttachment,
+            ResolveGoldenDiagram);
 
         Normalize(actual).ShouldBe(Normalize(expected));
     }
@@ -67,6 +71,24 @@ public sealed class GoldenFileTests
         "images/cell.png" => "cell.png",
         "images/item.png" => "item.png",
         "images/ref.png" => "ref.png",
+        _ => null,
+    };
+
+    /// <summary>
+    /// Fixed source→attachment-filename map for the <c>mermaid</c> golden case. Keying on the
+    /// diagram source verbatim is the point: it pins exactly what the converter extracts from
+    /// a fence, including the tilde-fence and list-item forms where the indentation could
+    /// plausibly differ. The real resolver renders via Node (PLAN.md §4) and names the file
+    /// from a hash of this same source; readable names here keep the golden reviewable by
+    /// hand (§4.3).
+    /// </summary>
+    private static string? ResolveGoldenDiagram(string mermaidSource) => mermaidSource switch
+    {
+        "graph TD;\nA[Loan request] --> B{Approved?};\nB -- yes --> C[Disburse];" =>
+            "mermaid-graph-td.svg",
+        "sequenceDiagram\n  Alice->>Bob: Hello & welcome" => "mermaid-sequence.svg",
+        "pie title Pets\n  \"Dogs\" : 386" => "mermaid-pie.svg",
+        "flowchart LR\n  a --> b" => "mermaid-flowchart.svg",
         _ => null,
     };
 
