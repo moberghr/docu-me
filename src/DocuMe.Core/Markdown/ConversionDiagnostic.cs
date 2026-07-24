@@ -57,4 +57,34 @@ public static class ConversionDiagnosticCodes
     /// count that decides S2's recorded fallback ("rewrite anchor links to plain page links").
     /// </summary>
     public const string SamePageAnchorLink = "same-page-anchor-link";
+
+    /// <summary>
+    /// A table column asking for centered or right alignment (<c>|:---:|</c>), which storage
+    /// format cannot express, so the column publishes left-aligned. Reported once per column, not
+    /// once per table: each column is a visibly different layout than the author's. An
+    /// <em>explicitly left</em> column (<c>|:---|</c>) is not reported — it publishes exactly as
+    /// GitHub renders it, so nothing is lost.
+    /// </summary>
+    public const string TableAlignmentDropped = "table-alignment-dropped";
+
+    /// <summary>
+    /// An ordered list starting anywhere but 1 (<c>3. item</c>), which publishes numbered from 1
+    /// because the emitted <c>&lt;ol&gt;</c> carries no start offset. Every item's text survives;
+    /// the numbers a reader sees are different ones.
+    /// </summary>
+    public const string OrderedListStartDropped = "ordered-list-start-dropped";
+
+    /// <summary>
+    /// A GitHub alert whose panel macro is also another alert type's panel, so the type cannot be
+    /// recovered from the published page — <c>[!IMPORTANT]</c>, which shares <c>info</c> with
+    /// <c>[!NOTE]</c> (§7's mapping). The body is untouched; the author's emphasis is what is lost.
+    /// </summary>
+    public const string AlertTypeCollapsed = "alert-type-collapsed";
+
+    /// <summary>
+    /// An ordered list whose every item opens with a task marker (<c>1. [x] done</c>). It
+    /// publishes as a native <c>&lt;ac:task-list&gt;</c>, which has no numbered variant, so the
+    /// numbering — offset included — is dropped while completion state is kept.
+    /// </summary>
+    public const string TaskListNumberingDropped = "task-list-numbering-dropped";
 }

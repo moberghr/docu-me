@@ -29,8 +29,9 @@ namespace DocuMe.Core.Markdown;
 /// acceptance: zero unknown-construct warnings). Output uses <c>\n</c> separators
 /// unconditionally so golden files and content hashes stay stable across platforms.
 /// <para>
-/// The handful of constructs that deliberately <em>degrade</em> instead of failing — an
-/// unmapped fence language, a mixed task list, a same-page anchor — report a
+/// The constructs that deliberately <em>degrade</em> instead of failing — an unmapped fence
+/// language, a mixed task list, a same-page anchor, a centered or right-aligned table column, an
+/// ordered list starting past 1, an <c>[!IMPORTANT]</c> alert, an ordered task list — report a
 /// <see cref="ConversionDiagnostic"/> through <see cref="Report"/> so §4.4's second clause
 /// ("zero unknown-construct warnings") is measurable. Reporting never changes what is written.
 /// </para>
@@ -319,6 +320,7 @@ internal sealed class ListRenderer : MarkdownObjectRenderer<ConfluenceStorageRen
 
         var tag = obj.IsOrdered ? "ol" : "ul";
         ReportMixedTaskList(renderer, obj, tag);
+        ReportDroppedOrderedStart(renderer, obj);
 
         renderer.Write('<').Write(tag).Write('>').Write('\n');
 
@@ -395,6 +397,59 @@ internal sealed class ListRenderer : MarkdownObjectRenderer<ConfluenceStorageRen
     }
 
     /// <summary>
+    /// Reports the start offset an ordered list loses (§4.4): <c>3. item</c> publishes numbered
+    /// from 1, because the emitted <c>&lt;ol&gt;</c> carries no <c>start</c> attribute. The
+    /// numbers a reader sees differ from the ones the author wrote, which is why this is a loss
+    /// and not formatting — unlike the <c>1)</c> vs <c>1.</c> delimiter, which GitHub itself
+    /// renders identically and which is therefore silent.
+    /// </summary>
+    /// <remarks>
+    /// Markdig exposes the authored offset as <see cref="ListBlock.OrderedStart"/> and the
+    /// implied one as <see cref="ListBlock.DefaultOrderedStart"/> ("1"), so the comparison is
+    /// against the parser's own default rather than a literal. Whether storage format would in
+    /// fact honor <c>&lt;ol start="3"&gt;</c> is unverified; the sandbox pass answers it, and if
+    /// it does, this diagnostic's site becomes the place that stops reporting.
+    /// </remarks>
+    private static void ReportDroppedOrderedStart(ConfluenceStorageRenderer renderer, ListBlock list)
+    {
+        if (!TryGetShiftedStart(list, out var construct, out var start))
+        {
+            return;
+        }
+
+        var message =
+            $"This ordered list starts at '{start}', but DocuMe emits a bare <ol>, so it "
+            + "publishes numbered from 1. Every item's text is preserved; the numbers a reader "
+            + "sees are not the author's.";
+        renderer.Report(ConversionDiagnosticCodes.OrderedListStartDropped, construct, message);
+    }
+
+    /// <summary>
+    /// True when this is an ordered list whose first number is not the implied 1, yielding the
+    /// authored marker (<c>"3."</c>) as the construct — the source spelling a §4.4 report groups
+    /// by — and the offset itself for the message.
+    /// </summary>
+    private static bool TryGetShiftedStart(
+        ListBlock list,
+        [NotNullWhen(true)] out string? construct,
+        [NotNullWhen(true)] out string? start)
+    {
+        construct = null;
+        start = null;
+
+        if (!list.IsOrdered
+            || list.OrderedStart is not { } authored
+            || string.Equals(authored, list.DefaultOrderedStart, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        start = authored;
+        construct = authored + list.OrderedDelimiter;
+        return true;
+    }
+
+    /// <summary>
     /// Counts items whose first inline is a task marker, i.e. the ones
     /// <see cref="TryGetTaskMarkers"/> demands of <em>every</em> item. A <c>[x]</c> that does
     /// not open its item is ordinary text and never becomes a <see cref="TaskList"/> inline
@@ -412,7 +467,8 @@ internal sealed class ListRenderer : MarkdownObjectRenderer<ConfluenceStorageRen
     /// status strings are Confluence's <c>complete</c>/<c>incomplete</c>.
     /// <para>
     /// Ordered-ness is dropped: <c>1. [x] done</c> is a task list too, and a task list
-    /// has no numbered variant. Tight/loose is honored exactly as for a plain list, so
+    /// has no numbered variant — reported by <see cref="ReportDroppedTaskNumbering"/>, since
+    /// the numbers are visible on GitHub. Tight/loose is honored exactly as for a plain list, so
     /// a tight item's body is bare inline content and a loose one keeps its
     /// <c>&lt;p&gt;</c>. A nested task list lands inside its parent's task body, which
     /// is how Confluence nests tasks.
@@ -420,6 +476,8 @@ internal sealed class ListRenderer : MarkdownObjectRenderer<ConfluenceStorageRen
     /// </summary>
     private static void WriteTaskList(ConfluenceStorageRenderer renderer, ListBlock obj, TaskList[] markers)
     {
+        ReportDroppedTaskNumbering(renderer, obj);
+
         renderer.Write("<ac:task-list>").Write('\n');
 
         for (var i = 0; i < obj.Count; i++)
@@ -447,6 +505,35 @@ internal sealed class ListRenderer : MarkdownObjectRenderer<ConfluenceStorageRen
         }
 
         renderer.Write("</ac:task-list>").Write('\n');
+    }
+
+    /// <summary>
+    /// Reports the numbering an <em>ordered</em> task list loses (§4.4): <c>1. [x] done</c> is a
+    /// task list too, and <c>&lt;ac:task-list&gt;</c> has no numbered variant, so the sequence a
+    /// reader sees on GitHub is gone while completion state is kept.
+    /// </summary>
+    /// <remarks>
+    /// This subsumes <see cref="ConversionDiagnosticCodes.OrderedListStartDropped"/> rather than
+    /// stacking with it: on <c>3. [x] done</c> the whole numbering disappears, not just its
+    /// offset, so one diagnostic that says so beats two that split the same loss. The offset is
+    /// carried in the construct (<c>"3."</c>) and named in the message.
+    /// </remarks>
+    private static void ReportDroppedTaskNumbering(ConfluenceStorageRenderer renderer, ListBlock list)
+    {
+        if (!list.IsOrdered)
+        {
+            return;
+        }
+
+        var construct = TryGetShiftedStart(list, out var shifted, out var start)
+            ? shifted
+            : list.DefaultOrderedStart + list.OrderedDelimiter;
+        var offset = start is null ? string.Empty : $" (this one starting at '{start}')";
+        var message =
+            $"Every item of this ordered list opens with a task marker, so it publishes as a "
+            + $"native <ac:task-list>, which has no numbered variant: the numbering{offset} is "
+            + "dropped. Completion state is still tracked; the sequence is not.";
+        renderer.Report(ConversionDiagnosticCodes.TaskListNumberingDropped, construct, message);
     }
 
     /// <summary>
@@ -487,7 +574,8 @@ internal sealed class ListRenderer : MarkdownObjectRenderer<ConfluenceStorageRen
 /// </para>
 /// <para>
 /// Accepted loss (spec'd by §7): NOTE and IMPORTANT both map to <c>info</c>, so the
-/// two are indistinguishable after conversion. mark compensates by injecting a
+/// two are indistinguishable after conversion — counted by
+/// <see cref="ReportCollapsedAlertType"/>. mark compensates by injecting a
 /// title paragraph naming the alert type; DocuMe deliberately does not, because
 /// synthesizing body text the author never wrote would change the published content
 /// (and its approval hash, §8) for a purely cosmetic gain.
@@ -504,6 +592,24 @@ internal sealed class QuoteBlockRenderer : MarkdownObjectRenderer<ConfluenceStor
         ["[!CAUTION]"] = "warning",
     };
 
+    /// <summary>
+    /// The markers whose panel is <em>also</em> another marker's panel, mapped to the marker that
+    /// owns it. Storage format offers four panels for five GitHub alert types, and §7 spends
+    /// <c>info</c> on <c>[!NOTE]</c>, so <c>[!IMPORTANT]</c> is the one type that arrives looking
+    /// like something else.
+    /// <para>
+    /// Listed rather than derived from <see cref="AlertPanelMacros"/>: which of two markers on a
+    /// shared panel <em>loses</em> something is a judgement (the owner still reads the way its
+    /// author meant), and deriving it would have to lean on dictionary declaration order to make
+    /// that judgement look mechanical. Adding an alert type is a §7 change; add its entry here in
+    /// the same breath if it lands on a panel that is already taken.
+    /// </para>
+    /// </summary>
+    private static readonly Dictionary<string, string> CollapsedMarkers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["[!IMPORTANT]"] = "[!NOTE]",
+    };
+
     protected override void Write(ConfluenceStorageRenderer renderer, QuoteBlock obj)
     {
         var alert = IsNestedInQuote(obj) ? null : MatchAlertPanel(obj);
@@ -513,7 +619,8 @@ internal sealed class QuoteBlockRenderer : MarkdownObjectRenderer<ConfluenceStor
             return;
         }
 
-        var (macro, markerLine) = alert.Value;
+        var (macro, marker, markerLine) = alert.Value;
+        ReportCollapsedAlertType(renderer, macro, marker);
         ConsumeMarkerLine(obj, markerLine);
 
         // `icon` is Confluence's own default for these panels; mark writes it
@@ -556,10 +663,39 @@ internal sealed class QuoteBlockRenderer : MarkdownObjectRenderer<ConfluenceStor
     }
 
     /// <summary>
-    /// Returns the panel macro name and the marker paragraph's inline container when
-    /// the quote's first line is a bare alert marker, else <c>null</c>.
+    /// Reports the alert type that conversion collapses (§4.4): <c>[!IMPORTANT]</c> shares the
+    /// <c>info</c> panel with <c>[!NOTE]</c>, so after conversion the two are indistinguishable
+    /// and the author's stronger emphasis is gone. §7 spec'd the mapping; this counts what it costs.
+    /// <para>
+    /// The set of collapsing markers is derived from <see cref="AlertPanelMacros"/> rather than
+    /// listed, so it stays true if the mapping changes — and the marker that <em>owns</em> the
+    /// shared panel stays silent. Reporting <c>[!NOTE]</c> as well would double the count without
+    /// adding a fact: a NOTE keeps its low-key emphasis in an <c>info</c> panel, and the collision
+    /// only costs a reader something where an IMPORTANT was flattened into looking like one.
+    /// </para>
     /// </summary>
-    private static (string Macro, ContainerInline MarkerLine)? MatchAlertPanel(QuoteBlock quote)
+    private static void ReportCollapsedAlertType(ConfluenceStorageRenderer renderer, string macro, string marker)
+    {
+        if (!CollapsedMarkers.TryGetValue(marker, out var ownerMarker))
+        {
+            return;
+        }
+
+        var message =
+            $"GitHub renders '{marker}' as its own callout, distinct from '{ownerMarker}'. Storage "
+            + $"format has no panel for it, so both map to '{macro}' and the two are "
+            + "indistinguishable after conversion. The body is preserved verbatim; the alert's "
+            + "emphasis is what is lost.";
+        renderer.Report(ConversionDiagnosticCodes.AlertTypeCollapsed, marker, message);
+    }
+
+    /// <summary>
+    /// Returns the panel macro name, the marker as the author spelled it, and the marker
+    /// paragraph's inline container when the quote's first line is a bare alert marker, else
+    /// <c>null</c>. The spelling is carried out because it is the construct a §4.4 report groups
+    /// by, and <c>[!note]</c> is as much an alert as <c>[!NOTE]</c>.
+    /// </summary>
+    private static (string Macro, string Marker, ContainerInline MarkerLine)? MatchAlertPanel(QuoteBlock quote)
     {
         if (quote.Count == 0 || quote[0] is not ParagraphBlock { Inline: { } inline })
         {
@@ -589,8 +725,9 @@ internal sealed class QuoteBlockRenderer : MarkdownObjectRenderer<ConfluenceStor
         // GitHub requires the marker to occupy its whole first line (`> [!NOTE] text`
         // is not an alert) and matches the keyword case-insensitively, so `[!note]`
         // is as much an alert as `[!NOTE]`.
-        var macro = AlertPanelMacros.GetValueOrDefault(firstLine.ToString().Trim());
-        return macro is null ? null : (macro, inline);
+        var marker = firstLine.ToString().Trim();
+        var macro = AlertPanelMacros.GetValueOrDefault(marker);
+        return macro is null ? null : (macro, marker, inline);
     }
 
     /// <summary>
@@ -1183,16 +1320,19 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
 /// <para>
 /// Two properties of <c>Table.ColumnDefinitions</c> are deliberately dropped, both
 /// accepted losses. <em>Alignment</em> (<c>|:---:|</c>) has no storage-format
-/// representation (§7, confmark's "known lossy points"). <em>Width</em> is Markdig's
+/// representation (§7, confmark's "known lossy points"), and a centered or right-aligned
+/// column reports it (see <see cref="ReportDroppedAlignment"/>). <em>Width</em> is Markdig's
 /// raw header dash count, which is source formatting rather than layout intent — a
 /// hand-aligned <c>|------|--|</c> would otherwise emit a lopsided column grid the
-/// author never asked for.
+/// author never asked for, so dropping it is not a loss and stays silent.
 /// </para>
 /// </summary>
 internal sealed class TableRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, Table>
 {
     protected override void Write(ConfluenceStorageRenderer renderer, Table obj)
     {
+        ReportDroppedAlignment(renderer, obj);
+
         renderer.Write("<table>").Write('\n');
         renderer.Write("<tbody>").Write('\n');
 
@@ -1212,6 +1352,34 @@ internal sealed class TableRenderer : MarkdownObjectRenderer<ConfluenceStorageRe
 
         renderer.Write("</tbody>").Write('\n');
         renderer.Write("</table>").Write('\n');
+    }
+
+    /// <summary>
+    /// Reports the alignment this table loses (§4.4), once per column that asked for one — each
+    /// column is a visibly different layout than the author wrote, so counting tables would
+    /// undercount the loss.
+    /// <para>
+    /// <see cref="TableColumnAlign.Left"/> is deliberately silent. Markdig leaves
+    /// <c>ColumnDefinition.Alignment</c> null for a plain <c>|---|</c> and only fills it in when
+    /// the author wrote a colon, so an explicit <c>|:---|</c> is distinguishable here — but it
+    /// publishes left-aligned, which is exactly how GitHub renders it. Nothing is lost, and the
+    /// inclusion rule for a diagnostic is a loss <em>against the author's own view of the source</em>.
+    /// </para>
+    /// </summary>
+    private static void ReportDroppedAlignment(ConfluenceStorageRenderer renderer, Table table)
+    {
+        foreach (var alignment in table.ColumnDefinitions
+            .Select(column => column.Alignment)
+            .Where(alignment => alignment is TableColumnAlign.Center or TableColumnAlign.Right))
+        {
+            var construct = alignment == TableColumnAlign.Center ? "center" : "right";
+            var message =
+                $"A column of this table asks for {construct} alignment ('|:---:|' / '|---:|'), "
+                + "which Confluence storage format has no representation for, so the column "
+                + "publishes left-aligned. Every cell's text is preserved; only the alignment is "
+                + "lost.";
+            renderer.Report(ConversionDiagnosticCodes.TableAlignmentDropped, construct, message);
+        }
     }
 
     private static void WriteCell(ConfluenceStorageRenderer renderer, TableCell cell, string tag)

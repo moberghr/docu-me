@@ -17,16 +17,31 @@ public sealed class ConversionAcceptanceTests : IDisposable
     /// order (page path, then render order within a page).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Hand-verified, not generated: this is the runner's contract in the same sense the
     /// <c>.storage.xml</c> files are the converter's (§4.3). A new golden case that changes this
     /// list is telling you something — either it degrades, or the converter started degrading
     /// something it used to convert whole. Update the list only with that diff understood.
+    /// </para>
+    /// <para>
+    /// Two rows arrived with the table-alignment and alert-collapse reporting sites, each verified
+    /// against the corpus by hand. <c>tables.md</c> line 6 is <c>|--------|:----:|------------|</c>,
+    /// one centered column of three; the corpus's other tables (<c>tables-ragged.md</c>,
+    /// <c>alert-with-blocks.md</c>) use a plain <c>|---|</c> and lose nothing. <c>alerts.md</c>
+    /// holds exactly one <c>[!IMPORTANT]</c> (line 13), while its three NOTE markers and
+    /// <c>alerts-nested.md</c>'s root NOTE keep the <c>info</c> panel they own and stay silent —
+    /// the collapse is IMPORTANT's loss, not NOTE's. No row for the ordered-list or task-numbering
+    /// sites: every ordered list in the corpus starts at 1, and its one ordered task list is mixed,
+    /// so it degrades to <c>&lt;ol&gt;</c> and reports that instead.
+    /// </para>
     /// </remarks>
     private static readonly string[] GoldenDegradations =
     [
+        "alerts.md | alert-type-collapsed | [!IMPORTANT]",
         "code-blocks.md | unknown-fence-language | brainfuck",
         "links-external.md | same-page-anchor-link | #introduction",
         "mermaid.md | unknown-fence-language | nim",
+        "tables.md | table-alignment-dropped | center",
         "task-lists-mixed.md | mixed-task-list | ul",
         "task-lists-mixed.md | mixed-task-list | ol",
     ];
@@ -58,13 +73,16 @@ public sealed class ConversionAcceptanceTests : IDisposable
     {
         var report = RunGolden();
 
-        // Two codes fire twice each, so the tie breaks ordinally on the code; the single
-        // occurrence sorts last. Deterministic order is what makes a run's output diffable.
+        // Two codes fire twice each, so that tie breaks ordinally on the code; the three single
+        // occurrences sort after them, ordinally among themselves. Deterministic order is what
+        // makes a run's output diffable.
         report.Diagnostics.Select(group => group.Code).ShouldBe(
             [
                 ConversionDiagnosticCodes.MixedTaskList,
                 ConversionDiagnosticCodes.UnknownFenceLanguage,
+                ConversionDiagnosticCodes.AlertTypeCollapsed,
                 ConversionDiagnosticCodes.SamePageAnchorLink,
+                ConversionDiagnosticCodes.TableAlignmentDropped,
             ]);
     }
 
@@ -104,6 +122,8 @@ public sealed class ConversionAcceptanceTests : IDisposable
             ConversionDiagnosticCodes.UnknownFenceLanguage,
             ConversionDiagnosticCodes.MixedTaskList,
             ConversionDiagnosticCodes.SamePageAnchorLink,
+            ConversionDiagnosticCodes.AlertTypeCollapsed,
+            ConversionDiagnosticCodes.TableAlignmentDropped,
         ]);
 
         var report = ConversionAcceptance.RunDirectory(GoldenCorpus.Directory, GoldenCorpus.Resolvers, policy);

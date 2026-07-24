@@ -161,6 +161,120 @@ public sealed class ConversionDiagnosticsTests
     }
 
     /// <summary>
+    /// The sharp edge of the table site: Markdig distinguishes "no colon" (null alignment) from
+    /// an explicit <c>|:--|</c> (Left), and only the alignments that <em>change</em> what a reader
+    /// sees are losses. A left-aligned column publishes left-aligned, which is what GitHub shows.
+    /// </summary>
+    [Fact]
+    public void Table_reports_center_and_right_alignment_but_not_left()
+    {
+        var diagnostics = new List<ConversionDiagnostic>();
+
+        var storage = ConfluenceStorageConverter.Convert(
+            "| a | b | c |\n|:-:|--:|:--|\n| 1 | 2 | 3 |",
+            diagnostics: diagnostics);
+
+        diagnostics.Select(d => d.Code).ShouldAllBe(c => c == ConversionDiagnosticCodes.TableAlignmentDropped);
+        diagnostics.Select(d => d.Construct).ShouldBe(["center", "right"]);
+
+        // One diagnostic per column, not per table: each column publishes a layout the author
+        // did not write. And the markup is byte-identical to a table with no colons at all —
+        // alignment leaves no trace in storage format, which is why it is a loss.
+        storage.ShouldBe(ConfluenceStorageConverter.Convert("| a | b | c |\n|---|---|---|\n| 1 | 2 | 3 |"));
+        storage.ShouldBe(
+            "<table>\n<tbody>\n<tr>\n<th>a</th>\n<th>b</th>\n<th>c</th>\n</tr>\n"
+            + "<tr>\n<td>1</td>\n<td>2</td>\n<td>3</td>\n</tr>\n</tbody>\n</table>\n");
+    }
+
+    [Fact]
+    public void Ordered_list_starting_past_one_reports_a_diagnostic()
+    {
+        var diagnostics = new List<ConversionDiagnostic>();
+
+        var storage = ConfluenceStorageConverter.Convert("3. third\n4. fourth", diagnostics: diagnostics);
+
+        var diagnostic = diagnostics.ShouldHaveSingleItem();
+        diagnostic.Code.ShouldBe(ConversionDiagnosticCodes.OrderedListStartDropped);
+
+        // Construct is the marker as authored — the dialect axis of a §4.4 report.
+        diagnostic.Construct.ShouldBe("3.");
+        diagnostic.Message.ShouldContain("numbered from 1");
+
+        // Unchanged: a bare <ol>, exactly as before this site existed.
+        storage.ShouldBe("<ol>\n<li>third</li>\n<li>fourth</li>\n</ol>\n");
+    }
+
+    [Fact]
+    public void Ordered_task_list_reports_its_dropped_numbering()
+    {
+        var diagnostics = new List<ConversionDiagnostic>();
+
+        var storage = ConfluenceStorageConverter.Convert("1. [x] shipped\n2. [ ] open", diagnostics: diagnostics);
+
+        var diagnostic = diagnostics.ShouldHaveSingleItem();
+        diagnostic.Code.ShouldBe(ConversionDiagnosticCodes.TaskListNumberingDropped);
+        diagnostic.Construct.ShouldBe("1.");
+
+        // Still the native task list — the numbering was never in the output to begin with.
+        storage.ShouldStartWith("<ac:task-list>\n<ac:task>\n<ac:task-id>1</ac:task-id>\n");
+        storage.ShouldContain("<ac:task-status>complete</ac:task-status>");
+    }
+
+    /// <summary>
+    /// An ordered task list starting past 1 loses its whole numbering, offset included, so it
+    /// reports that one loss and not two: splitting it across two codes would double-count a
+    /// single construct in the §4.4 report and imply the offset survives the flattening.
+    /// </summary>
+    [Fact]
+    public void Ordered_task_list_with_an_offset_reports_the_numbering_loss_only()
+    {
+        var diagnostics = new List<ConversionDiagnostic>();
+
+        ConfluenceStorageConverter.Convert("3. [x] shipped\n4. [ ] open", diagnostics: diagnostics);
+
+        var diagnostic = diagnostics.ShouldHaveSingleItem();
+        diagnostic.Code.ShouldBe(ConversionDiagnosticCodes.TaskListNumberingDropped);
+        diagnostic.Construct.ShouldBe("3.");
+        diagnostic.Message.ShouldContain("starting at '3'");
+    }
+
+    [Fact]
+    public void Important_alert_reports_collapsing_onto_the_note_panel()
+    {
+        var diagnostics = new List<ConversionDiagnostic>();
+
+        var storage = ConfluenceStorageConverter.Convert(
+            "> [!IMPORTANT]\n> Approval lives in labels.",
+            diagnostics: diagnostics);
+
+        var diagnostic = diagnostics.ShouldHaveSingleItem();
+        diagnostic.Code.ShouldBe(ConversionDiagnosticCodes.AlertTypeCollapsed);
+        diagnostic.Construct.ShouldBe("[!IMPORTANT]");
+
+        // The message names the marker it became indistinguishable from, which is the whole loss.
+        diagnostic.Message.ShouldContain("[!NOTE]");
+        diagnostic.Message.ShouldContain("'info'");
+
+        // Unchanged from the alerts golden: the info panel, body verbatim.
+        storage.ShouldBe(
+            "<ac:structured-macro ac:name=\"info\"><ac:parameter ac:name=\"icon\">true</ac:parameter>"
+            + "<ac:rich-text-body>\n<p>Approval lives in labels.</p>\n"
+            + "</ac:rich-text-body></ac:structured-macro>\n");
+    }
+
+    [Fact]
+    public void Collapsed_alert_construct_keeps_the_authors_own_spelling()
+    {
+        var diagnostics = new List<ConversionDiagnostic>();
+
+        // GitHub matches the marker case-insensitively, so this is an alert too — and the report
+        // groups by spelling, so a lowercase corpus stays visible as a lowercase dialect.
+        ConfluenceStorageConverter.Convert("> [!important]\n> body", diagnostics: diagnostics);
+
+        diagnostics.ShouldHaveSingleItem().Construct.ShouldBe("[!important]");
+    }
+
+    /// <summary>
     /// The silent half of the contract, and the more load-bearing one: a diagnostic that fired
     /// on a lossless construct would make §4.4's "zero unknown-construct warnings" unreachable
     /// for reasons that are not losses. Every case below either has no counterpart to lose or
@@ -206,6 +320,32 @@ public sealed class ConversionDiagnosticsTests
     // A marker that does not open its item never becomes a task marker on GitHub either
     // (GfmTaskListExtension's positional rule), so this list is plain and lossless.
     [InlineData("- mark the box [x] before signing")]
+
+    // An ordered list starting at the implied 1 loses no numbering, and `1)` vs `1.` is a
+    // delimiter GitHub renders identically either way — source formatting, not layout intent.
+    [InlineData("1. one\n2. two")]
+    [InlineData("1) one\n2) two")]
+
+    // An *unordered* task list has no numbering to drop.
+    [InlineData("- [x] done\n- [ ] open\n")]
+
+    // --- tables that publish the way they render ---
+    // No colon at all, and an explicit left column: both publish left-aligned, which is what
+    // GitHub shows. Reporting the explicit one would warn on a table that lost nothing.
+    [InlineData("| a | b |\n|---|---|\n| 1 | 2 |")]
+    [InlineData("| a | b |\n|:--|:--|\n| 1 | 2 |")]
+
+    // The header dash count is Markdig's raw column width, i.e. how the author spaced the
+    // source. Dropping it is not a loss (see TableRenderer's remarks).
+    [InlineData("| a | b |\n| --- | --------- |\n| 1 | 2 |")]
+
+    // --- alerts that keep their own panel ---
+    // Four of the five markers map to a panel no other marker takes, so the type survives
+    // conversion. Only [!IMPORTANT] shares one, and only it reports.
+    [InlineData("> [!NOTE]\n> note body")]
+    [InlineData("> [!TIP]\n> tip body")]
+    [InlineData("> [!WARNING]\n> warning body")]
+    [InlineData("> [!CAUTION]\n> caution body")]
 
     // --- links that keep their destination ---
     [InlineData("[out](https://example.com) and <https://example.com> and <me@example.com>")]
