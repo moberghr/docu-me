@@ -63,17 +63,28 @@ public static class ConfluenceStorageConverter
     /// fences; if one is encountered without a resolver the converter fails loud rather than
     /// publishing the diagram source as a code block.
     /// </param>
+    /// <param name="diagnostics">
+    /// Optional sink collecting the <em>deliberate degradations</em> applied while rendering —
+    /// constructs that converted but lost something the author would see on GitHub (see
+    /// <see cref="ConversionDiagnostic"/>). Appended to, never cleared, so a caller may reuse
+    /// one collection across pages. Supplying it changes nothing about the returned storage
+    /// format: it is observability for PLAN.md §4.4's "zero unknown-construct warnings", which
+    /// is unmeasurable without it. Must stay the <em>last optional</em> parameter — callers
+    /// pass the resolvers positionally.
+    /// </param>
     public static string Convert(
         string markdown,
         PageLinkResolver? linkResolver = null,
         AttachmentResolver? attachmentResolver = null,
-        MermaidDiagramResolver? mermaidResolver = null)
+        MermaidDiagramResolver? mermaidResolver = null,
+        ICollection<ConversionDiagnostic>? diagnostics = null)
     {
         ArgumentNullException.ThrowIfNull(markdown);
 
         var document = Markdig.Markdown.Parse(markdown, Pipeline);
         using var writer = new StringWriter();
-        var renderer = new ConfluenceStorageRenderer(writer, linkResolver, attachmentResolver, mermaidResolver);
+        var renderer = new ConfluenceStorageRenderer(
+            writer, linkResolver, attachmentResolver, mermaidResolver, diagnostics);
         renderer.Render(document);
         writer.Flush();
         return writer.ToString();

@@ -28,6 +28,12 @@ namespace DocuMe.Core.Markdown;
 /// <em>fail loudly</em> rather than silently drop or mis-transform it (PLAN.md §7
 /// acceptance: zero unknown-construct warnings). Output uses <c>\n</c> separators
 /// unconditionally so golden files and content hashes stay stable across platforms.
+/// <para>
+/// The handful of constructs that deliberately <em>degrade</em> instead of failing — an
+/// unmapped fence language, a mixed task list, a same-page anchor — report a
+/// <see cref="ConversionDiagnostic"/> through <see cref="Report"/> so §4.4's second clause
+/// ("zero unknown-construct warnings") is measurable. Reporting never changes what is written.
+/// </para>
 /// </remarks>
 public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStorageRenderer>
 {
@@ -37,12 +43,14 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
         TextWriter writer,
         PageLinkResolver? linkResolver = null,
         AttachmentResolver? attachmentResolver = null,
-        MermaidDiagramResolver? mermaidResolver = null)
+        MermaidDiagramResolver? mermaidResolver = null,
+        ICollection<ConversionDiagnostic>? diagnostics = null)
         : base(writer)
     {
         LinkResolver = linkResolver;
         AttachmentResolver = attachmentResolver;
         MermaidResolver = mermaidResolver;
+        Diagnostics = diagnostics;
 
         ObjectRenderers.Add(new HeadingRenderer());
         ObjectRenderers.Add(new ParagraphRenderer());
@@ -93,6 +101,14 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
     public MermaidDiagramResolver? MermaidResolver { get; }
 
     /// <summary>
+    /// Sink for the deliberate degradations this render applied (§4.4); may be <c>null</c>,
+    /// in which case <see cref="Report"/> is a no-op. Never consulted while writing, so the
+    /// emitted storage format is identical whether or not a caller passes one — which is what
+    /// keeps the 27 hand-reviewed golden files (§4.3) valid.
+    /// </summary>
+    public ICollection<ConversionDiagnostic>? Diagnostics { get; }
+
+    /// <summary>
     /// When set, paragraphs render their inline content without a <c>&lt;p&gt;</c>
     /// wrapper. Set for items of a <em>tight</em> list (CommonMark looseness), so
     /// <c>- a</c> becomes <c>&lt;li&gt;a&lt;/li&gt;</c> rather than
@@ -114,6 +130,16 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
     /// </para>
     /// </summary>
     public int NextTaskId() => ++_taskId;
+
+    /// <summary>
+    /// Records that a construct converted but degraded (see <see cref="ConversionDiagnostic"/>).
+    /// A no-op when no sink was supplied, so a reporting site costs nothing and never changes
+    /// output. Call it only where the degradation is a real loss against what the author sees
+    /// on GitHub: a diagnostic that fires on a lossless construct would make §4.4's
+    /// "zero unknown-construct warnings" unreachable for reasons that are not losses.
+    /// </summary>
+    public void Report(string code, string construct, string message)
+        => Diagnostics?.Add(new ConversionDiagnostic(code, construct, message));
 
     /// <summary>Writes text with XML character references so it is safe in storage-format markup.</summary>
     public ConfluenceStorageRenderer WriteEscaped(ReadOnlySpan<char> text)
@@ -292,6 +318,8 @@ internal sealed class ListRenderer : MarkdownObjectRenderer<ConfluenceStorageRen
         }
 
         var tag = obj.IsOrdered ? "ol" : "ul";
+        ReportMixedTaskList(renderer, obj, tag);
+
         renderer.Write('<').Write(tag).Write('>').Write('\n');
 
         foreach (var item in obj)
@@ -342,6 +370,39 @@ internal sealed class ListRenderer : MarkdownObjectRenderer<ConfluenceStorageRen
         markers = found;
         return true;
     }
+
+    /// <summary>
+    /// Reports the mixed-task-list degradation (§4.4) when this plain list carries <em>some</em>
+    /// task markers — the items that had one publish as literal <c>[x]</c>/<c>[ ]</c> text
+    /// instead of trackable Confluence tasks. Silent when no item carries a marker, which is an
+    /// ordinary list and no loss at all.
+    /// </summary>
+    private static void ReportMixedTaskList(ConfluenceStorageRenderer renderer, ListBlock list, string tag)
+    {
+        var taskItems = CountTaskItems(list);
+        if (taskItems == 0)
+        {
+            return;
+        }
+
+        var message =
+            $"{taskItems} of {list.Count} items in this list open with a task marker. Storage "
+            + "format has no plain item inside <ac:task-list>, so the whole list degrades to "
+            + $"<{tag}> and the markers stay as literal '[x]'/'[ ]' text: completion state is "
+            + "readable but Confluence no longer tracks it. Split the plain items into their own "
+            + "list to get native tasks.";
+        renderer.Report(ConversionDiagnosticCodes.MixedTaskList, tag, message);
+    }
+
+    /// <summary>
+    /// Counts items whose first inline is a task marker, i.e. the ones
+    /// <see cref="TryGetTaskMarkers"/> demands of <em>every</em> item. A <c>[x]</c> that does
+    /// not open its item is ordinary text and never becomes a <see cref="TaskList"/> inline
+    /// (see <see cref="GfmTaskListExtension"/>), so it is not counted here either.
+    /// </summary>
+    private static int CountTaskItems(ListBlock list) =>
+        list.Count(item => item is ListItemBlock { Count: > 0 } block
+            && block[0] is ParagraphBlock { Inline.FirstChild: TaskList });
 
     /// <summary>
     /// Writes the Confluence task list (<c>&lt;ac:task-list&gt;</c> /
@@ -420,7 +481,9 @@ internal sealed class ListRenderer : MarkdownObjectRenderer<ConfluenceStorageRen
 /// alert stays a plain blockquote with its marker text visible (§7), matching both
 /// mark's <c>quoteLevel == 0</c> rule and GitHub, which does not recognize an alert
 /// inside another blockquote. "Root level" counts blockquote ancestors only, so an
-/// alert inside a list item is still a panel.
+/// alert inside a list item is still a panel. That nested case emits no
+/// <see cref="ConversionDiagnostic"/> precisely <em>because</em> it matches GitHub: the reader
+/// sees the same quoted <c>[!NOTE]</c> line either way, so nothing is lost against the source.
 /// </para>
 /// <para>
 /// Accepted loss (spec'd by §7): NOTE and IMPORTANT both map to <c>info</c>, so the
@@ -655,6 +718,16 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
 
         var attributes = ParseInfoLine(infoLine);
 
+        if (attributes.UnknownLanguage is { } unknownLanguage)
+        {
+            var message =
+                $"Fence language '{unknownLanguage}' has no Confluence brush in the renderer's "
+                + "language map, so the code macro is emitted without a 'language' parameter and "
+                + "the block publishes unhighlighted. Every character the author wrote is "
+                + "preserved; only syntax colouring is lost.";
+            renderer.Report(ConversionDiagnosticCodes.UnknownFenceLanguage, unknownLanguage, message);
+        }
+
         renderer.Write("<ac:structured-macro ac:name=\"code\">");
 
         if (attributes.Language is { } language)
@@ -837,6 +910,7 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
     private static CodeFenceAttributes ParseInfoLine(string line)
     {
         string? language = null;
+        string? unknownLanguage = null;
         string? title = null;
         int? firstLine = null;
         var collapse = false;
@@ -872,6 +946,15 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
                 if (!IsAttribute(token))
                 {
                     language = MapLanguage(token);
+
+                    // `-` is mark's explicit "no language" spelling, so an omitted brush is
+                    // exactly what its author asked for and nothing is lost. Every other
+                    // unmapped token is a language the renderer did not recognize.
+                    if (language is null && !string.Equals(token, "-", StringComparison.Ordinal))
+                    {
+                        unknownLanguage = token;
+                    }
+
                     continue;
                 }
             }
@@ -921,7 +1004,7 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
                 + "not title=<text>). A language, if given, must come first; write `-` for none.");
         }
 
-        return new CodeFenceAttributes(language, collapse, lineNumbers, firstLine, title);
+        return new CodeFenceAttributes(language, unknownLanguage, collapse, lineNumbers, firstLine, title);
     }
 
     private static bool IsAttribute(string token) =>
@@ -973,8 +1056,15 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
     /// Code macro parameters read off a fence info line. A <c>null</c> reference or
     /// <c>false</c> means "not requested", and the parameter is omitted entirely.
     /// </summary>
+    /// <param name="UnknownLanguage">
+    /// The language token when it mapped to no Confluence brush, for the caller to report as a
+    /// degradation; <c>null</c> when the fence carried no language, carried mark's explicit
+    /// <c>-</c>, or carried a mapped one. Kept here rather than reported from the parser so
+    /// info-line parsing stays a pure function.
+    /// </param>
     private readonly record struct CodeFenceAttributes(
         string? Language,
+        string? UnknownLanguage,
         bool Collapse,
         bool LineNumbers,
         int? FirstLine,
@@ -1143,6 +1233,12 @@ internal sealed class LinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStor
         // there is no destination page and heading anchors may not survive.
         if (url.StartsWith('#'))
         {
+            var message =
+                $"Same-page anchor link '{url}' publishes as its link text with no link at all: "
+                + "spike S2 does not assume Confluence's editor preserves heading anchors, so the "
+                + "destination is dropped. This is the one degradation that removes a "
+                + "destination rather than styling.";
+            renderer.Report(ConversionDiagnosticCodes.SamePageAnchorLink, url, message);
             renderer.WriteChildren(obj);
             return;
         }
@@ -1405,6 +1501,13 @@ internal sealed class AutolinkInlineRenderer : MarkdownObjectRenderer<Confluence
 /// and collects the definitions into this group block. It renders to nothing
 /// (matching Markdig's own HtmlRenderer) — a no-op keeps reference-style links from
 /// tripping the fail-loud catch-all on a fully-representable construct.
+/// <para>
+/// Emits no <see cref="ConversionDiagnostic"/>: a definition is metadata with no rendering on
+/// GitHub either, whether or not any <c>[text][ref]</c> uses it, so dropping it loses nothing
+/// (an <em>unresolved</em> reference stays literal text, exactly as GitHub shows it). Reporting
+/// it would put a warning on a lossless construct and make §4.4's "zero unknown-construct
+/// warnings" unreachable for a non-loss.
+/// </para>
 /// </summary>
 internal sealed class LinkReferenceDefinitionGroupRenderer
     : MarkdownObjectRenderer<ConfluenceStorageRenderer, LinkReferenceDefinitionGroup>
