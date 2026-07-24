@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore DocuMe.slnx
+
+      - name: Build
+        run: dotnet build DocuMe.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test DocuMe.slnx --configuration Release --no-build --verbosity normal

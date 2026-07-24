@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>DocuMe.Core</PackageId>
+    <Description>Core library for DocuMe — the repo-to-Confluence docs lifecycle toolkit.</Description>
+  </PropertyGroup>
+
+</Project>

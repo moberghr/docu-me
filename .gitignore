@@ -5,3 +5,9 @@ tools/loop/STOP
 tasks/todo.md
 .claude.local.md
 .mtk/
+
+# .NET build output
+bin/
+obj/
+*.user
+

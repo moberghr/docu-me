@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>DocuMe.Cli</RootNamespace>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>docume</ToolCommandName>
+    <PackageId>DocuMe.Cli</PackageId>
+    <Description>DocuMe CLI (`docume`) — deterministic markdown-to-Confluence publisher.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DocuMe.Core\DocuMe.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console" Version="0.57.2" />
+    <PackageReference Include="System.CommandLine" Version="2.0.10" />
+  </ItemGroup>
+
+</Project>

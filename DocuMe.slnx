@@ -1,0 +1,14 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/DocuMe.Cli/DocuMe.Cli.csproj" />
+    <Project Path="src/DocuMe.Core/DocuMe.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DocuMe.Core.Tests/DocuMe.Core.Tests.csproj" />
+  </Folder>
+</Solution>

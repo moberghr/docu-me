@@ -1,14 +1,14 @@
 {
   "version": 1,
   "startedAt": "2026-07-24T12:50:14Z",
-  "updatedAt": "2026-07-24T12:50:14Z",
-  "iteration": 1,
+  "updatedAt": "2026-07-24T13:10:02Z",
+  "iteration": 2,
   "milestone": "M0",
-  "phase": "bootstrapped",
+  "phase": "in-progress",
   "mtkBootstrapped": true,
-  "nextAction": "Start M0 via /mtk:implement with PLAN.md §3+§4 as the spec: create DocuMe.slnx, src/DocuMe.Core + src/DocuMe.Cli (System.CommandLine + Spectre.Console) + tests/DocuMe.Core.Tests (xUnit + Shouldly + NSubstitute); `docume --version`; docume.json config loader + schema validation (PLAN.md §5.1); state.json load/save (§5.3); minimal `docume init`; CI build/test workflow. Verify: dotnet build + dotnet test green. M0 acceptance: tool packs, installs and runs locally from a NuGet pack. Note: .claude/ config is staged at .claude-proposed/ (gate setup-claude-dir in GATES.md) — CLAUDE.md at root is active and carries the critical rules.",
+  "nextAction": "Continue M0 via /mtk:implement (solution + Cli + tests already exist, build green: net10.0, System.CommandLine 2.0.10, Spectre.Console 0.57.2, xUnit 2.9.3 + Shouldly 4.3.0 + NSubstitute 6.0.0). Next slice: (1) docume.json config model + loader + JSON-schema validation (PLAN.md §5.1) in src/DocuMe.Core/Config/; (2) _meta/state.json model + load/save with a version-migration hook (PLAN.md §5.3) in src/DocuMe.Core/State/; (3) minimal `docume init` command (idempotent, never overwrites existing files, reports skips) scaffolding docume.json + docs/wiki skeleton (PLAN.md §6.1) as a System.CommandLine subcommand in src/DocuMe.Cli/Commands/ — then drop the bare-invocation `--help` shim in Program.cs once real subcommands exist. Add xUnit+Shouldly tests: config load valid/invalid/missing-file, state.json round-trip. Then close M0 acceptance: `dotnet pack` (already works → DocuMe.Cli.0.1.0.nupkg) then install as a local tool (dotnet new tool-manifest; dotnet tool install --local --add-source ./src/DocuMe.Cli/bin/Release DocuMe.Cli) in a temp dir and run `docume --version` + `docume init`.",
   "blockers": [
-    "needs-allowlist: writes under .claude/ (Claude Code sensitive-file protection blocks Write/Edit/Bash on .claude paths in headless runs). NON-FATAL: bootstrap output staged at .claude-proposed/ — see GATES.md setup-claude-dir. Milestone work is not blocked."
+    "needs-allowlist (NON-FATAL): writes under .claude/ are blocked by Claude Code sensitive-file protection in headless runs. Bootstrap output remains staged at .claude-proposed/ — see GATES.md setup-claude-dir. Milestone work is NOT blocked. To let future loop iterations maintain .claude/ themselves, add Write(.claude/**) + Edit(.claude/**) to permissions.allow in tools/loop/loop-settings.json."
   ],
   "gates": {
     "setup-claude-dir": "pending"
@@ -19,6 +19,7 @@
     "productionAllowed": false
   },
   "done": [
-    "iter1 (2026-07-24): MTK bootstrap (dotnet) — root CLAUDE.md (active), rules/references/settings/tech-stack staged at .claude-proposed/ (coding guidelines pinned @4043387), product.md + decisions.md seeded from PLAN.md, CODE_INDEX.md, .mtkignore, .claudeignore, tasks/lessons.md, .gitignore MTK entries. Greenfield: no build/test to run yet; dotnet SDK 10.0.100 + node v22 verified present."
+    "iter1 (2026-07-24): MTK bootstrap (dotnet) — root CLAUDE.md (active), rules/references/settings/tech-stack staged at .claude-proposed/ (coding guidelines pinned @4043387), product.md + decisions.md seeded from PLAN.md, CODE_INDEX.md, .mtkignore, .claudeignore, tasks/lessons.md, .gitignore MTK entries. Greenfield: no build/test to run yet; dotnet SDK 10.0.100 + node v22 verified present.",
+    "iter2 (2026-07-24): M0 scaffold slice. DocuMe.slnx (slnx format, /src + /tests folders) + src/DocuMe.Core (library) + src/DocuMe.Cli (dotnet tool `docume`; System.CommandLine 2.0.10 + Spectre.Console 0.57.2) + tests/DocuMe.Core.Tests (xUnit 2.9.3 + Shouldly 4.3.0 + NSubstitute 6.0.0). Directory.Build.props (net10.0, nullable, implicit usings, TreatWarningsAsErrors, Version 0.1.0), global.json (SDK 10.0.100 pin, rollForward latestFeature), .github/workflows/ci.yml (restore/build/test on push+PR), .gitignore bin/obj. `docume --version` -> 0.1.0+<sha>; bare `docume` -> help. Verified: dotnet build DocuMe.slnx -c Release = 0 warnings/0 errors (all 3 projects); dotnet test = 1 passed; dotnet pack -> DocuMe.Cli.0.1.0.nupkg. Spec/plan at docs/specs|plans/2026-07-24-m0-scaffold.md. Deferred to iter3: config loader/state/init + pack-install acceptance."
   ]
 }
