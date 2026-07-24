@@ -1,0 +1,7 @@
+<ul>
+<li>item with a quote<blockquote>
+<p>quoted inside a list</p>
+</blockquote>
+</li>
+<li>plain item</li>
+</ul>

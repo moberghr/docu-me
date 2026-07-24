@@ -1,0 +1,4 @@
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">csharp</ac:parameter><ac:plain-text-body><![CDATA[var x = 1;
+Console.WriteLine(x);]]></ac:plain-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[+[----->+++<]>+.]]></ac:plain-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[plain code]]></ac:plain-text-body></ac:structured-macro>
