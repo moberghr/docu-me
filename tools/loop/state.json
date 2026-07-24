@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "startedAt": null,
+  "updatedAt": null,
+  "iteration": 0,
+  "milestone": "M0",
+  "phase": "not-started",
+  "mtkBootstrapped": false,
+  "nextAction": "Run /mtk:setup-bootstrap (tech stack: dotnet), commit the generated setup, then begin M0 per PLAN.md §14: solution + Core/Cli/test projects, CI build workflow, config loader, state load/save, `docume --version`, minimal init.",
+  "blockers": [],
+  "gates": {},
+  "confluence": {
+    "sandboxSpaceKey": null,
+    "productionSpaceKey": "AUR",
+    "productionAllowed": false
+  },
+  "done": []
+}
