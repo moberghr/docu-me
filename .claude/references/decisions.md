@@ -35,3 +35,9 @@
 **Context:** Where `/docs-refresh` runs.
 **Decision:** Both a nightly CI cron (headless Claude) and locally on demand.
 **Evidence:** `PLAN.md` §1 locked decisions, §10.
+
+## 2026-07-24 — Align .NET build/test standards with Moberg house stack
+
+**Context:** DocuMe should follow the same engineering standards as the rest of Moberg's .NET work.
+**Decision:** Adopt the `moberghr/app-templates` house standards **scoped to DocuMe's CLI + library shape**: Central Package Management, max-strict analyzers (StyleCop + Roslynator + Sonar + Meziantou) with warnings-as-errors, `.editorconfig` severities, pinned SDK + test runner in `global.json`, xUnit v3 on the Microsoft Testing Platform, and no MediatR (Warp if a mediator is ever needed). The web/EF/PostgreSQL/Aspire/React parts of the house stack are explicitly out of scope. Coding style follows `moberghr/coding-guidelines@4043387` (general rules; skip its data-layer sections). The build-config migration (CPM + analyzers + xUnit v3) is handed to the build loop as a verified "standards hardening" slice, not applied by hand, so the just-landed M0 scaffold stays loop-owned.
+**Evidence:** `.claude/references/dotnet/moberg-house-standards.md`; `moberghr/app-templates` root `CLAUDE.md`/`AGENTS.md` + `fullstack-app/backend-server/Directory.{Build,Packages}.props`; `moberghr/coding-guidelines@4043387ca2c70ed0cd76e005861f5c471908c3bb`.

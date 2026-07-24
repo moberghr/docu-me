@@ -18,6 +18,14 @@ You are one iteration of an unattended build loop for this repository. No human 
 8. **Human gates.** On reaching one (M2 page-by-page Aur review, M3 first approval round-trip, M7 production go-live), append an unchecked `- [ ]` entry to GATES.md with a gate id and exact instructions for Mirko, mirror it in `state.json → gates`, and treat it as pending until the checkbox is ticked.
 9. **Denied permissions.** If a command you genuinely need is blocked, first try an allowed alternative. If none exists, add `"needs-allowlist: <command>"` to `blockers` and end with BLOCKED.
 
+## Coding standards (Moberg house standards)
+
+Follow Moberg's .NET standards on every increment — they are the house conventions, not optional polish:
+
+- **Coding style:** `.claude/references/dotnet/coding-guidelines.md` (`moberghr/coding-guidelines@4043387`) — file-scoped namespaces, `var`, `_camelCase` private fields, avoid `else`, split LINQ chains, one declaration per line, etc. The MediatR/EF Core/DbContext sections are web/DB-specific — DocuMe has none of those, so apply the general style and skip the data-layer rules. `.claude/rules/` auto-load; honor them.
+- **House build/test standards:** `.claude/references/dotnet/moberg-house-standards.md` (distilled from `moberghr/app-templates`, scoped to DocuMe's CLI + library shape) — Central Package Management (no inline `PackageReference Version=`), max-strict analyzers (StyleCop + Roslynator + Sonar + Meziantou) with warnings-as-errors, `.editorconfig` severities, pinned SDK + test runner in `global.json`, xUnit v3 on the Microsoft Testing Platform, **never add MediatR** (use `Moberg.Warp.*` if a mediator is ever needed). Ignore its out-of-scope web/EF/PostgreSQL/Aspire/React rules.
+- **Standards-hardening slice (do this as the next standalone increment):** the build currently predates CPM + analyzers + xUnit v3 (M0 used xUnit v2, inline `PackageReference Version=`, no analyzers). Work the alignment checklist in `moberg-house-standards.md` as its own verified MTK slice(s) — ideally before layering more M1 feature code on top, so the analyzer pass covers the converter. Build + test must stay green with no blanket suppressions; resolve analyzer findings rather than silencing them. Confirm exact analyzer/xUnit versions against `moberghr/app-templates` at build time. If you judge the in-flight M1 slice should finish first, that is a valid call — record the sequencing decision in `state.json → nextAction`.
+
 ## Hard rules
 
 - **Never** run `docume` against the production AUR space until `state.json → confluence.productionAllowed` is true (set only by Mirko ticking the M7 gate). Sandbox only before that.

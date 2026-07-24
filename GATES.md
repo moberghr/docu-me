@@ -20,7 +20,5 @@ _(none yet — the loop appends them as it reaches them)_
 
 ## Setup — not milestone-blocking, but do it soon
 
-- [ ] **setup-claude-dir** (opened 2026-07-24, iter 1) — Finalize the MTK bootstrap. The headless loop cannot write `.claude/` (Claude Code sensitive-file protection; nobody present to approve), so the bootstrap output is staged at `.claude-proposed/`. Review it, then from the repo root run:
-  `cp -R .claude-proposed/ .claude/` (merges alongside the existing `.claude/analytics.json`), then delete `.claude-proposed/` and commit.
-  Until this is done, Claude Code won't auto-load `.claude/rules/` and MTK skills fall back to marker-based stack detection; root `CLAUDE.md` (already in place) carries the critical rules either way.
-  Optional, to let future loop iterations maintain `.claude/` themselves: add `"Write(.claude/**)"` and `"Edit(.claude/**)"` to `permissions.allow` in `tools/loop/loop-settings.json`.
+- [x] **setup-claude-dir** (opened 2026-07-24 iter 1; done 2026-07-24 in an interactive session) — MTK bootstrap finalized: the staged `.claude-proposed/` config was promoted into `.claude/` (rules, references incl. Moberg coding-guidelines, settings, tech-stack, mtk-version) and `.claude-proposed/` removed. Claude Code now auto-loads `.claude/rules/` and MTK resolves `.claude/references/`. The headless loop still cannot *write* `.claude/` (sensitive-file protection) but reads it fine, so no loop change was required.
+  Optional, to let future loop iterations maintain `.claude/` themselves: add `"Write(.claude/**)"` and `"Edit(.claude/**)"` to `permissions.allow` in `tools/loop/loop-settings.json` (not done — the loop doesn't need to write `.claude/` for current milestones).
