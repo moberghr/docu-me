@@ -11,6 +11,7 @@ internal static class Program
             "DocuMe — deterministic markdown-to-Confluence documentation publisher.")
         {
             InitCommand.Build(),
+            ConvertCommand.Build(),
         };
 
         // Show help on a bare invocation so `docume` is self-describing rather than
