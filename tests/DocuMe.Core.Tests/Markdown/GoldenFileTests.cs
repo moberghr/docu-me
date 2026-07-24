@@ -30,7 +30,7 @@ public sealed class GoldenFileTests
         var expected = File.ReadAllText(Path.Combine(GoldenDir, caseName + ".storage.xml"));
 
         var parsed = FrontmatterParser.Parse(markdown);
-        var actual = ConfluenceStorageConverter.Convert(parsed.Body, ResolveGoldenLink);
+        var actual = ConfluenceStorageConverter.Convert(parsed.Body, ResolveGoldenLink, ResolveGoldenAttachment);
 
         Normalize(actual).ShouldBe(Normalize(expected));
     }
@@ -45,6 +45,28 @@ public sealed class GoldenFileTests
     {
         "domains/loans/README.md" => "Loans Domain",
         "../architecture/overview.md" => "Architecture & Design",
+        _ => null,
+    };
+
+    /// <summary>
+    /// Fixed path→attachment-filename map for the <c>images</c> golden case. The real
+    /// resolver — which flattens nested paths, resolves collisions and hashes content —
+    /// lands with the M2 publish pipeline; this one stands in for it, deliberately
+    /// including a nested path that flattens to a different filename and one carrying an
+    /// <c>&amp;</c> to pin attribute escaping on <c>ri:filename</c>.
+    /// </summary>
+    private static string? ResolveGoldenAttachment(string relativeImagePath) => relativeImagePath switch
+    {
+        "images/architecture.png" => "architecture.png",
+        "images/spacer.png" => "spacer.png",
+        "diagrams/loan-flow.png" => "loan-flow.png",
+        "images/rich.png" => "rich.png",
+        "images/sub/deep.png" => "images_sub_deep.png",
+        "images/a-and-b.png" => "a & b.png",
+        "images/badge.png" => "badge.png",
+        "images/cell.png" => "cell.png",
+        "images/item.png" => "item.png",
+        "images/ref.png" => "ref.png",
         _ => null,
     };
 

@@ -51,13 +51,22 @@ public static class ConfluenceStorageConverter
     /// <c>null</c> when the body has no relative markdown links; if one is encountered
     /// without a resolver the converter fails loud rather than emitting a broken link.
     /// </param>
-    public static string Convert(string markdown, PageLinkResolver? linkResolver = null)
+    /// <param name="attachmentResolver">
+    /// Resolves relative image paths to their final Confluence attachment filenames (§7).
+    /// May be <c>null</c> when the body has no local images; if one is encountered without
+    /// a resolver the converter fails loud rather than emitting a dangling
+    /// <c>ri:filename</c>. External image URLs need no resolver.
+    /// </param>
+    public static string Convert(
+        string markdown,
+        PageLinkResolver? linkResolver = null,
+        AttachmentResolver? attachmentResolver = null)
     {
         ArgumentNullException.ThrowIfNull(markdown);
 
         var document = Markdig.Markdown.Parse(markdown, Pipeline);
         using var writer = new StringWriter();
-        var renderer = new ConfluenceStorageRenderer(writer, linkResolver);
+        var renderer = new ConfluenceStorageRenderer(writer, linkResolver, attachmentResolver);
         renderer.Render(document);
         writer.Flush();
         return writer.ToString();

@@ -35,13 +35,70 @@ public sealed class ConfluenceStorageConverterTests
     }
 
     [Fact]
-    public void Convert_throws_on_image_rather_than_dropping_it()
+    public void Convert_renders_external_image_without_a_resolver()
     {
-        // Images (also a LinkInline) map to an attachment + <ac:image> in a later
-        // slice; until then they must fail loud, not silently vanish.
-        var ex = Should.Throw<NotSupportedException>(
+        // An external image carries its own URL — no attachment resolver needed,
+        // mirroring how an external link needs no page-link resolver.
+        var storage = ConfluenceStorageConverter.Convert("![a diagram](https://example.com/d.png)");
+
+        storage.ShouldContain(
+            "<ac:image ac:alt=\"a diagram\"><ri:url ri:value=\"https://example.com/d.png\"/></ac:image>");
+    }
+
+    [Fact]
+    public void Convert_throws_on_local_image_without_an_attachment_resolver()
+    {
+        // A local image can only render if a resolver supplies the attachment
+        // filename; emitting a dangling ri:filename would publish a broken image.
+        var ex = Should.Throw<InvalidOperationException>(
             () => ConfluenceStorageConverter.Convert("![a diagram](diagram.png)"));
-        ex.Message.ShouldContain("Image");
+        ex.Message.ShouldContain("requires an attachment resolver");
+    }
+
+    [Fact]
+    public void Convert_throws_on_local_image_the_resolver_does_not_resolve()
+    {
+        // A path the resolver returns null for is a broken image reference — the
+        // same fail-loud contract as an unresolved relative .md link.
+        var ex = Should.Throw<InvalidOperationException>(
+            () => ConfluenceStorageConverter.Convert(
+                "![a diagram](missing.png)",
+                attachmentResolver: _ => null));
+        ex.Message.ShouldContain("does not resolve to any known file");
+    }
+
+    [Fact]
+    public void Convert_throws_on_image_followed_by_an_attribute_block()
+    {
+        // PLAN.md §7's '{width=300}' is not honored yet, and with no attributes
+        // extension Markdig leaves it as a sibling literal — rendering the image
+        // would publish the braces as visible text beside it.
+        var ex = Should.Throw<NotSupportedException>(
+            () => ConfluenceStorageConverter.Convert(
+                "![a](p.png){width=300}",
+                attachmentResolver: _ => "p.png"));
+        ex.Message.ShouldContain("{width=300}");
+    }
+
+    [Fact]
+    public void Convert_throws_on_data_uri_image()
+    {
+        // <ri:url> needs a fetchable URL; a base64 payload would publish broken.
+        var ex = Should.Throw<NotSupportedException>(
+            () => ConfluenceStorageConverter.Convert("![a](data:image/png;base64,iVBORw0K)"));
+        ex.Message.ShouldContain("'data:' URI");
+    }
+
+    [Fact]
+    public void Convert_throws_on_alt_text_carrying_a_nested_link()
+    {
+        // Flattening alt text to a plain ac:alt string would silently drop the
+        // nested link's destination.
+        var ex = Should.Throw<NotSupportedException>(
+            () => ConfluenceStorageConverter.Convert(
+                "![see [here](https://example.com)](p.png)",
+                attachmentResolver: _ => "p.png"));
+        ex.Message.ShouldContain("no plain-text projection");
     }
 
     [Fact]

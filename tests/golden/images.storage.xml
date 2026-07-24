@@ -1,0 +1,23 @@
+<h2>Images</h2>
+<p>An attached image: <ac:image ac:alt="Architecture diagram"><ri:attachment ri:filename="architecture.png"/></ac:image></p>
+<p>An external image: <ac:image ac:alt="Logo"><ri:url ri:value="https://example.com/logo.png?v=1&amp;size=48"/></ac:image></p>
+<p>No alt text at all: <ac:image><ri:attachment ri:filename="spacer.png"/></ac:image></p>
+<p>A title tooltip: <ac:image ac:title="Hover &amp; read" ac:alt="Loan flow"><ri:attachment ri:filename="loan-flow.png"/></ac:image></p>
+<p>Alt markup flattens: <ac:image ac:alt="bold and code"><ri:attachment ri:filename="rich.png"/></ac:image></p>
+<p>Nested paths flatten in the publisher, not here: <ac:image ac:alt="Deep"><ri:attachment ri:filename="images_sub_deep.png"/></ac:image></p>
+<p>Ampersands escape in both slots: <ac:image ac:alt="A &amp; B"><ri:attachment ri:filename="a &amp; b.png"/></ac:image></p>
+<p>A linked image: <a href="https://ci.example.com/job?a=1&amp;b=2"><ac:image ac:alt="Build status"><ri:attachment ri:filename="badge.png"/></ac:image></a></p>
+<table>
+<tbody>
+<tr>
+<th>Screenshot</th>
+</tr>
+<tr>
+<td><ac:image ac:alt="In a cell"><ri:attachment ri:filename="cell.png"/></ac:image></td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><ac:image ac:alt="In a list item"><ri:attachment ri:filename="item.png"/></ac:image></li>
+</ul>
+<p>A reference-style image: <ac:image ac:title="Ref title" ac:alt="Referenced"><ri:attachment ri:filename="ref.png"/></ac:image></p>

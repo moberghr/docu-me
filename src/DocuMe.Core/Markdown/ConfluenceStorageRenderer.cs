@@ -20,8 +20,9 @@ namespace DocuMe.Core.Markdown;
 /// breaks); bullet/ordered/nested lists and task lists; blockquotes and
 /// GitHub-alert panel macros; fenced code blocks (code macro); thematic breaks;
 /// links (external, relative .md page links, autolinks); GFM tables; a root-level
-/// <c>[TOC]</c> line (table-of-contents macro). The rest of
-/// the construct table (mermaid, images) arrives in later M1 slices. Until a construct has a
+/// <c>[TOC]</c> line (table-of-contents macro); images (attachment or external URL).
+/// The rest of
+/// the construct table (mermaid) arrives in a later M1 slice. Until a construct has a
 /// dedicated renderer, <see cref="UnknownConstructRenderer"/> makes the converter
 /// <em>fail loudly</em> rather than silently drop or mis-transform it (PLAN.md §7
 /// acceptance: zero unknown-construct warnings). Output uses <c>\n</c> separators
@@ -31,10 +32,14 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
 {
     private int _taskId;
 
-    public ConfluenceStorageRenderer(TextWriter writer, PageLinkResolver? linkResolver = null)
+    public ConfluenceStorageRenderer(
+        TextWriter writer,
+        PageLinkResolver? linkResolver = null,
+        AttachmentResolver? attachmentResolver = null)
         : base(writer)
     {
         LinkResolver = linkResolver;
+        AttachmentResolver = attachmentResolver;
 
         ObjectRenderers.Add(new HeadingRenderer());
         ObjectRenderers.Add(new ParagraphRenderer());
@@ -63,6 +68,14 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
     /// need no resolver.
     /// </summary>
     public PageLinkResolver? LinkResolver { get; }
+
+    /// <summary>
+    /// Resolves relative image paths to their final Confluence attachment filenames (§7);
+    /// may be <c>null</c>. <see cref="LinkInlineRenderer"/> fails loud on a local image when
+    /// this is <c>null</c> or the path does not resolve. External image URLs need no
+    /// resolver.
+    /// </summary>
+    public AttachmentResolver? AttachmentResolver { get; }
 
     /// <summary>
     /// When set, paragraphs render their inline content without a <c>&lt;p&gt;</c>
@@ -950,8 +963,9 @@ internal sealed class CodeInlineRenderer : MarkdownObjectRenderer<ConfluenceStor
 /// Per spike S2's default (heading anchors are not assumed to survive the new
 /// editor) a <c>#fragment</c> is dropped: a fragment on a page link is stripped
 /// and a same-page anchor (<c>#foo</c>) degrades to its link text with no link.
-/// Images (<c>![alt](src)</c> — also a <see cref="LinkInline"/>) and relative
-/// non-<c>.md</c> targets are not yet supported and fail loud.
+/// Images (<c>![alt](src)</c>) are also a <see cref="LinkInline"/> — Markdig flags them
+/// with <see cref="LinkInline.IsImage"/> — so they are dispatched from here to
+/// <see cref="WriteImage"/>. Relative non-<c>.md</c> link targets fail loud.
 /// </summary>
 internal sealed class LinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, LinkInline>
 {
@@ -959,9 +973,8 @@ internal sealed class LinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStor
     {
         if (obj.IsImage)
         {
-            throw new NotSupportedException(
-                "Image syntax '![alt](src)' maps to a Confluence attachment + <ac:image> " +
-                "(PLAN.md §7); that renderer is a later M1 slice, so images are not yet converted.");
+            WriteImage(renderer, obj);
+            return;
         }
 
         var url = obj.Url ?? string.Empty;
@@ -1032,6 +1045,143 @@ internal sealed class LinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStor
             .Write("\"/><ac:link-body>");
         renderer.WriteChildren(obj);
         renderer.Write("</ac:link-body></ac:link>");
+    }
+
+    /// <summary>
+    /// Writes <c>![alt](src)</c> as <c>&lt;ac:image&gt;</c> wrapping either an
+    /// <c>&lt;ri:attachment&gt;</c> (local file) or an <c>&lt;ri:url&gt;</c> (external URL) —
+    /// the two forms Atlassian's storage-format reference documents, and the two
+    /// kovetskiy/mark emits from the same template (<c>stdlib/stdlib.go</c>, <c>ac:image</c>).
+    /// <para>
+    /// Only <c>ac:title</c> and <c>ac:alt</c> are emitted, in mark's order. mark's other
+    /// attributes (<c>ac:width</c>, <c>ac:original-width</c>, <c>ac:align</c>,
+    /// <c>ac:layout</c>) are all derived from either CLI config or the pixel dimensions of
+    /// the image file on disk; this converter is a pure text transform and never opens a
+    /// file, so inventing them here is not possible. Both are omitted when absent rather
+    /// than written empty, so <c>![](p.png)</c> yields a bare <c>&lt;ac:image&gt;</c>.
+    /// </para>
+    /// </summary>
+    private static void WriteImage(ConfluenceStorageRenderer renderer, LinkInline obj)
+    {
+        RejectTrailingAttributeBlock(obj);
+
+        var url = obj.Url ?? string.Empty;
+        if (url.Length == 0)
+        {
+            throw new NotSupportedException(
+                "Image syntax with an empty source ('![alt]()') has no attachment or URL to " +
+                "reference, so it cannot become an <ac:image>.");
+        }
+
+        var external = IsExternal(url);
+        if (external && url.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            // <ri:url> takes a fetchable URL; Confluence will not inline a base64
+            // payload, so this would publish a visibly broken image. Rejected here
+            // with the other source checks, before anything is written.
+            throw new NotSupportedException(
+                "Image source is a 'data:' URI, which <ri:url ri:value=\"…\"> cannot " +
+                "reference. Save the image to a file in the wiki and link it relatively.");
+        }
+
+        renderer.Write("<ac:image");
+
+        if (!string.IsNullOrEmpty(obj.Title))
+        {
+            renderer.Write(" ac:title=\"").WriteAttributeEscaped(obj.Title).Write('"');
+        }
+
+        var alt = FlattenAltText(obj);
+        if (alt.Length > 0)
+        {
+            renderer.Write(" ac:alt=\"").WriteAttributeEscaped(alt).Write('"');
+        }
+
+        renderer.Write('>');
+
+        if (external)
+        {
+            renderer.Write("<ri:url ri:value=\"").WriteAttributeEscaped(url).Write("\"/>");
+        }
+        else
+        {
+            var resolver = renderer.AttachmentResolver
+                ?? throw new InvalidOperationException(
+                    $"Local image '{url}' requires an attachment resolver, but none was " +
+                    "supplied to ConfluenceStorageConverter.Convert.");
+            var filename = resolver(url)
+                ?? throw new InvalidOperationException(
+                    $"Local image '{url}' does not resolve to any known file (broken image " +
+                    "reference). Fix the path or add the file.");
+
+            renderer.Write("<ri:attachment ri:filename=\"").WriteAttributeEscaped(filename).Write("\"/>");
+        }
+
+        renderer.Write("</ac:image>");
+    }
+
+    /// <summary>
+    /// Flattens the image's children — its alt text — to the plain string that
+    /// <c>ac:alt</c> can hold. Emphasis contributes its inner text only: markers have no
+    /// meaning inside an XML attribute that Confluence renders as an accessibility string,
+    /// and both reference implementations flatten the same way (mark's
+    /// <c>nodeToHTMLText</c>; confmark models alt as a plain <c>String</c>). Anything whose
+    /// text projection would <em>lose a destination</em> — a nested link or image — fails
+    /// loud instead.
+    /// </summary>
+    private static string FlattenAltText(LinkInline obj)
+    {
+        var alt = new StringBuilder();
+        Append(obj, alt);
+        return alt.ToString();
+
+        static void Append(ContainerInline container, StringBuilder alt)
+        {
+            foreach (var child in container)
+            {
+                switch (child)
+                {
+                    case LiteralInline literal:
+                        alt.Append(literal.Content.AsSpan());
+                        break;
+                    case CodeInline code:
+                        alt.Append(code.Content);
+                        break;
+                    case LineBreakInline:
+                        alt.Append(' ');
+                        break;
+                    case EmphasisInline emphasis:
+                        Append(emphasis, alt);
+                        break;
+                    default:
+                        throw new NotSupportedException(
+                            $"Image alt text contains a '{child.GetType().Name}', which has no " +
+                            "plain-text projection for the ac:alt attribute. Simplify the alt text.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// PLAN.md §7 offers <c>{width=300}</c> after an image as a way to set
+    /// <c>ac:width</c>. With no attributes extension in the pipeline Markdig parses it as an
+    /// ordinary <see cref="LiteralInline"/> in the enclosing paragraph (verified against the
+    /// real parse tree), so honoring it needs its own slice — either Markdig's
+    /// GenericAttributes extension or hand-consuming this sibling. Until then it must fail
+    /// loud: rendering the image and letting <c>{width=300}</c> through as body text would
+    /// publish visible junk beside the image.
+    /// </summary>
+    private static void RejectTrailingAttributeBlock(LinkInline obj)
+    {
+        if (obj.NextSibling is not LiteralInline next || !next.Content.AsSpan().StartsWith("{"))
+        {
+            return;
+        }
+
+        throw new NotSupportedException(
+            $"Image is followed immediately by '{next.Content}'. An attribute block such as " +
+            "'{width=300}' (PLAN.md §7) is not yet honored, and publishing it as text beside " +
+            "the image would be visible junk. Remove it or put a space before it.");
     }
 
     /// <summary>True when the URL carries a URI scheme (<c>https:</c>, <c>mailto:</c>, …) or is protocol-relative (<c>//host</c>).</summary>
