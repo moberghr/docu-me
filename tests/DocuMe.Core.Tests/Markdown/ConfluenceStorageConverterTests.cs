@@ -307,9 +307,122 @@ public sealed class ConfluenceStorageConverterTests
         // language costs syntax highlighting and preserves every character, so
         // failing the page over it would buy nothing. Pinned so the decision cannot
         // drift by accident (it is what MapLanguage's null return means).
-        ConfluenceStorageConverter.Convert("```rust\nlet x = 1;\n```").ShouldBe(
+        // `nim` is the stand-in because it is a real language that Atlassian does not
+        // document a brush for; `rust` used to sit here and is now mapped.
+        ConfluenceStorageConverter.Convert("```nim\nlet x = 1;\n```").ShouldBe(
             "<ac:structured-macro ac:name=\"code\"><ac:plain-text-body><![CDATA[let x = 1;]]>"
             + "</ac:plain-text-body></ac:structured-macro>\n");
+    }
+
+    /// <summary>
+    /// The brush spelling is the whole contract here: a wrong one is a <em>silent</em>
+    /// no-highlight that looks identical to omitting the parameter, so asserting "no
+    /// diagnostic" would not catch it. Every expected value below is a Prism component id
+    /// (what ADF documents the <c>codeBlock</c> language attribute to be) that also appears
+    /// in Atlassian's own documented Code Block language list.
+    /// </summary>
+    [Theory]
+
+    // Systems and application languages. Note the display-name-vs-storage-value traps:
+    // Atlassian's UI shows "C++", "Objective-C" and "TeX"; the values are not those.
+    [InlineData("rust", "rust")]
+    [InlineData("rs", "rust")]
+    [InlineData("c", "c")]
+    [InlineData("cpp", "cpp")]
+    [InlineData("c++", "cpp")]
+    [InlineData("objc", "objectivec")]
+    [InlineData("objective-c", "objectivec")]
+    [InlineData("swift", "swift")]
+    [InlineData("d", "d")]
+    [InlineData("pascal", "pascal")]
+    [InlineData("ada", "ada")]
+    [InlineData("fortran", "fortran")]
+    [InlineData("vala", "vala")]
+    [InlineData("haxe", "haxe")]
+
+    // JVM and .NET family. `vbnet` and `visual-basic` are two distinct Prism components,
+    // so the two spellings must not collapse onto one brush.
+    [InlineData("kotlin", "kotlin")]
+    [InlineData("kt", "kotlin")]
+    [InlineData("kts", "kotlin")]
+    [InlineData("scala", "scala")]
+    [InlineData("groovy", "groovy")]
+    [InlineData("vbnet", "vbnet")]
+    [InlineData("vb.net", "vbnet")]
+    [InlineData("vb", "visual-basic")]
+    [InlineData("vba", "visual-basic")]
+    [InlineData("visualbasic", "visual-basic")]
+
+    // Scripting languages.
+    [InlineData("perl", "perl")]
+    [InlineData("pl", "perl")]
+    [InlineData("lua", "lua")]
+    [InlineData("r", "r")]
+    [InlineData("dart", "dart")]
+    [InlineData("julia", "julia")]
+    [InlineData("matlab", "matlab")]
+    [InlineData("tcl", "tcl")]
+    [InlineData("coffee", "coffeescript")]
+    [InlineData("livescript", "livescript")]
+    [InlineData("actionscript", "actionscript")]
+    [InlineData("applescript", "applescript")]
+    [InlineData("autoit", "autoit")]
+    [InlineData("coldfusion", "cfscript")]
+
+    // Functional languages.
+    [InlineData("haskell", "haskell")]
+    [InlineData("hs", "haskell")]
+    [InlineData("erlang", "erlang")]
+    [InlineData("elixir", "elixir")]
+    [InlineData("ocaml", "ocaml")]
+    [InlineData("clojure", "clojure")]
+    [InlineData("clj", "clojure")]
+    [InlineData("scheme", "scheme")]
+    [InlineData("rkt", "racket")]
+    [InlineData("standardml", "sml")]
+    [InlineData("prolog", "prolog")]
+    [InlineData("smalltalk", "smalltalk")]
+
+    // Web and markup adjacent. Sass and SCSS stay separate Prism components rather than
+    // collapsing, since their syntaxes differ.
+    [InlineData("jsx", "jsx")]
+    [InlineData("tsx", "tsx")]
+    [InlineData("sass", "sass")]
+    [InlineData("scss", "scss")]
+    [InlineData("graphql", "graphql")]
+    [InlineData("gql", "graphql")]
+    [InlineData("xquery", "xquery")]
+    [InlineData("rst", "rest")]
+    [InlineData("tex", "latex")]
+    [InlineData("latex", "latex")]
+
+    // Infrastructure and configuration. Terraform's language *is* HCL, and Atlassian
+    // documents the HCL brush rather than a Terraform one.
+    [InlineData("dockerfile", "docker")]
+    [InlineData("hcl", "hcl")]
+    [InlineData("terraform", "hcl")]
+    [InlineData("tf", "hcl")]
+    [InlineData("nginx", "nginx")]
+    [InlineData("proto", "protobuf")]
+
+    // Hardware description and enterprise.
+    [InlineData("verilog", "verilog")]
+    [InlineData("vhdl", "vhdl")]
+    [InlineData("abap", "abap")]
+    [InlineData("puppet", "puppet")]
+    [InlineData("qml", "qml")]
+
+    // Case-insensitive, like every other fence token.
+    [InlineData("Rust", "rust")]
+    [InlineData("KOTLIN", "kotlin")]
+    public void Convert_maps_a_fence_language_to_its_confluence_brush(string fenceLanguage, string brush)
+    {
+        var storage = ConfluenceStorageConverter.Convert($"```{fenceLanguage}\nbody\n```\n");
+
+        storage.ShouldBe(
+            $"<ac:structured-macro ac:name=\"code\"><ac:parameter ac:name=\"language\">{brush}"
+            + "</ac:parameter><ac:plain-text-body><![CDATA[body]]></ac:plain-text-body>"
+            + "</ac:structured-macro>\n");
     }
 
     [Fact]

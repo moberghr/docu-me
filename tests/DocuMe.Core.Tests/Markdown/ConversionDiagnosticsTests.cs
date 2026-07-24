@@ -48,6 +48,37 @@ public sealed class ConversionDiagnosticsTests
         diagnostics.Select(d => d.Construct).ShouldBe(["brainfuck", "brainfuck", "nim"]);
     }
 
+    /// <summary>
+    /// The other half of <c>LanguageMap</c>'s inclusion rule: a language that fails either
+    /// confirmation stays unmapped and keeps reporting. Guessing a brush for these would be a
+    /// silent no-highlight that <em>also</em> suppresses the diagnostic, trading a reported
+    /// cosmetic loss for an unreported one.
+    /// </summary>
+    [Theory]
+
+    // Atlassian documents a Code Block entry, but Prism — whose ids are what the value is
+    // finally read against — has no component at all, so there is no spelling to emit.
+    [InlineData("cuda")]
+    [InlineData("foxpro")]
+    [InlineData("javafx")]
+    [InlineData("objectivej")]
+    [InlineData("octave")]
+
+    // The mirror case: Prism supports these, Atlassian does not document them.
+    [InlineData("nim")]
+    [InlineData("brainfuck")]
+    public void Language_that_fails_either_confirmation_stays_unmapped_and_reports(string language)
+    {
+        var diagnostics = new List<ConversionDiagnostic>();
+
+        var storage = ConfluenceStorageConverter.Convert(
+            $"```{language}\nbody\n```",
+            diagnostics: diagnostics);
+
+        diagnostics.ShouldHaveSingleItem().Construct.ShouldBe(language);
+        storage.ShouldNotContain("ac:name=\"language\"");
+    }
+
     [Fact]
     public void Mixed_task_list_reports_a_diagnostic()
     {
@@ -142,6 +173,22 @@ public sealed class ConversionDiagnosticsTests
     [InlineData("```csharp\nvar x = 1;\n```")]
     [InlineData("```cs\nvar x = 1;\n```")]
     [InlineData("```sh linenumbers\necho hi\n```")]
+
+    // One per newly mapped family. Each of these used to report a loss it was not actually
+    // suffering — Confluence has a brush for all of them — and that false positive is the
+    // noise the §4.4 report cannot afford on 79 real pages.
+    [InlineData("```rust\nlet x = 1;\n```")]
+    [InlineData("```kotlin\nval x = 1\n```")]
+    [InlineData("```swift\nlet x = 1\n```")]
+    [InlineData("```c++\nint x = 1;\n```")]
+    [InlineData("```dockerfile\nFROM scratch\n```")]
+    [InlineData("```terraform\nresource \"a\" \"b\" {}\n```")]
+    [InlineData("```scala\nval x = 1\n```")]
+    [InlineData("```perl\nmy $x = 1;\n```")]
+    [InlineData("```lua\nlocal x = 1\n```")]
+    [InlineData("```haskell\nx = 1\n```")]
+    [InlineData("```graphql\n{ a }\n```")]
+    [InlineData("```proto\nmessage A {}\n```")]
 
     // A bare fence never had a language to lose.
     [InlineData("```\nplain\n```")]

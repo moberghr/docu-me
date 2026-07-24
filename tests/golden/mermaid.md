@@ -38,6 +38,6 @@ var x = 1;
 An unknown language keeps degrading to an unlabelled code macro. The loss is only
 syntax highlighting; every character the author wrote survives:
 
-```rust
+```nim
 let x = 1;
 ```

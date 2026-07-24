@@ -643,6 +643,39 @@ internal sealed class QuoteBlockRenderer : MarkdownObjectRenderer<ConfluenceStor
 /// language (mark's convention) to use attributes without one.
 /// </para>
 /// <para>
+/// <strong>The inclusion rule for <see cref="LanguageMap"/>:</strong> a brush is mapped
+/// only when it is confirmed by <em>two independent sources</em> — it appears in
+/// Atlassian's own documented Code Block language list, <em>and</em> it is a Prism
+/// component id, which is what the ADF <c>codeBlock</c> node documents its
+/// <c>language</c> attribute to be (Confluence Cloud converts storage format to ADF, so
+/// Prism's vocabulary is what the value is finally read against). Both checks matter
+/// because the two lists disagree: the Cloud support page still shows the ~23-brush
+/// legacy set, and the UI's display names (<c>CSharp</c>, <c>Objective-C</c>,
+/// <c>TeX</c>) are not the storage values (<c>csharp</c>, <c>objectivec</c>,
+/// <c>latex</c>).
+/// </para>
+/// <para>
+/// Anything confirmed by only one source stays <em>unmapped on purpose</em>, because a
+/// wrong brush is a <em>silent</em> no-highlight — indistinguishable in the published
+/// page from omitting the parameter, but it also suppresses the
+/// <see cref="ConversionDiagnosticCodes.UnknownFenceLanguage"/> diagnostic, turning a
+/// reported cosmetic loss into an unreported one. So Atlassian-documented languages with
+/// no Prism component at all (CUDA, FoxPro, JavaFX, Objective-J, Octave) are deliberately
+/// absent and keep reporting, and so is any language Prism supports that Atlassian does
+/// not document (Nim, Brainfuck).
+/// </para>
+/// <para>
+/// Where Atlassian's display name is not itself the Prism key the <em>pairing</em> is an
+/// inference, not a confirmation — <c>CSharp</c>/<c>csharp</c> (long since verified),
+/// <c>Objective-C</c>/<c>objectivec</c>, <c>TeX</c>/<c>latex</c>,
+/// <c>Dockerfile</c>/<c>docker</c>, <c>ColdFusion</c>/<c>cfscript</c>,
+/// <c>reStructuredText</c>/<c>rest</c>, <c>StandardML</c>/<c>sml</c>,
+/// <c>Mathematica</c>/Prism's <c>wolfram</c> alias. The residual unknown is whether
+/// Cloud's storage-to-ADF conversion honors every Prism id or validates against a
+/// narrower internal table; that is a sandbox observation, not a documentation one, and
+/// its worst case is the unhighlighted block we already publish today.
+/// </para>
+/// <para>
 /// The remaining tokens are attributes: <c>collapse</c>/<c>nocollapse</c>,
 /// <c>linenumbers</c>, a positive integer (Confluence's <c>firstline</c>, which also
 /// turns line numbers on), and <c>title</c>, whose value is the rest of the line
@@ -695,6 +728,77 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
         ["css"] = "css",
         ["diff"] = "diff",
         ["txt"] = "text", ["text"] = "text", ["plaintext"] = "text",
+
+        // Systems and application languages.
+        ["rust"] = "rust", ["rs"] = "rust",
+        ["c"] = "c",
+        ["cpp"] = "cpp", ["c++"] = "cpp",
+        ["objectivec"] = "objectivec", ["objective-c"] = "objectivec", ["objc"] = "objectivec",
+        ["swift"] = "swift",
+        ["d"] = "d",
+        ["pascal"] = "pascal", ["objectpascal"] = "pascal",
+        ["ada"] = "ada",
+        ["fortran"] = "fortran",
+        ["vala"] = "vala",
+        ["haxe"] = "haxe",
+
+        // JVM and .NET family.
+        ["kotlin"] = "kotlin", ["kt"] = "kotlin", ["kts"] = "kotlin",
+        ["scala"] = "scala",
+        ["groovy"] = "groovy",
+        ["vbnet"] = "vbnet", ["vb.net"] = "vbnet",
+        ["vb"] = "visual-basic", ["visualbasic"] = "visual-basic", ["vba"] = "visual-basic",
+
+        // Scripting languages.
+        ["perl"] = "perl", ["pl"] = "perl", ["pm"] = "perl",
+        ["lua"] = "lua",
+        ["r"] = "r",
+        ["dart"] = "dart",
+        ["julia"] = "julia", ["jl"] = "julia",
+        ["matlab"] = "matlab",
+        ["tcl"] = "tcl",
+        ["coffeescript"] = "coffeescript", ["coffee"] = "coffeescript",
+        ["livescript"] = "livescript",
+        ["actionscript"] = "actionscript",
+        ["applescript"] = "applescript",
+        ["autoit"] = "autoit",
+        ["coldfusion"] = "cfscript", ["cfscript"] = "cfscript", ["cfc"] = "cfscript",
+
+        // Functional languages.
+        ["haskell"] = "haskell", ["hs"] = "haskell",
+        ["erlang"] = "erlang", ["erl"] = "erlang",
+        ["elixir"] = "elixir",
+        ["ocaml"] = "ocaml",
+        ["clojure"] = "clojure", ["clj"] = "clojure", ["cljs"] = "clojure",
+        ["scheme"] = "scheme",
+        ["racket"] = "racket", ["rkt"] = "racket",
+        ["sml"] = "sml", ["standardml"] = "sml", ["smlnj"] = "sml",
+        ["prolog"] = "prolog",
+        ["smalltalk"] = "smalltalk",
+
+        // Web and markup adjacent.
+        ["jsx"] = "jsx",
+        ["tsx"] = "tsx",
+        ["sass"] = "sass", ["scss"] = "scss",
+        ["graphql"] = "graphql", ["gql"] = "graphql",
+        ["xquery"] = "xquery",
+        ["rest"] = "rest", ["rst"] = "rest", ["restructuredtext"] = "rest",
+        ["tex"] = "latex", ["latex"] = "latex",
+
+        // Infrastructure and configuration.
+        ["dockerfile"] = "docker", ["docker"] = "docker",
+        ["hcl"] = "hcl", ["terraform"] = "hcl", ["tf"] = "hcl",
+        ["nginx"] = "nginx",
+        ["protobuf"] = "protobuf", ["proto"] = "protobuf",
+
+        // Hardware description and enterprise.
+        ["verilog"] = "verilog",
+        ["vhdl"] = "vhdl",
+        ["abap"] = "abap",
+        ["puppet"] = "puppet",
+        ["qml"] = "qml",
+        ["splunk-spl"] = "splunk-spl", ["splunkspl"] = "splunk-spl",
+        ["mathematica"] = "mathematica",
     };
 
     /// <summary>
