@@ -1,4 +1,6 @@
 using DocuMe.Core.Markdown;
+using Markdig.Syntax;
+using Markdig.Syntax.Inlines;
 using Shouldly;
 
 namespace DocuMe.Core.Tests.Markdown;
@@ -487,6 +489,105 @@ public sealed class ConfluenceStorageConverterTests
 
         storage.ShouldStartWith("<ac:task-list>");
         storage.ShouldNotContain("<ol>");
+    }
+
+    [Theory]
+    [InlineData("~~gone~~", "<p><span style=\"text-decoration: line-through;\">gone</span></p>\n")]
+    [InlineData("a ~~b~~ c", "<p>a <span style=\"text-decoration: line-through;\">b</span> c</p>\n")]
+    [InlineData(
+        "~~a~~ and ~~b~~",
+        "<p><span style=\"text-decoration: line-through;\">a</span> and <span style=\"text-decoration: line-through;\">b</span></p>\n")]
+    public void Convert_renders_strikethrough_as_a_line_through_span(string markdown, string expected)
+    {
+        // Atlassian's documented spelling and the shape the Confluence editor itself
+        // emits — deliberately not mark's <del>, which Confluence would rewrite on
+        // save and so churn the approval content hash (§8) on every republish.
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("~x~", "<p>~x~</p>\n")]
+    [InlineData("^sup^", "<p>^sup^</p>\n")]
+    [InlineData("++ins++", "<p>++ins++</p>\n")]
+    [InlineData("==mark==", "<p>==mark==</p>\n")]
+    [InlineData("approx ~5 minutes and ~10 more", "<p>approx ~5 minutes and ~10 more</p>\n")]
+    [InlineData("cd ~/projects then ~/tmp", "<p>cd ~/projects then ~/tmp</p>\n")]
+    public void Convert_leaves_the_other_emphasis_extras_as_literal_text(string markdown, string expected)
+    {
+        // THE regression pin for passing EmphasisExtraOptions.Strikethrough explicitly.
+        // Markdig's argless UseEmphasisExtras() defaults to all five extras, which would
+        // make each of these an EmphasisInline with no storage-format mapping — so a bare
+        // '^' or '~' anywhere in a service wiki's prose would fail the whole page.
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(
+        "~~struck **bold**~~",
+        "<p><span style=\"text-decoration: line-through;\">struck <strong>bold</strong></span></p>\n")]
+    [InlineData(
+        "**bold ~~struck~~**",
+        "<p><strong>bold <span style=\"text-decoration: line-through;\">struck</span></strong></p>\n")]
+    [InlineData(
+        "*italic ~~struck~~*",
+        "<p><em>italic <span style=\"text-decoration: line-through;\">struck</span></em></p>\n")]
+    public void Convert_nests_strikethrough_with_the_other_emphasis(string markdown, string expected)
+    {
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void Convert_escapes_markup_characters_inside_struck_text()
+    {
+        ConfluenceStorageConverter.Convert("~~AT&T > B~~")
+            .ShouldBe("<p><span style=\"text-decoration: line-through;\">AT&amp;T &gt; B</span></p>\n");
+    }
+
+    [Fact]
+    public void Convert_treats_a_triple_tilde_as_a_code_fence_not_strikethrough()
+    {
+        // '~~~' is CommonMark's other fence marker. Enabling '~' as an emphasis
+        // delimiter must not shadow it, or every tilde-fenced sample on a page
+        // would be re-read as prose.
+        var storage = ConfluenceStorageConverter.Convert("~~~\nplain fence\n~~~\n");
+
+        storage.ShouldStartWith("<ac:structured-macro ac:name=\"code\">");
+        storage.ShouldContain("plain fence");
+        storage.ShouldNotContain("line-through");
+    }
+
+    [Fact]
+    public void Convert_does_not_strike_a_tilde_pair_inside_a_code_span()
+    {
+        ConfluenceStorageConverter.Convert("`~~kept~~`").ShouldBe("<p><code>~~kept~~</code></p>\n");
+    }
+
+    [Fact]
+    public void Convert_leaves_an_unmatched_tilde_pair_as_literal_text()
+    {
+        // '~' allows intra-word emphasis, so an opener with no closer must degrade
+        // to text rather than swallowing the rest of the paragraph.
+        ConfluenceStorageConverter.Convert("range 5~~10 units").ShouldBe("<p>range 5~~10 units</p>\n");
+    }
+
+    [Fact]
+    public void Render_fails_loud_on_an_emphasis_delimiter_it_has_no_mapping_for()
+    {
+        // Unreachable through the converter's own pipeline, so the guard is asserted
+        // against a hand-built tree: if a later pipeline ever enables Markdig's other
+        // emphasis extras, '^sup^' must fail loudly instead of rendering as <em>.
+        var document = new MarkdownDocument();
+        var paragraph = new ParagraphBlock { Inline = new ContainerInline() };
+        var emphasis = new EmphasisInline { DelimiterChar = '^', DelimiterCount = 1 };
+        emphasis.AppendChild(new LiteralInline("sup"));
+        paragraph.Inline.AppendChild(emphasis);
+        document.Add(paragraph);
+
+        using var writer = new StringWriter();
+        var renderer = new ConfluenceStorageRenderer(writer);
+
+        var ex = Should.Throw<NotSupportedException>(() => renderer.Render(document));
+        ex.Message.ShouldContain("emphasis delimiter '^'");
     }
 
     [Fact]

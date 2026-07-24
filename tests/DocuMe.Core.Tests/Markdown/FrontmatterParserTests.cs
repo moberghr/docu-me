@@ -96,6 +96,16 @@ public sealed class FrontmatterParserTests
     }
 
     [Fact]
+    public void Parse_keeps_this_parser_in_extension_lockstep_with_the_converter()
+    {
+        // Both pipelines must enable the same extensions. Strikethrough-only emphasis
+        // extras means a single '~' is not a delimiter here either, so a title keeps
+        // its tilde while struck text still contributes its plain words.
+        FrontmatterParser.Parse("# Sizing ~10 Nodes\n\nBody.\n").Title.ShouldBe("Sizing ~10 Nodes");
+        FrontmatterParser.Parse("# The ~~old~~ new CLI\n\nBody.\n").Title.ShouldBe("The old new CLI");
+    }
+
+    [Fact]
     public void Parse_with_no_H1_and_no_title_leaves_title_null()
     {
         var parsed = FrontmatterParser.Parse(

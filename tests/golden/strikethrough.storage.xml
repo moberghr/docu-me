@@ -1,0 +1,24 @@
+<h2>Strikethrough</h2>
+<p>The <span style="text-decoration: line-through;">old</span> new endpoint is live.</p>
+<p>Nested both ways: <span style="text-decoration: line-through;">struck <strong>and bold</strong></span>, <strong>bold <span style="text-decoration: line-through;">and struck</span></strong>.</p>
+<p>Struck <span style="text-decoration: line-through;"><code>code</code></span>, struck <span style="text-decoration: line-through;">AT&amp;T</span>, struck <a href="https://example.com/a?x=1&amp;y=2">link</a>.</p>
+<p>Single tildes stay literal: ~x~, ~/home/user, approx ~5 minutes.</p>
+<p>Other emphasis extras stay literal: ^sup^, ++ins++, ==mark==.</p>
+<p>Mid-word 5~~10 stays literal.</p>
+<p>A <code>~~literal~~</code> code span is untouched.</p>
+<ul>
+<li><span style="text-decoration: line-through;">Retired</span> step</li>
+<li>Live step</li>
+</ul>
+<table>
+<tbody>
+<tr>
+<th>Field</th>
+<th>Status</th>
+</tr>
+<tr>
+<td><code>legacy_id</code></td>
+<td><span style="text-decoration: line-through;">required</span> optional</td>
+</tr>
+</tbody>
+</table>

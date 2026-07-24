@@ -1,4 +1,5 @@
 using Markdig;
+using Markdig.Extensions.EmphasisExtras;
 using Markdig.Extensions.Tables;
 
 namespace DocuMe.Core.Markdown;
@@ -24,6 +25,15 @@ public static class ConfluenceStorageConverter
     // GfmTaskListExtension replaces Markdig's own UseTaskLists() — see the parser
     // there for why the stock one is too loose to use as-is.
     //
+    // UseEmphasisExtras is passed Strikethrough EXPLICITLY. The argless overload
+    // defaults to EmphasisExtraOptions.Default = Strikethrough | Subscript |
+    // Superscript | Inserted | Marked, which would make '~', '^', '+' and '='
+    // emphasis delimiters: `^sup^` in ordinary prose would then parse as an
+    // EmphasisInline that has no storage-format mapping. Strikethrough alone also
+    // sets the '~' descriptor's minimum run length to 2, so a single `~x~`, a `~/`
+    // home path and an `approx ~5` stay literal text (verified against Markdig
+    // 1.3.2's EmphasisExtraExtension.Setup).
+    //
     // FrontmatterParser.Pipeline must enable the same extensions: an extension
     // changes inline parsing, so a divergence would let the two disagree about
     // where the title's H1 is.
@@ -31,6 +41,7 @@ public static class ConfluenceStorageConverter
         .UseYamlFrontMatter()
         .UsePipeTables(new PipeTableOptions { UseHeaderForColumnCount = true })
         .Use<GfmTaskListExtension>()
+        .UseEmphasisExtras(EmphasisExtraOptions.Strikethrough)
         .Build();
 
     /// <summary>Renders <paramref name="markdown"/> to a storage-format XHTML fragment.</summary>

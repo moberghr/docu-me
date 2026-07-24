@@ -16,11 +16,11 @@ namespace DocuMe.Core.Markdown;
 /// </summary>
 /// <remarks>
 /// Covered so far: headings (H1 dropped — it is the page title, §7); paragraphs
-/// with inline text (literal, emphasis, inline code, line breaks); bullet/ordered/
-/// nested lists; blockquotes and GitHub-alert panel macros; fenced code blocks
-/// (code macro); thematic breaks; links (external, relative .md page links,
-/// autolinks); GFM tables. The rest of the construct table (mermaid, task lists,
-/// strikethrough, images, <c>[TOC]</c>) arrives in later M1 slices. Until a construct has a
+/// with inline text (literal, emphasis incl. strikethrough, inline code, line
+/// breaks); bullet/ordered/nested lists and task lists; blockquotes and
+/// GitHub-alert panel macros; fenced code blocks (code macro); thematic breaks;
+/// links (external, relative .md page links, autolinks); GFM tables. The rest of
+/// the construct table (mermaid, images, <c>[TOC]</c>) arrives in later M1 slices. Until a construct has a
 /// dedicated renderer, <see cref="UnknownConstructRenderer"/> makes the converter
 /// <em>fail loudly</em> rather than silently drop or mis-transform it (PLAN.md §7
 /// acceptance: zero unknown-construct warnings). Output uses <c>\n</c> separators
@@ -815,11 +815,46 @@ internal sealed class ThematicBreakRenderer : MarkdownObjectRenderer<ConfluenceS
         => renderer.Write("<hr/>").Write('\n');
 }
 
-/// <summary><c>**bold**</c>/<c>__bold__</c> → <c>&lt;strong&gt;</c>; <c>*italic*</c>/<c>_italic_</c> → <c>&lt;em&gt;</c>.</summary>
+/// <summary>
+/// <c>**bold**</c>/<c>__bold__</c> → <c>&lt;strong&gt;</c>;
+/// <c>*italic*</c>/<c>_italic_</c> → <c>&lt;em&gt;</c>;
+/// <c>~~struck~~</c> → <c>&lt;span style="text-decoration: line-through;"&gt;</c>.
+/// </summary>
+/// <remarks>
+/// The strikethrough spelling is Atlassian's documented one and the shape the
+/// Confluence editor itself produces (confmark emits <em>and</em> parses only this
+/// form). It is a deliberate divergence from mark, which emits <c>&lt;del&gt;</c> —
+/// but by omission rather than by decision: mark registers no strikethrough
+/// renderer and so inherits goldmark's default HTML tag. A tag Confluence rewrites
+/// on save would make every republish see drift against the stored body and churn
+/// the approval content hash (§8), so the editor's own shape is the safer contract.
+/// <para>
+/// Any other delimiter character fails loud. Unreachable with the pipeline's
+/// Strikethrough-only options, but a future pipeline that enabled Markdig's other
+/// emphasis extras would otherwise render <c>^sup^</c> as <c>&lt;em&gt;</c> and
+/// <c>==mark==</c> as <c>&lt;strong&gt;</c> — silent, wrong, and plausible.
+/// </para>
+/// </remarks>
 internal sealed class EmphasisRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, EmphasisInline>
 {
     protected override void Write(ConfluenceStorageRenderer renderer, EmphasisInline obj)
     {
+        if (obj.DelimiterChar == '~' && obj.DelimiterCount == 2)
+        {
+            renderer.Write("<span style=\"text-decoration: line-through;\">");
+            renderer.WriteChildren(obj);
+            renderer.Write("</span>");
+            return;
+        }
+
+        if (obj.DelimiterChar is not ('*' or '_'))
+        {
+            throw new NotSupportedException(
+                $"No storage-format mapping for emphasis delimiter '{obj.DelimiterChar}' " +
+                $"repeated {obj.DelimiterCount} time(s). Only **bold**, *italic* and " +
+                "~~strikethrough~~ are supported by the M1 converter.");
+        }
+
         var tag = obj.DelimiterCount >= 2 ? "strong" : "em";
         renderer.Write('<').Write(tag).Write('>');
         renderer.WriteChildren(obj);

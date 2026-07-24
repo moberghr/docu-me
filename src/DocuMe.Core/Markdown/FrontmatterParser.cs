@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using Markdig;
+using Markdig.Extensions.EmphasisExtras;
 using Markdig.Extensions.Tables;
 using Markdig.Extensions.Yaml;
 using Markdig.Syntax;
@@ -25,6 +26,7 @@ public static class FrontmatterParser
         .UseYamlFrontMatter()
         .UsePipeTables(new PipeTableOptions { UseHeaderForColumnCount = true })
         .Use<GfmTaskListExtension>()
+        .UseEmphasisExtras(EmphasisExtraOptions.Strikethrough)
         .Build();
 
     private static readonly IDeserializer Yaml = new DeserializerBuilder()
