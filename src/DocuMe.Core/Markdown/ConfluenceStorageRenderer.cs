@@ -19,8 +19,9 @@ namespace DocuMe.Core.Markdown;
 /// with inline text (literal, emphasis incl. strikethrough, inline code, line
 /// breaks); bullet/ordered/nested lists and task lists; blockquotes and
 /// GitHub-alert panel macros; fenced code blocks (code macro); thematic breaks;
-/// links (external, relative .md page links, autolinks); GFM tables. The rest of
-/// the construct table (mermaid, images, <c>[TOC]</c>) arrives in later M1 slices. Until a construct has a
+/// links (external, relative .md page links, autolinks); GFM tables; a root-level
+/// <c>[TOC]</c> line (table-of-contents macro). The rest of
+/// the construct table (mermaid, images) arrives in later M1 slices. Until a construct has a
 /// dedicated renderer, <see cref="UnknownConstructRenderer"/> makes the converter
 /// <em>fail loudly</em> rather than silently drop or mis-transform it (PLAN.md §7
 /// acceptance: zero unknown-construct warnings). Output uses <c>\n</c> separators
@@ -157,10 +158,49 @@ internal sealed class HeadingRenderer : MarkdownObjectRenderer<ConfluenceStorage
     }
 }
 
+/// <summary>
+/// Paragraphs map to <c>&lt;p&gt;</c>, except a root-level paragraph that is exactly
+/// <c>[TOC]</c>, which becomes Confluence's table-of-contents macro (§7).
+/// <para>
+/// The <c>[TOC]</c> spelling is DocuMe's own: mark has no such shorthand (it requires an
+/// explicit <c>&lt;!-- Include: ac:toc --&gt;</c> directive), so §7's source syntax follows
+/// the Python-Markdown/MultiMarkdown convention instead. No parameters are emitted, unlike
+/// mark's template which writes all ten Confluence defaults: the shorthand carries none, and
+/// writing defaults would churn every published body and the §8 approval hash for zero
+/// rendering difference (same reasoning as the code macro's omitted <c>collapse</c>). The
+/// open/close spelling over a self-closing tag matches confmark, §7's round-trip reference,
+/// and needs no reshaping if a parameterized shorthand is ever added.
+/// </para>
+/// <para>
+/// Matching is deliberately <em>narrower</em> than the reference tools, because widening it
+/// silently eats author text while narrowing it only leaves a visible literal the author can
+/// fix. Three rules follow from that: the match is structural, root-level only, and
+/// case-sensitive. Structural, because Markdig parses an unresolved <c>[TOC]</c> reference
+/// into two literals (<c>[</c> then <c>TOC]</c>) whereas the escaped <c>\[TOC]</c> — the one
+/// spelling an author uses precisely to prevent expansion — collapses to a <em>single</em>
+/// literal with identical text; comparing accumulated text would hijack it, comparing shape
+/// cannot. Root-level only (mirroring the alert panels' blockquote-depth rule), since a TOC
+/// is a page-level construct and a <c>[TOC]</c> in a list item, quote or table cell is far
+/// more likely prose about the syntax than a request for one. Case-sensitive, so
+/// <c>[toc]</c> stays text.
+/// </para>
+/// <para>
+/// A non-matching <c>[TOC]</c> degrades to visible literal text rather than failing loud, so
+/// a page documenting the syntax stays publishable.
+/// </para>
+/// </summary>
 internal sealed class ParagraphRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, ParagraphBlock>
 {
+    private const string TocMacro = "<ac:structured-macro ac:name=\"toc\"></ac:structured-macro>";
+
     protected override void Write(ConfluenceStorageRenderer renderer, ParagraphBlock obj)
     {
+        if (IsTocMarker(obj))
+        {
+            renderer.Write(TocMacro).Write('\n');
+            return;
+        }
+
         if (renderer.ImplicitParagraph)
         {
             renderer.WriteLeafInline(obj);
@@ -170,6 +210,34 @@ internal sealed class ParagraphRenderer : MarkdownObjectRenderer<ConfluenceStora
         renderer.Write("<p>");
         renderer.WriteLeafInline(obj);
         renderer.Write("</p>").Write('\n');
+    }
+
+    /// <summary>
+    /// True when <paramref name="obj"/> is a root-level paragraph holding nothing but the
+    /// literal <c>[TOC]</c>, in the exact two-literal shape Markdig produces for an
+    /// unresolved shortcut reference. A Markdig upgrade that changed that shape would make
+    /// this return false, degrading to visible <c>[TOC]</c> text rather than to a wrong
+    /// macro; a test pins the shape so the change surfaces there instead.
+    /// </summary>
+    private static bool IsTocMarker(ParagraphBlock obj)
+    {
+        if (obj.Parent is not MarkdownDocument || obj.Inline is null)
+        {
+            return false;
+        }
+
+        if (obj.Inline.FirstChild is not LiteralInline first
+            || !first.Content.AsSpan().SequenceEqual("["))
+        {
+            return false;
+        }
+
+        if (first.NextSibling is not LiteralInline second || second.NextSibling is not null)
+        {
+            return false;
+        }
+
+        return second.Content.AsSpan().SequenceEqual("TOC]");
     }
 }
 

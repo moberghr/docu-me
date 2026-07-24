@@ -590,6 +590,113 @@ public sealed class ConfluenceStorageConverterTests
         ex.Message.ShouldContain("emphasis delimiter '^'");
     }
 
+    [Theory]
+    [InlineData("[TOC]")]
+    [InlineData("[TOC]\n")]
+    [InlineData("[TOC] ")] // trailing whitespace is invisible and must not defeat the match
+    [InlineData("  [TOC]")] // up to 3 spaces is still a paragraph, not indented code
+    [InlineData("   [TOC]")]
+    public void Convert_renders_a_root_level_toc_marker_as_the_toc_macro(string markdown)
+    {
+        ConfluenceStorageConverter.Convert(markdown)
+            .ShouldBe("<ac:structured-macro ac:name=\"toc\"></ac:structured-macro>\n");
+    }
+
+    [Fact]
+    public void Convert_renders_the_toc_macro_in_document_order_among_other_blocks()
+    {
+        ConfluenceStorageConverter.Convert("[TOC]\n\n## Section\n\nBody.")
+            .ShouldBe("<ac:structured-macro ac:name=\"toc\"></ac:structured-macro>\n<h2>Section</h2>\n<p>Body.</p>\n");
+    }
+
+    [Fact]
+    public void Convert_renders_every_toc_marker_on_a_page_and_does_so_stably()
+    {
+        // No counter or other per-page state backs the macro, so re-rendering the same
+        // source must be byte-identical (§8: the approval content hash must not churn).
+        const string markdown = "[TOC]\n\n## A\n\n[TOC]";
+        const string expected = "<ac:structured-macro ac:name=\"toc\"></ac:structured-macro>\n"
+            + "<h2>A</h2>\n"
+            + "<ac:structured-macro ac:name=\"toc\"></ac:structured-macro>\n";
+
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe(expected);
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void Convert_keeps_an_escaped_toc_marker_as_literal_text()
+    {
+        // THE discriminator this slice turns on. '\[TOC]' is the one spelling an author uses
+        // to *prevent* expansion, and it accumulates to exactly the same text as the bare
+        // marker — Markdig only distinguishes them by shape (one literal vs. two). Together
+        // with Convert_renders_a_root_level_toc_marker_as_the_toc_macro this pins that shape
+        // from both sides, so a Markdig upgrade that changed it fails here rather than
+        // silently eating author text.
+        ConfluenceStorageConverter.Convert("\\[TOC]").ShouldBe("<p>[TOC]</p>\n");
+    }
+
+    [Theory]
+    [InlineData("[toc]", "[toc]")] // the match is case-sensitive by design
+    [InlineData("[Toc]", "[Toc]")]
+    [InlineData("[TOC] and more", "[TOC] and more")]
+    [InlineData("leading [TOC]", "leading [TOC]")]
+    [InlineData("[[TOC]]", "[[TOC]]")]
+    [InlineData("**[TOC]**", "<strong>[TOC]</strong>")]
+    [InlineData("`[TOC]`", "<code>[TOC]</code>")]
+    [InlineData("[TOC]\n[TOC]", "[TOC] [TOC]")] // two on one paragraph via a soft break
+    public void Convert_keeps_a_toc_marker_that_is_not_alone_on_its_line_as_text(string markdown, string expectedInner)
+    {
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe($"<p>{expectedInner}</p>\n");
+    }
+
+    [Theory]
+    [InlineData("- [TOC]", "<ul>\n<li>[TOC]</li>\n</ul>\n")]
+    [InlineData("> [TOC]", "<blockquote>\n<p>[TOC]</p>\n</blockquote>\n")]
+    [InlineData(
+        "| a |\n|---|\n| [TOC] |",
+        "<table>\n<tbody>\n<tr>\n<th>a</th>\n</tr>\n<tr>\n<td>[TOC]</td>\n</tr>\n</tbody>\n</table>\n")]
+    public void Convert_keeps_a_nested_toc_marker_as_text(string markdown, string expected)
+    {
+        // Root-level only: a TOC is a page-level construct, and a marker inside a list item,
+        // quote or table cell is far more likely prose about the syntax. Degrading to visible
+        // text (rather than failing loud) keeps a page that documents the syntax publishable.
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void Convert_leaves_a_toc_marker_inside_a_fenced_code_block_alone()
+    {
+        ConfluenceStorageConverter.Convert("```\n[TOC]\n```")
+            .ShouldBe("<ac:structured-macro ac:name=\"code\">"
+                + "<ac:plain-text-body><![CDATA[[TOC]]]></ac:plain-text-body></ac:structured-macro>\n");
+    }
+
+    [Fact]
+    public void Convert_keeps_a_toc_marker_backed_by_a_reference_definition_as_a_link()
+    {
+        // The author defined a real link target, so honoring it beats overriding them.
+        ConfluenceStorageConverter.Convert("[TOC]: https://example.com/toc\n\n[TOC]")
+            .ShouldBe("<p><a href=\"https://example.com/toc\">TOC</a></p>\n");
+    }
+
+    [Fact]
+    public void Convert_fails_loud_on_an_indented_toc_marker()
+    {
+        // 4 spaces makes it an indented code block, which the converter does not support.
+        // Pinned because indenting the marker is a realistic authoring mistake.
+        var ex = Should.Throw<NotSupportedException>(() => ConfluenceStorageConverter.Convert("    [TOC]"));
+        ex.Message.ShouldContain("CodeBlock");
+    }
+
+    [Fact]
+    public void Convert_fails_loud_on_two_adjacent_toc_markers()
+    {
+        // '[TOC][TOC]' parses as an unresolved reference with a label, leaving a
+        // LinkDelimiterInline in the tree. Pinned so the behavior is known here rather
+        // than discovered on a live page.
+        Should.Throw<NotSupportedException>(() => ConfluenceStorageConverter.Convert("[TOC][TOC]"));
+    }
+
     [Fact]
     public void Convert_empty_input_produces_empty_output()
     {

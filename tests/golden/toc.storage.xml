@@ -1,0 +1,29 @@
+<ac:structured-macro ac:name="toc"></ac:structured-macro>
+<h2>Overview</h2>
+<p>A page usually opens with the marker above.</p>
+<p>[toc]</p>
+<p>[TOC] and more on the line</p>
+<p>leading [TOC]</p>
+<p><strong>[TOC]</strong></p>
+<p><code>[TOC]</code></p>
+<p>[TOC]</p>
+<ul>
+<li>[TOC]</li>
+<li>plain item</li>
+</ul>
+<blockquote>
+<p>[TOC]</p>
+</blockquote>
+<table>
+<tbody>
+<tr>
+<th>Construct</th>
+</tr>
+<tr>
+<td>[TOC]</td>
+</tr>
+</tbody>
+</table>
+<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[[TOC]
+not a macro]]></ac:plain-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="toc"></ac:structured-macro>
