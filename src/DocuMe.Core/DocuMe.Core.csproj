@@ -5,4 +5,11 @@
     <Description>Core library for DocuMe — the repo-to-Confluence docs lifecycle toolkit.</Description>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Markdown parsing + custom storage-format renderer (PLAN.md §4, §7). -->
+    <PackageReference Include="Markdig" Version="1.3.2" />
+    <!-- YAML frontmatter deserialization (PLAN.md §5.2). -->
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+  </ItemGroup>
+
 </Project>

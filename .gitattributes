@@ -1,0 +1,4 @@
+# Golden converter fixtures are byte-compared; pin them to LF so the comparison
+# is stable across macOS dev and Linux CI regardless of local core.autocrlf.
+tests/golden/*.md          text eol=lf
+tests/golden/*.storage.xml text eol=lf

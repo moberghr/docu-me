@@ -1,0 +1,125 @@
+using System.Text;
+using Markdig;
+using Markdig.Extensions.Yaml;
+using Markdig.Syntax;
+using Markdig.Syntax.Inlines;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
+
+namespace DocuMe.Core.Markdown;
+
+/// <summary>
+/// Extracts and strips the YAML frontmatter from a wiki markdown file and
+/// resolves the page title (PLAN.md §5.2, §6.2 step 1). Detection uses Markdig's
+/// frontmatter extension so only a leading <c>---</c> block at line 1 counts;
+/// a mid-document <c>---</c> stays a thematic break.
+/// </summary>
+public static class FrontmatterParser
+{
+    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
+        .UseYamlFrontMatter()
+        .Build();
+
+    private static readonly IDeserializer Yaml = new DeserializerBuilder()
+        .WithNamingConvention(CamelCaseNamingConvention.Instance)
+        .IgnoreUnmatchedProperties()
+        .Build();
+
+    /// <summary>Parses <paramref name="markdown"/> into frontmatter, resolved title, and stripped body.</summary>
+    public static ParsedPage Parse(string markdown)
+    {
+        ArgumentNullException.ThrowIfNull(markdown);
+
+        var document = Markdig.Markdown.Parse(markdown, Pipeline);
+        var yamlBlock = document.Descendants<YamlFrontMatterBlock>().FirstOrDefault();
+
+        PageFrontmatter frontmatter;
+        string body;
+        if (yamlBlock is not null)
+        {
+            frontmatter = Deserialize(RawYaml(markdown, yamlBlock));
+            var after = yamlBlock.Span.End + 1;
+            body = (after < markdown.Length ? markdown[after..] : string.Empty).TrimStart('\r', '\n');
+        }
+        else
+        {
+            frontmatter = new PageFrontmatter();
+            body = markdown;
+        }
+
+        var title = frontmatter.Title ?? FirstHeadingText(document);
+        return new ParsedPage(frontmatter, title, body);
+    }
+
+    /// <summary>Slices the block's source span and drops the <c>---</c> fence lines.</summary>
+    private static string RawYaml(string markdown, YamlFrontMatterBlock block)
+    {
+        var raw = markdown.Substring(block.Span.Start, block.Span.Length).Replace("\r\n", "\n");
+        var lines = raw.Split('\n').ToList();
+        if (lines.Count > 0 && lines[0].Trim() == "---")
+        {
+            lines.RemoveAt(0);
+        }
+        if (lines.Count > 0 && lines[^1].Trim() == "---")
+        {
+            lines.RemoveAt(lines.Count - 1);
+        }
+        return string.Join('\n', lines);
+    }
+
+    private static PageFrontmatter Deserialize(string yaml)
+    {
+        if (string.IsNullOrWhiteSpace(yaml))
+        {
+            return new PageFrontmatter();
+        }
+
+        // Deserialize into a mutable DTO — YamlDotNet needs settable properties
+        // and a concrete collection; map onto the immutable record afterwards.
+        var dto = Yaml.Deserialize<FrontmatterDto>(yaml) ?? new FrontmatterDto();
+        return new PageFrontmatter
+        {
+            Sources = dto.Sources is { Count: > 0 } ? dto.Sources : [],
+            Title = string.IsNullOrWhiteSpace(dto.Title) ? null : dto.Title,
+            PageId = string.IsNullOrWhiteSpace(dto.PageId) ? null : dto.PageId,
+        };
+    }
+
+    /// <summary>The first H1's plain text, or <c>null</c> when there is no H1.</summary>
+    private static string? FirstHeadingText(MarkdownDocument document)
+    {
+        var h1 = document.Descendants<HeadingBlock>().FirstOrDefault(h => h.Level == 1);
+        if (h1?.Inline is null)
+        {
+            return null;
+        }
+
+        // Collect visible text in document order across inline types so a title
+        // like `# The `docume` CLI` (inline code) or `# **Bold** title`
+        // (emphasis wraps a literal) keeps its full text.
+        var text = new StringBuilder();
+        foreach (var inline in h1.Inline.Descendants())
+        {
+            switch (inline)
+            {
+                case LiteralInline literal:
+                    text.Append(literal.Content.AsSpan());
+                    break;
+                case CodeInline code:
+                    text.Append(code.Content);
+                    break;
+            }
+        }
+        var title = text.ToString().Trim();
+        return title.Length == 0 ? null : title;
+    }
+
+    private sealed class FrontmatterDto
+    {
+        public List<string>? Sources { get; set; }
+
+        public string? Title { get; set; }
+
+        public string? PageId { get; set; }
+    }
+}

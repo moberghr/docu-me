@@ -18,6 +18,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Golden converter fixtures (PLAN.md §7): copied beside the test assembly
+         so the harness reads them from AppContext.BaseDirectory in any run. -->
+    <None Include="..\golden\**\*" Link="golden\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 
