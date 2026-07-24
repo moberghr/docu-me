@@ -13,9 +13,10 @@ namespace DocuMe.Core.Markdown;
 /// <remarks>
 /// Covered so far: headings (H1 dropped — it is the page title, §7); paragraphs
 /// with inline text (literal, emphasis, inline code, line breaks); bullet/ordered/
-/// nested lists; blockquotes; fenced code blocks (code macro); thematic breaks.
-/// The rest of the construct table (tables, GitHub-alert panels, mermaid, links,
-/// task lists, images) arrives in later M1 slices. Until a construct has a
+/// nested lists; blockquotes; fenced code blocks (code macro); thematic breaks;
+/// links (external, relative .md page links, autolinks). The rest of the construct
+/// table (tables, GitHub-alert panels, mermaid, task lists, images) arrives in
+/// later M1 slices. Until a construct has a
 /// dedicated renderer, <see cref="UnknownConstructRenderer"/> makes the converter
 /// <em>fail loudly</em> rather than silently drop or mis-transform it (PLAN.md §7
 /// acceptance: zero unknown-construct warnings). Output uses <c>\n</c> separators
@@ -23,22 +24,35 @@ namespace DocuMe.Core.Markdown;
 /// </remarks>
 public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStorageRenderer>
 {
-    public ConfluenceStorageRenderer(TextWriter writer)
+    public ConfluenceStorageRenderer(TextWriter writer, PageLinkResolver? linkResolver = null)
         : base(writer)
     {
+        LinkResolver = linkResolver;
+
         ObjectRenderers.Add(new HeadingRenderer());
         ObjectRenderers.Add(new ParagraphRenderer());
         ObjectRenderers.Add(new ListRenderer());
         ObjectRenderers.Add(new QuoteBlockRenderer());
         ObjectRenderers.Add(new FencedCodeBlockRenderer());
         ObjectRenderers.Add(new ThematicBreakRenderer());
+        ObjectRenderers.Add(new LinkReferenceDefinitionGroupRenderer());
         ObjectRenderers.Add(new EmphasisRenderer());
         ObjectRenderers.Add(new CodeInlineRenderer());
+        ObjectRenderers.Add(new LinkInlineRenderer());
+        ObjectRenderers.Add(new AutolinkInlineRenderer());
         ObjectRenderers.Add(new LiteralInlineRenderer());
         ObjectRenderers.Add(new LineBreakInlineRenderer());
         // Catch-all — MUST stay last so specific renderers win first-match.
         ObjectRenderers.Add(new UnknownConstructRenderer());
     }
+
+    /// <summary>
+    /// Resolves relative <c>.md</c> link targets to Confluence page titles (§7); may be
+    /// <c>null</c>. <see cref="LinkInlineRenderer"/> fails loud on a relative link when
+    /// this is <c>null</c> or the target does not resolve. External links and anchors
+    /// need no resolver.
+    /// </summary>
+    public PageLinkResolver? LinkResolver { get; }
 
     /// <summary>
     /// When set, paragraphs render their inline content without a <c>&lt;p&gt;</c>
@@ -64,6 +78,33 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
                     break;
                 case '>':
                     Write("&gt;");
+                    break;
+                default:
+                    Write(c);
+                    break;
+            }
+        }
+        return this;
+    }
+
+    /// <summary>Writes text escaped for a double-quoted XML attribute value (adds <c>&quot;</c> to <see cref="WriteEscaped"/>'s set).</summary>
+    public ConfluenceStorageRenderer WriteAttributeEscaped(ReadOnlySpan<char> text)
+    {
+        foreach (var c in text)
+        {
+            switch (c)
+            {
+                case '&':
+                    Write("&amp;");
+                    break;
+                case '<':
+                    Write("&lt;");
+                    break;
+                case '>':
+                    Write("&gt;");
+                    break;
+                case '"':
+                    Write("&quot;");
                     break;
                 default:
                     Write(c);
@@ -310,6 +351,158 @@ internal sealed class CodeInlineRenderer : MarkdownObjectRenderer<ConfluenceStor
     }
 }
 
+/// <summary>
+/// Inline links (§7). An <em>external</em> URL (has a URI scheme, or is
+/// protocol-relative <c>//host</c>) renders as <c>&lt;a href&gt;</c>. A relative
+/// <c>.md</c> path renders as a Confluence page link
+/// (<c>&lt;ac:link&gt;&lt;ri:page ri:content-title="…"/&gt;…&lt;/ac:link&gt;</c>),
+/// its title resolved through <see cref="ConfluenceStorageRenderer.LinkResolver"/>.
+/// Per spike S2's default (heading anchors are not assumed to survive the new
+/// editor) a <c>#fragment</c> is dropped: a fragment on a page link is stripped
+/// and a same-page anchor (<c>#foo</c>) degrades to its link text with no link.
+/// Images (<c>![alt](src)</c> — also a <see cref="LinkInline"/>) and relative
+/// non-<c>.md</c> targets are not yet supported and fail loud.
+/// </summary>
+internal sealed class LinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, LinkInline>
+{
+    protected override void Write(ConfluenceStorageRenderer renderer, LinkInline obj)
+    {
+        if (obj.IsImage)
+        {
+            throw new NotSupportedException(
+                "Image syntax '![alt](src)' maps to a Confluence attachment + <ac:image> " +
+                "(PLAN.md §7); that renderer is a later M1 slice, so images are not yet converted.");
+        }
+
+        var url = obj.Url ?? string.Empty;
+
+        // Same-page anchor (spike S2 default): drop the anchor, keep the link text —
+        // there is no destination page and heading anchors may not survive.
+        if (url.StartsWith('#'))
+        {
+            renderer.WriteChildren(obj);
+            return;
+        }
+
+        if (IsExternal(url))
+        {
+            renderer.Write("<a href=\"").WriteAttributeEscaped(url).Write('"');
+            // A markdown link title ([text](url "tip")) is a tooltip — representable
+            // on an <a>, so preserve it rather than silently dropping it.
+            if (!string.IsNullOrEmpty(obj.Title))
+            {
+                renderer.Write(" title=\"").WriteAttributeEscaped(obj.Title).Write('"');
+            }
+            renderer.Write('>');
+            renderer.WriteChildren(obj);
+            renderer.Write("</a>");
+            return;
+        }
+
+        // Relative link: strip any #fragment (S2 default — dropped, not preserved).
+        var fragment = url.IndexOf('#');
+        var path = fragment < 0 ? url : url[..fragment];
+        if (path.Length == 0)
+        {
+            renderer.WriteChildren(obj);
+            return;
+        }
+
+        if (!path.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException(
+                $"Relative link '{url}' is neither a '.md' page link nor an external URL. " +
+                "PLAN.md §7 maps only relative .md links and external links; other relative " +
+                "targets (source files, directories) are not supported by the M1 converter.");
+        }
+
+        if (!string.IsNullOrEmpty(obj.Title))
+        {
+            // A page link (<ac:link>) has no representable tooltip in storage format,
+            // so a title on an internal .md link would be a silent loss. Fail loud
+            // rather than drop it (it is vanishingly rare in practice).
+            throw new NotSupportedException(
+                $"Relative markdown link '{url}' carries a title tooltip, which has no " +
+                "representation on a Confluence page link (<ac:link>) in storage format.");
+        }
+
+        var resolver = renderer.LinkResolver
+            ?? throw new InvalidOperationException(
+                $"Relative markdown link '{url}' requires a page-link resolver, but none was " +
+                "supplied to ConfluenceStorageConverter.Convert.");
+        var title = resolver(path)
+            ?? throw new InvalidOperationException(
+                $"Relative markdown link '{url}' does not resolve to any known wiki page " +
+                "(broken cross-reference). Fix the link or the target page's title.");
+
+        renderer.Write("<ac:link><ri:page ri:content-title=\"")
+            .WriteAttributeEscaped(title)
+            .Write("\"/><ac:link-body>");
+        renderer.WriteChildren(obj);
+        renderer.Write("</ac:link-body></ac:link>");
+    }
+
+    /// <summary>True when the URL carries a URI scheme (<c>https:</c>, <c>mailto:</c>, …) or is protocol-relative (<c>//host</c>).</summary>
+    private static bool IsExternal(string url)
+    {
+        if (url.StartsWith("//", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var colon = url.IndexOf(':');
+        if (colon <= 0)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < colon; i++)
+        {
+            var c = url[i];
+            var ok = i == 0
+                ? char.IsAsciiLetter(c)
+                : char.IsAsciiLetterOrDigit(c) || c is '+' or '-' or '.';
+            if (!ok)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
+/// <summary>
+/// Autolinks (<c>&lt;https://example.com&gt;</c>, <c>&lt;me@example.com&gt;</c>) are
+/// external links (§7) — Markdig models them separately from <see cref="LinkInline"/>.
+/// The visible text is the URL itself; an email autolink gets a <c>mailto:</c> href.
+/// </summary>
+internal sealed class AutolinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, AutolinkInline>
+{
+    protected override void Write(ConfluenceStorageRenderer renderer, AutolinkInline obj)
+    {
+        var href = obj.IsEmail ? "mailto:" + obj.Url : obj.Url;
+        renderer.Write("<a href=\"").WriteAttributeEscaped(href).Write("\">");
+        renderer.WriteEscaped(obj.Url.AsSpan());
+        renderer.Write("</a>");
+    }
+}
+
+/// <summary>
+/// Link reference definitions (<c>[ref]: url</c>) are invisible metadata: Markdig
+/// resolves the <c>[text][ref]</c> usages into ordinary <see cref="LinkInline"/>s
+/// and collects the definitions into this group block. It renders to nothing
+/// (matching Markdig's own HtmlRenderer) — a no-op keeps reference-style links from
+/// tripping the fail-loud catch-all on a fully-representable construct.
+/// </summary>
+internal sealed class LinkReferenceDefinitionGroupRenderer
+    : MarkdownObjectRenderer<ConfluenceStorageRenderer, LinkReferenceDefinitionGroup>
+{
+    protected override void Write(ConfluenceStorageRenderer renderer, LinkReferenceDefinitionGroup obj)
+    {
+        // Intentionally emits nothing.
+    }
+}
+
 internal sealed class LiteralInlineRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, LiteralInline>
 {
     protected override void Write(ConfluenceStorageRenderer renderer, LiteralInline obj)
@@ -350,7 +543,7 @@ internal sealed class UnknownConstructRenderer : MarkdownObjectRenderer<Confluen
                 renderer.WriteChildren(document);
                 return;
             // The exact-type root inline container of a leaf block (NOT its
-            // subclasses like LinkInline, which must fail until supported).
+            // subclasses like AutolinkInline, which must fail until supported).
             case ContainerInline container when obj.GetType() == typeof(ContainerInline):
                 renderer.WriteChildren(container);
                 return;

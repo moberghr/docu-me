@@ -30,10 +30,23 @@ public sealed class GoldenFileTests
         var expected = File.ReadAllText(Path.Combine(GoldenDir, caseName + ".storage.xml"));
 
         var parsed = FrontmatterParser.Parse(markdown);
-        var actual = ConfluenceStorageConverter.Convert(parsed.Body);
+        var actual = ConfluenceStorageConverter.Convert(parsed.Body, ResolveGoldenLink);
 
         Normalize(actual).ShouldBe(Normalize(expected));
     }
+
+    /// <summary>
+    /// Fixed path→title map for the golden cases that exercise relative <c>.md</c>
+    /// links (<c>links-page</c>). The real whole-tree resolver lands with the M2
+    /// publish pipeline; cases without relative links never invoke this. The
+    /// second title carries an <c>&amp;</c> to pin attribute escaping.
+    /// </summary>
+    private static string? ResolveGoldenLink(string relativeMarkdownPath) => relativeMarkdownPath switch
+    {
+        "domains/loans/README.md" => "Loans Domain",
+        "../architecture/overview.md" => "Architecture & Design",
+        _ => null,
+    };
 
     [Fact]
     public void Golden_directory_has_at_least_one_case()

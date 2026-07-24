@@ -18,13 +18,19 @@ public static class ConfluenceStorageConverter
         .Build();
 
     /// <summary>Renders <paramref name="markdown"/> to a storage-format XHTML fragment.</summary>
-    public static string Convert(string markdown)
+    /// <param name="markdown">Frontmatter-free wiki markdown body.</param>
+    /// <param name="linkResolver">
+    /// Resolves relative <c>.md</c> link targets to Confluence page titles (§7). May be
+    /// <c>null</c> when the body has no relative markdown links; if one is encountered
+    /// without a resolver the converter fails loud rather than emitting a broken link.
+    /// </param>
+    public static string Convert(string markdown, PageLinkResolver? linkResolver = null)
     {
         ArgumentNullException.ThrowIfNull(markdown);
 
         var document = Markdig.Markdown.Parse(markdown, Pipeline);
         using var writer = new StringWriter();
-        var renderer = new ConfluenceStorageRenderer(writer);
+        var renderer = new ConfluenceStorageRenderer(writer, linkResolver);
         renderer.Render(document);
         writer.Flush();
         return writer.ToString();

@@ -22,13 +22,62 @@ public sealed class ConfluenceStorageConverterTests
     }
 
     [Fact]
-    public void Convert_throws_on_unsupported_inline_link()
+    public void Convert_renders_external_link_without_a_resolver()
     {
-        // Links are a later M1 slice; until then they must fail loudly, not
-        // silently lose their href/text.
+        // External links carry their own href — no page-title resolver needed.
+        var storage = ConfluenceStorageConverter.Convert("See [the docs](https://example.com).");
+
+        storage.ShouldContain("<a href=\"https://example.com\">the docs</a>");
+    }
+
+    [Fact]
+    public void Convert_throws_on_image_rather_than_dropping_it()
+    {
+        // Images (also a LinkInline) map to an attachment + <ac:image> in a later
+        // slice; until then they must fail loud, not silently vanish.
         var ex = Should.Throw<NotSupportedException>(
-            () => ConfluenceStorageConverter.Convert("See [the docs](https://example.com)."));
-        ex.Message.ShouldContain("No storage-format renderer");
+            () => ConfluenceStorageConverter.Convert("![a diagram](diagram.png)"));
+        ex.Message.ShouldContain("Image");
+    }
+
+    [Fact]
+    public void Convert_throws_on_relative_non_md_link()
+    {
+        // §7 maps relative .md links and external URLs only; a link to a source
+        // file or directory is unsupported and must surface, not be guessed at.
+        var ex = Should.Throw<NotSupportedException>(
+            () => ConfluenceStorageConverter.Convert("See [the service](../src/LoanService.cs)."));
+        ex.Message.ShouldContain("neither a '.md' page link nor an external URL");
+    }
+
+    [Fact]
+    public void Convert_throws_on_relative_md_link_without_a_resolver()
+    {
+        // A relative page link can only render if a resolver supplies the target
+        // title; without one the converter must fail loud, not emit a broken link.
+        var ex = Should.Throw<InvalidOperationException>(
+            () => ConfluenceStorageConverter.Convert("See [Loans](domains/loans/README.md)."));
+        ex.Message.ShouldContain("requires a page-link resolver");
+    }
+
+    [Fact]
+    public void Convert_throws_when_a_relative_link_target_does_not_resolve()
+    {
+        // A resolver that returns null means the cross-reference is broken; that
+        // must surface rather than silently producing an empty content-title.
+        var ex = Should.Throw<InvalidOperationException>(
+            () => ConfluenceStorageConverter.Convert("See [Gone](missing/page.md).", _ => null));
+        ex.Message.ShouldContain("broken cross-reference");
+    }
+
+    [Fact]
+    public void Convert_throws_on_a_page_link_title_rather_than_dropping_it()
+    {
+        // <ac:link> has no representable tooltip, so a title on an internal .md link
+        // must fail loud rather than silently vanish (external <a> keeps its title).
+        var ex = Should.Throw<NotSupportedException>(
+            () => ConfluenceStorageConverter.Convert("See [Loans](loans.md \"tip\").", _ => "Loans"));
+        ex.Message.ShouldContain("title tooltip");
     }
 
     [Theory]
