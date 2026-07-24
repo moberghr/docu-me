@@ -14,10 +14,10 @@ namespace DocuMe.Core.Markdown;
 /// <remarks>
 /// Covered so far: headings (H1 dropped — it is the page title, §7); paragraphs
 /// with inline text (literal, emphasis, inline code, line breaks); bullet/ordered/
-/// nested lists; blockquotes; fenced code blocks (code macro); thematic breaks;
-/// links (external, relative .md page links, autolinks); GFM tables. The rest of
-/// the construct table (GitHub-alert panels, mermaid, task lists, strikethrough,
-/// images, <c>[TOC]</c>) arrives in later M1 slices. Until a construct has a
+/// nested lists; blockquotes and GitHub-alert panel macros; fenced code blocks
+/// (code macro); thematic breaks; links (external, relative .md page links,
+/// autolinks); GFM tables. The rest of the construct table (mermaid, task lists,
+/// strikethrough, images, <c>[TOC]</c>) arrives in later M1 slices. Until a construct has a
 /// dedicated renderer, <see cref="UnknownConstructRenderer"/> makes the converter
 /// <em>fail loudly</em> rather than silently drop or mis-transform it (PLAN.md §7
 /// acceptance: zero unknown-construct warnings). Output uses <c>\n</c> separators
@@ -185,39 +185,98 @@ internal sealed class ListRenderer : MarkdownObjectRenderer<ConfluenceStorageRen
 }
 
 /// <summary>
-/// Blockquotes map to native <c>&lt;blockquote&gt;</c> (§7). GitHub alert syntax
-/// (<c>&gt; [!NOTE]</c> …) parses as a plain blockquote in the default pipeline
-/// but §7 maps it to a Confluence panel macro — a later M1 slice. Rather than
-/// silently downgrade an alert to a quote, this fails loud until that slice lands.
+/// Blockquotes map to native <c>&lt;blockquote&gt;</c>, except that a GitHub alert
+/// (<c>&gt; [!NOTE]</c> …) at the <em>root</em> blockquote level maps to a Confluence
+/// panel macro instead (§7). The type mapping and the emitted macro shape follow
+/// <c>kovetskiy/mark</c>, the behavioral reference §7 names for alerts
+/// (<c>renderer/gh_alerts_blockquote.go</c>).
+/// <para>
+/// The marker line is the panel <em>type</em>, not content, so it is consumed: only
+/// the author's remaining blocks land in the <c>rich-text-body</c>. A <em>nested</em>
+/// alert stays a plain blockquote with its marker text visible (§7), matching both
+/// mark's <c>quoteLevel == 0</c> rule and GitHub, which does not recognize an alert
+/// inside another blockquote. "Root level" counts blockquote ancestors only, so an
+/// alert inside a list item is still a panel.
+/// </para>
+/// <para>
+/// Accepted loss (spec'd by §7): NOTE and IMPORTANT both map to <c>info</c>, so the
+/// two are indistinguishable after conversion. mark compensates by injecting a
+/// title paragraph naming the alert type; DocuMe deliberately does not, because
+/// synthesizing body text the author never wrote would change the published content
+/// (and its approval hash, §8) for a purely cosmetic gain.
+/// </para>
 /// </summary>
 internal sealed class QuoteBlockRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, QuoteBlock>
 {
-    private static readonly string[] AlertMarkers =
-        ["[!NOTE]", "[!TIP]", "[!IMPORTANT]", "[!WARNING]", "[!CAUTION]"];
+    private static readonly Dictionary<string, string> AlertPanelMacros = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["[!NOTE]"] = "info",
+        ["[!TIP]"] = "tip",
+        ["[!IMPORTANT]"] = "info",
+        ["[!WARNING]"] = "note",
+        ["[!CAUTION]"] = "warning",
+    };
 
     protected override void Write(ConfluenceStorageRenderer renderer, QuoteBlock obj)
     {
-        ThrowIfGitHubAlert(obj);
+        var alert = IsNestedInQuote(obj) ? null : MatchAlertPanel(obj);
+        if (alert is null)
+        {
+            WriteBody(renderer, obj, "<blockquote>", "</blockquote>");
+            return;
+        }
 
-        // A blockquote always wraps block-level content, so its paragraphs are
-        // never implicit — reset the flag (which a tight enclosing list item may
-        // have set) around the children, then restore it, so a quote serializes
-        // identically whether or not it is nested in a list.
+        var (macro, markerLine) = alert.Value;
+        ConsumeMarkerLine(obj, markerLine);
+
+        // `icon` is Confluence's own default for these panels; mark writes it
+        // explicitly and this follows it verbatim rather than relying on a
+        // server-side default that a site could in principle change.
+        var panelOpen = $"<ac:structured-macro ac:name=\"{macro}\">"
+            + "<ac:parameter ac:name=\"icon\">true</ac:parameter><ac:rich-text-body>";
+
+        WriteBody(renderer, obj, panelOpen, "</ac:rich-text-body></ac:structured-macro>");
+    }
+
+    private static void WriteBody(ConfluenceStorageRenderer renderer, QuoteBlock quote, string open, string close)
+    {
+        // A blockquote and a panel body both wrap block-level content, so their
+        // paragraphs are never implicit — reset the flag (which a tight enclosing
+        // list item may have set) around the children, then restore it, so either
+        // block serializes identically whether or not it is nested in a list.
         var previousImplicit = renderer.ImplicitParagraph;
         renderer.ImplicitParagraph = false;
 
-        renderer.Write("<blockquote>").Write('\n');
-        renderer.WriteChildren(obj);
-        renderer.Write("</blockquote>").Write('\n');
+        renderer.Write(open).Write('\n');
+        renderer.WriteChildren(quote);
+        renderer.Write(close).Write('\n');
 
         renderer.ImplicitParagraph = previousImplicit;
     }
 
-    private static void ThrowIfGitHubAlert(QuoteBlock quote)
+    /// <summary>True when this quote has a <see cref="QuoteBlock"/> ancestor, i.e. mark's <c>quoteLevel &gt; 0</c>.</summary>
+    private static bool IsNestedInQuote(QuoteBlock quote)
+    {
+        for (var parent = quote.Parent; parent is not null; parent = parent.Parent)
+        {
+            if (parent is QuoteBlock)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns the panel macro name and the marker paragraph's inline container when
+    /// the quote's first line is a bare alert marker, else <c>null</c>.
+    /// </summary>
+    private static (string Macro, ContainerInline MarkerLine)? MatchAlertPanel(QuoteBlock quote)
     {
         if (quote.Count == 0 || quote[0] is not ParagraphBlock { Inline: { } inline })
         {
-            return;
+            return null;
         }
 
         // Accumulate the first line's plain text: Markdig splits `[!NOTE]` into
@@ -234,22 +293,47 @@ internal sealed class QuoteBlockRenderer : MarkdownObjectRenderer<ConfluenceStor
 
             if (child is not LiteralInline literal)
             {
-                return;
+                return null;
             }
 
             firstLine.Append(literal.Content.AsSpan());
         }
 
-        var marker = firstLine.ToString().Trim();
+        // GitHub requires the marker to occupy its whole first line (`> [!NOTE] text`
+        // is not an alert) and matches the keyword case-insensitively, so `[!note]`
+        // is as much an alert as `[!NOTE]`.
+        var macro = AlertPanelMacros.GetValueOrDefault(firstLine.ToString().Trim());
+        return macro is null ? null : (macro, inline);
+    }
 
-        // GitHub matches the alert keyword case-insensitively, so `[!note]` is
-        // as much an alert as `[!NOTE]`; uppercase before the (uppercase) lookup
-        // so a lowercase alert still fails loud rather than silently downgrading.
-        if (Array.IndexOf(AlertMarkers, marker.ToUpperInvariant()) >= 0)
+    /// <summary>
+    /// Drops the marker line — every inline up to and including the line break that
+    /// ends it — and the now-empty paragraph if the marker stood alone, so the panel
+    /// body starts at the author's first real content. Mirrors mark's
+    /// <c>GHAlertsTransformer.splitAlertParagraph</c>. Mutating the tree is safe here:
+    /// <see cref="ConfluenceStorageConverter"/> parses a fresh document per call and
+    /// discards it after rendering.
+    /// </summary>
+    private static void ConsumeMarkerLine(QuoteBlock quote, ContainerInline markerLine)
+    {
+        var child = markerLine.FirstChild;
+        while (child is not null)
         {
-            throw new NotSupportedException(
-                $"GitHub alert '{marker}' maps to a Confluence panel macro (PLAN.md §7); " +
-                "that renderer is a later M1 slice, so it is not rendered as a plain blockquote.");
+            var next = child.NextSibling;
+            var endsLine = child is LineBreakInline;
+            child.Remove();
+
+            if (endsLine)
+            {
+                break;
+            }
+
+            child = next;
+        }
+
+        if (markerLine.FirstChild is null)
+        {
+            quote.RemoveAt(0);
         }
     }
 }

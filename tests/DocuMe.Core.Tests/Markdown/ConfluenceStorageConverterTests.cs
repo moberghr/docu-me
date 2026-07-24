@@ -83,16 +83,93 @@ public sealed class ConfluenceStorageConverterTests
     }
 
     [Theory]
-    [InlineData("> [!NOTE]\n> Heads up.")]
-    [InlineData("> [!WARNING]\n> Careful.")]
-    [InlineData("> [!note]\n> Lowercase is still an alert on GitHub.")]
-    public void Convert_throws_on_github_alert_rather_than_rendering_a_plain_blockquote(string markdown)
+
+    // §7's mapping (mark's): NOTE→info, TIP→tip, IMPORTANT→info, WARNING→note,
+    // CAUTION→warning. NOTE and IMPORTANT sharing `info` is a spec'd accepted loss.
+    [InlineData("> [!NOTE]\n> Heads up.", "info")]
+    [InlineData("> [!TIP]\n> Heads up.", "tip")]
+    [InlineData("> [!IMPORTANT]\n> Heads up.", "info")]
+    [InlineData("> [!WARNING]\n> Heads up.", "note")]
+    [InlineData("> [!CAUTION]\n> Heads up.", "warning")]
+
+    // GitHub matches the keyword case-insensitively.
+    [InlineData("> [!note]\n> Heads up.", "info")]
+    public void Convert_renders_a_root_github_alert_as_a_panel_macro(string markdown, string macro)
     {
-        // A GitHub alert parses as a plain blockquote in the default pipeline but
-        // §7 maps it to a panel macro (a later slice). It must fail loud, not be
-        // silently downgraded to <blockquote>.
-        var ex = Should.Throw<NotSupportedException>(() => ConfluenceStorageConverter.Convert(markdown));
-        ex.Message.ShouldContain("GitHub alert");
+        // Whole-output equality also pins the marker-line consumption: the body is
+        // the author's text only, with no leftover "[!NOTE]" and no leading space
+        // from the line break that ended the marker line.
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe(
+            $"<ac:structured-macro ac:name=\"{macro}\"><ac:parameter ac:name=\"icon\">true</ac:parameter>"
+            + "<ac:rich-text-body>\n<p>Heads up.</p>\n</ac:rich-text-body></ac:structured-macro>\n");
+    }
+
+    [Fact]
+    public void Convert_drops_the_marker_paragraph_when_the_marker_stands_alone()
+    {
+        // A blank quote line makes the marker its own paragraph rather than the first
+        // line of the body's; it must be removed outright, not left as an empty <p>.
+        ConfluenceStorageConverter.Convert("> [!NOTE]\n>\n> Heads up.").ShouldBe(
+            "<ac:structured-macro ac:name=\"info\"><ac:parameter ac:name=\"icon\">true</ac:parameter>"
+            + "<ac:rich-text-body>\n<p>Heads up.</p>\n</ac:rich-text-body></ac:structured-macro>\n");
+    }
+
+    [Fact]
+    public void Convert_renders_an_alert_with_no_body_as_an_empty_panel()
+    {
+        // Degenerate but faithful — the author wrote an empty alert and GitHub renders
+        // an empty callout. Pinned so the shape is a deliberate choice rather than a
+        // surprise the first time M2 posts one to Confluence.
+        ConfluenceStorageConverter.Convert("> [!NOTE]").ShouldBe(
+            "<ac:structured-macro ac:name=\"info\"><ac:parameter ac:name=\"icon\">true</ac:parameter>"
+            + "<ac:rich-text-body>\n</ac:rich-text-body></ac:structured-macro>\n");
+    }
+
+    [Theory]
+
+    // Not one of GitHub's five keywords.
+    [InlineData("> [!FOO]\n> Heads up.")]
+
+    // GitHub requires the marker to occupy its whole first line, so this is a quote
+    // whose text happens to start with brackets — converting it would invent a panel.
+    [InlineData("> [!NOTE] Heads up.")]
+
+    // The marker is emphasized, not bare, so the first line is not a marker at all.
+    [InlineData("> **[!NOTE]**\n> Heads up.")]
+    public void Convert_renders_a_quote_that_is_not_a_bare_alert_marker_as_a_blockquote(string markdown)
+    {
+        var storage = ConfluenceStorageConverter.Convert(markdown);
+
+        storage.ShouldStartWith("<blockquote>");
+        storage.ShouldNotContain("ac:structured-macro");
+    }
+
+    [Fact]
+    public void Convert_renders_a_nested_alert_as_a_plain_blockquote()
+    {
+        // §7: only a root-level alert becomes a panel. GitHub does not recognize an
+        // alert nested in another blockquote either, so its marker text stays visible
+        // instead of being consumed as a panel type.
+        var storage = ConfluenceStorageConverter.Convert("> [!NOTE]\n> Outer.\n>\n> > [!WARNING]\n> > Inner.");
+
+        storage.ShouldContain("<blockquote>\n<p>[!WARNING] Inner.</p>\n</blockquote>");
+        storage.ShouldContain("ac:name=\"info\"");
+        storage.ShouldNotContain("ac:name=\"note\"");
+    }
+
+    [Fact]
+    public void Convert_renders_an_alert_in_a_tight_list_item_without_leaking_the_implicit_paragraph()
+    {
+        // A tight list sets ImplicitParagraph for its items; a panel body always wraps
+        // block content, so the renderer must reset and restore the flag or the body
+        // loses its <p>. Same nesting bug class that bit the blockquote in M1 slice 2.
+        var storage = ConfluenceStorageConverter.Convert("- item with an alert\n  > [!CAUTION]\n  > Careful.\n- plain item\n");
+
+        storage.ShouldBe(
+            "<ul>\n<li>item with an alert<ac:structured-macro ac:name=\"warning\">"
+            + "<ac:parameter ac:name=\"icon\">true</ac:parameter><ac:rich-text-body>\n"
+            + "<p>Careful.</p>\n</ac:rich-text-body></ac:structured-macro>\n</li>\n"
+            + "<li>plain item</li>\n</ul>\n");
     }
 
     [Fact]

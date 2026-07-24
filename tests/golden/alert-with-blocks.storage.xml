@@ -1,0 +1,16 @@
+<ac:structured-macro ac:name="tip"><ac:parameter ac:name="icon">true</ac:parameter><ac:rich-text-body>
+<p>Run this:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[docume publish]]></ac:plain-text-body></ac:structured-macro>
+<table>
+<tbody>
+<tr>
+<th>A</th>
+<th>B</th>
+</tr>
+<tr>
+<td>1</td>
+<td>2</td>
+</tr>
+</tbody>
+</table>
+</ac:rich-text-body></ac:structured-macro>

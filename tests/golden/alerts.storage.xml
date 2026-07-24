@@ -1,0 +1,26 @@
+<ac:structured-macro ac:name="info"><ac:parameter ac:name="icon">true</ac:parameter><ac:rich-text-body>
+<p>Both NOTE and IMPORTANT map to the same <code>info</code> panel.</p>
+</ac:rich-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="tip"><ac:parameter ac:name="icon">true</ac:parameter><ac:rich-text-body>
+<p>Run <code>docume publish --dry-run</code> first.</p>
+</ac:rich-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="info"><ac:parameter ac:name="icon">true</ac:parameter><ac:rich-text-body>
+<p>Approval state lives in labels, never in the page body.</p>
+</ac:rich-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="note"><ac:parameter ac:name="icon">true</ac:parameter><ac:rich-text-body>
+<p>WARNING maps to the <code>note</code> panel, not to <code>warning</code>.</p>
+</ac:rich-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="warning"><ac:parameter ac:name="icon">true</ac:parameter><ac:rich-text-body>
+<p>CAUTION is the one that maps to <code>warning</code>.</p>
+</ac:rich-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="info"><ac:parameter ac:name="icon">true</ac:parameter><ac:rich-text-body>
+<p>A lowercase marker is still an alert on GitHub.</p>
+</ac:rich-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="info"><ac:parameter ac:name="icon">true</ac:parameter><ac:rich-text-body>
+<p>The panel body keeps every block:</p>
+<ul>
+<li>a list item</li>
+<li>another item</li>
+</ul>
+<p>and a closing paragraph with <strong>bold</strong> text.</p>
+</ac:rich-text-body></ac:structured-macro>

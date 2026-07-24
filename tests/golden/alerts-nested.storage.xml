@@ -1,0 +1,12 @@
+<ac:structured-macro ac:name="info"><ac:parameter ac:name="icon">true</ac:parameter><ac:rich-text-body>
+<p>A nested alert is not a panel:</p>
+<blockquote>
+<p>[!WARNING] It stays a plain blockquote, marker text included.</p>
+</blockquote>
+</ac:rich-text-body></ac:structured-macro>
+<blockquote>
+<p>Plain quote.</p>
+<blockquote>
+<p>[!TIP] Also a plain blockquote, because it is not at the root level.</p>
+</blockquote>
+</blockquote>
