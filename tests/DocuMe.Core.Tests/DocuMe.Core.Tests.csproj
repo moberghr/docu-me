@@ -1,16 +1,22 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- xUnit v3 on the Microsoft Testing Platform (house standard): the test assembly is its
+       own runner, so OutputType must be Exe. -->
   <PropertyGroup>
+    <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <!-- No NoWarn here on purpose. app-templates relaxes xUnit1051/CA1816/MA0040 for its test
+         project, but a probe (strip the relaxations, rebuild) showed all three stay silent on this
+         suite: every test is synchronous, so there is no CancellationToken to thread. Carrying a
+         suppression that suppresses nothing would pre-approve findings nobody reviewed. Add
+         xUnit1051 (+ MA0040) back when the first async test calls a ct-accepting overload. -->
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="coverlet.collector" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3.mtp-v2" />
     <PackageReference Include="NSubstitute" />
     <PackageReference Include="Shouldly" />
-    <PackageReference Include="xunit" />
-    <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
 
   <ItemGroup>

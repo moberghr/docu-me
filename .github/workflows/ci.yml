@@ -23,5 +23,7 @@ jobs:
       - name: Build
         run: dotnet build DocuMe.slnx --configuration Release --no-restore
 
+      # xUnit v3 on the Microsoft Testing Platform (global.json test.runner): in MTP mode
+      # `dotnet test` takes the solution via --solution, not positionally.
       - name: Test
-        run: dotnet test DocuMe.slnx --configuration Release --no-build --verbosity normal
+        run: dotnet test --solution DocuMe.slnx --configuration Release --no-build --verbosity normal

@@ -5,6 +5,7 @@
        no inline Version= attribute. See .claude/references/dotnet/moberg-house-standards.md. -->
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
   <!-- Runtime dependencies (PLAN.md §4). -->
@@ -25,14 +26,16 @@
     <PackageVersion Include="Meziantou.Analyzer" Version="3.0.112" />
   </ItemGroup>
 
-  <!-- Test dependencies (PLAN.md §4): xUnit + Shouldly + NSubstitute. -->
+  <!-- Test dependencies (PLAN.md §4): xUnit + Shouldly + NSubstitute.
+       xunit.v3.mtp-v2 is the single house test package (app-templates pin): xUnit v3 running
+       on the Microsoft Testing Platform, replacing v2's xunit + xunit.runner.visualstudio +
+       Microsoft.NET.Test.Sdk trio. coverlet.collector is deliberately absent: it is a VSTest
+       data collector and does not run under MTP (use Microsoft.Testing.Extensions.CodeCoverage
+       if coverage is ever needed). -->
   <ItemGroup>
-    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit.v3.mtp-v2" Version="3.2.2" />
     <PackageVersion Include="NSubstitute" Version="6.0.0" />
     <PackageVersion Include="Shouldly" Version="4.3.0" />
-    <PackageVersion Include="xunit" Version="2.9.3" />
-    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
 
 </Project>
