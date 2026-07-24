@@ -1,0 +1,9 @@
+{
+  "name": "docu-me-mermaid-toolchain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Not a JS project: this manifest exists only to pin the beautiful-mermaid version that templates/tools/render-mermaid.mjs is written against, and to install it so the renderer's end-to-end tests can run (they skip with a reason when node_modules is absent). Run 'npm ci' before 'dotnet test' to exercise them. DocuMe itself ships as a .NET tool; consumer repos install this dependency themselves.",
+  "devDependencies": {
+    "beautiful-mermaid": "1.1.3"
+  }
+}

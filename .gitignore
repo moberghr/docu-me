@@ -11,3 +11,6 @@ bin/
 obj/
 *.user
 
+# Node packages for the mermaid renderer (package.json pins the version; run `npm ci`).
+node_modules/
+
