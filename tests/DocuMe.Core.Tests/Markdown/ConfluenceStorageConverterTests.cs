@@ -264,6 +264,123 @@ public sealed class ConfluenceStorageConverterTests
         storage.ShouldNotContain("<col");
     }
 
+    [Theory]
+
+    // A language alone stays exactly as it was before fence attributes existed.
+    [InlineData("cs", "<ac:parameter ac:name=\"language\">csharp</ac:parameter>")]
+
+    // Each attribute emits its parameter, in mark's ac:code order (language,
+    // collapse, linenumbers, firstline, title).
+    [InlineData("cs collapse", "<ac:parameter ac:name=\"language\">csharp</ac:parameter><ac:parameter ac:name=\"collapse\">true</ac:parameter>")]
+    [InlineData("cs linenumbers", "<ac:parameter ac:name=\"language\">csharp</ac:parameter><ac:parameter ac:name=\"linenumbers\">true</ac:parameter>")]
+
+    // A bare number is firstline, and implies line numbering (mark's README).
+    [InlineData("cs 5", "<ac:parameter ac:name=\"language\">csharp</ac:parameter><ac:parameter ac:name=\"linenumbers\">true</ac:parameter><ac:parameter ac:name=\"firstline\">5</ac:parameter>")]
+
+    // An off switch, and a repeat, both resolve to "not requested" => omitted.
+    [InlineData("cs nocollapse", "<ac:parameter ac:name=\"language\">csharp</ac:parameter>")]
+    [InlineData("cs collapse nocollapse", "<ac:parameter ac:name=\"language\">csharp</ac:parameter>")]
+
+    // `-` is mark's "no language, but I want the attributes" placeholder, and an
+    // attribute in first position means the same thing.
+    [InlineData("- collapse", "<ac:parameter ac:name=\"collapse\">true</ac:parameter>")]
+    [InlineData("collapse", "<ac:parameter ac:name=\"collapse\">true</ac:parameter>")]
+    [InlineData("linenumbers", "<ac:parameter ac:name=\"linenumbers\">true</ac:parameter>")]
+    [InlineData("7", "<ac:parameter ac:name=\"linenumbers\">true</ac:parameter><ac:parameter ac:name=\"firstline\">7</ac:parameter>")]
+
+    // The title is the rest of the line, unquoted — mark's syntax, and it keeps its
+    // internal spacing. A title in first position needs no language either.
+    [InlineData("cs title Program.cs", "<ac:parameter ac:name=\"language\">csharp</ac:parameter><ac:parameter ac:name=\"title\">Program.cs</ac:parameter>")]
+    [InlineData("cs title A b c", "<ac:parameter ac:name=\"language\">csharp</ac:parameter><ac:parameter ac:name=\"title\">A b c</ac:parameter>")]
+    [InlineData("title A b c", "<ac:parameter ac:name=\"title\">A b c</ac:parameter>")]
+
+    // Keywords are matched case-insensitively, unlike mark — which only ever widens
+    // what is understood, and never silently misreads a token.
+    [InlineData("cs COLLAPSE TITLE Foo", "<ac:parameter ac:name=\"language\">csharp</ac:parameter><ac:parameter ac:name=\"collapse\">true</ac:parameter><ac:parameter ac:name=\"title\">Foo</ac:parameter>")]
+
+    // An unknown language still omits the parameter without throwing (fail-safe),
+    // even when attributes follow it.
+    [InlineData("brainfuck collapse", "<ac:parameter ac:name=\"collapse\">true</ac:parameter>")]
+    public void Convert_maps_code_fence_attributes_to_macro_parameters(string infoLine, string expectedParameters)
+    {
+        var storage = ConfluenceStorageConverter.Convert($"```{infoLine}\nbody\n```\n");
+
+        storage.ShouldBe(
+            $"<ac:structured-macro ac:name=\"code\">{expectedParameters}"
+            + "<ac:plain-text-body><![CDATA[body]]></ac:plain-text-body></ac:structured-macro>\n");
+    }
+
+    [Fact]
+    public void Convert_escapes_a_code_fence_title_as_element_content()
+    {
+        // The title is author text on the fence line, so it can carry XML specials.
+        var storage = ConfluenceStorageConverter.Convert("```sh title Pipe <in> & out\nbody\n```\n");
+
+        storage.ShouldContain("<ac:parameter ac:name=\"title\">Pipe &lt;in&gt; &amp; out</ac:parameter>");
+    }
+
+    [Theory]
+
+    // The whole point of the slice: an attribute this converter does not understand
+    // must fail the page rather than vanish from it.
+    [InlineData("cs mysteryflag")]
+    [InlineData("cs colapse")]
+
+    // PLAN.md §7's illustrative `title=Foo` spelling is NOT mark's syntax, and mark
+    // itself would silently turn it into a bogus `theme` parameter. Fail instead.
+    [InlineData("cs title=Foo")]
+    [InlineData("cs collapse=true")]
+
+    // A theme name is a Confluence Server concept the Cloud macro no longer
+    // documents; accepting arbitrary tokens as themes is exactly what makes mark
+    // swallow the typos above.
+    [InlineData("cs midnight")]
+
+    // `title` with nothing after it asks for a title we cannot produce.
+    [InlineData("cs title")]
+    [InlineData("cs collapse title")]
+
+    // Confluence numbers lines from 1, so 0 and negatives are not firstline values.
+    [InlineData("cs 0")]
+    [InlineData("cs -1")]
+
+    // Other toolchains spell fence attributes differently (Docusaurus/VitePress
+    // quoted titles, Prism line-range highlighting). DocuMe speaks mark's syntax
+    // only, and says so loudly instead of half-honoring a foreign dialect — note
+    // that the quoted forms never even reach the title branch, since `title="x"`
+    // tokenizes as one unknown word rather than the bare `title` keyword.
+    [InlineData("js {1,3-4}")]
+    [InlineData("bash title=\"Deploy\"")]
+    [InlineData("bash title=\"Deploy to prod\"")]
+    public void Convert_fails_loud_on_an_unsupported_code_fence_attribute(string infoLine)
+    {
+        Should.Throw<NotSupportedException>(() => ConfluenceStorageConverter.Convert($"```{infoLine}\nbody\n```\n"));
+    }
+
+    [Fact]
+    public void Convert_does_not_throw_for_an_unknown_language_the_way_it_does_for_an_unknown_attribute()
+    {
+        // The asymmetry is deliberate and worth pinning: an unmapped language costs
+        // only syntax highlighting, while a dropped attribute would publish
+        // something the author did not ask for.
+        ConfluenceStorageConverter.Convert("```brainfuck\nbody\n```\n")
+            .ShouldBe("<ac:structured-macro ac:name=\"code\"><ac:plain-text-body><![CDATA[body]]></ac:plain-text-body></ac:structured-macro>\n");
+
+        Should.Throw<NotSupportedException>(() => ConfluenceStorageConverter.Convert("```brainfuck mysteryflag\nbody\n```\n"));
+    }
+
+    [Fact]
+    public void Convert_does_not_read_the_code_body_as_fence_attributes()
+    {
+        // Only the info line carries attributes; a body line that happens to read
+        // like one must stay code.
+        var storage = ConfluenceStorageConverter.Convert("```sh\ntitle Not A Title\ncollapse\n```\n");
+
+        storage.ShouldBe(
+            "<ac:structured-macro ac:name=\"code\"><ac:parameter ac:name=\"language\">bash</ac:parameter>"
+            + "<ac:plain-text-body><![CDATA[title Not A Title\ncollapse]]></ac:plain-text-body></ac:structured-macro>\n");
+    }
+
     [Fact]
     public void Convert_empty_input_produces_empty_output()
     {

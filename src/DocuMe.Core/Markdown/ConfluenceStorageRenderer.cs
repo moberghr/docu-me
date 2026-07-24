@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Markdig.Extensions.Tables;
 using Markdig.Renderers;
@@ -339,12 +340,50 @@ internal sealed class QuoteBlockRenderer : MarkdownObjectRenderer<ConfluenceStor
 }
 
 /// <summary>
-/// Fenced code blocks map to the Confluence <c>code</c> structured macro (§7). The
-/// fence language is normalized to a Confluence brush via <see cref="LanguageMap"/>;
-/// an unknown or absent language omits the <c>language</c> parameter (never throws).
+/// Fenced code blocks map to the Confluence <c>code</c> structured macro (§7),
+/// including mark's fence-attribute syntax on the info line:
+/// <c>```lang linenumbers collapse title Some Title</c>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The first token is the language, normalized to a Confluence brush via
+/// <see cref="LanguageMap"/>. An unknown or absent language omits the
+/// <c>language</c> parameter and never throws — losing syntax highlighting is
+/// cosmetic and Confluence renders unhighlighted code fine. Write <c>-</c> as the
+/// language (mark's convention) to use attributes without one.
+/// </para>
+/// <para>
+/// The remaining tokens are attributes: <c>collapse</c>/<c>nocollapse</c>,
+/// <c>linenumbers</c>, a positive integer (Confluence's <c>firstline</c>, which also
+/// turns line numbers on), and <c>title</c>, whose value is the rest of the line
+/// unquoted — exactly how mark reads it, confirmed against its own
+/// <c>testdata/codes.html</c> fixture, where <c>```sh title A b c</c> yields
+/// <c>&lt;ac:parameter ac:name="title"&gt;A b c&lt;/ac:parameter&gt;</c>. Keyword
+/// matching is case-insensitive (mark's is not), which only ever widens what is
+/// understood. A repeated attribute takes its last value.
+/// </para>
+/// <para>
+/// An <em>unrecognized</em> attribute fails loud with
+/// <see cref="NotSupportedException"/>. That asymmetry against the language token is
+/// deliberate: an unknown language costs highlighting, whereas a dropped attribute
+/// publishes a page the author did not ask for. It is also a deliberate deviation
+/// from mark, which treats any unknown token as a Confluence Server <c>theme</c>
+/// name — so mark silently turns a typo (<c>colapse</c>) or the <c>title=Foo</c>
+/// spelling into a bogus <c>theme</c> parameter. Confluence Cloud's Code Block macro
+/// documents only <c>language</c>, <c>title</c>, <c>collapse</c>,
+/// <c>linenumbers</c> and <c>firstline</c> (theme is an admin-level default, not a
+/// per-macro parameter), so those five are what DocuMe emits.
+/// </para>
+/// <para>
+/// Parameter order mirrors mark's <c>ac:code</c> template so a DocuMe page and a
+/// mark page produce comparable storage. Unlike mark, an absent parameter is
+/// omitted rather than written with its Confluence default: an unconditional
+/// <c>collapse=false</c> on every code block would be churn in the published body
+/// and in the approval hash (§8) for no rendering difference.
+/// </para>
 /// The body is wrapped in CDATA; any literal <c>]]&gt;</c> is split so the fragment
 /// stays well-formed XML.
-/// </summary>
+/// </remarks>
 internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, FencedCodeBlock>
 {
     private static readonly Dictionary<string, string> LanguageMap = new(StringComparer.OrdinalIgnoreCase)
@@ -370,14 +409,33 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
 
     protected override void Write(ConfluenceStorageRenderer renderer, FencedCodeBlock obj)
     {
+        var attributes = ParseInfoLine(obj);
+
         renderer.Write("<ac:structured-macro ac:name=\"code\">");
 
-        var language = MapLanguage(obj.Info);
-        if (language is not null)
+        if (attributes.Language is { } language)
         {
-            renderer.Write("<ac:parameter ac:name=\"language\">")
-                .Write(language)
-                .Write("</ac:parameter>");
+            WriteParameter(renderer, "language", language);
+        }
+
+        if (attributes.Collapse)
+        {
+            WriteParameter(renderer, "collapse", "true");
+        }
+
+        if (attributes.LineNumbers)
+        {
+            WriteParameter(renderer, "linenumbers", "true");
+        }
+
+        if (attributes.FirstLine is { } firstLine)
+        {
+            WriteParameter(renderer, "firstline", firstLine.ToString(CultureInfo.InvariantCulture));
+        }
+
+        if (attributes.Title is { } title)
+        {
+            WriteParameter(renderer, "title", title);
         }
 
         renderer.Write("<ac:plain-text-body><![CDATA[");
@@ -385,16 +443,145 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
         renderer.Write("]]></ac:plain-text-body></ac:structured-macro>").Write('\n');
     }
 
-    private static string? MapLanguage(string? info)
+    /// <summary>Writes one macro parameter, escaping the value as element content.</summary>
+    private static void WriteParameter(ConfluenceStorageRenderer renderer, string name, string value)
     {
-        if (string.IsNullOrWhiteSpace(info))
+        renderer.Write("<ac:parameter ac:name=\"")
+            .Write(name)
+            .Write("\">")
+            .WriteEscaped(value)
+            .Write("</ac:parameter>");
+    }
+
+    /// <summary>
+    /// Parses the fence info line into the code macro's parameters, throwing
+    /// <see cref="NotSupportedException"/> on an attribute this converter does not
+    /// understand rather than dropping it.
+    /// </summary>
+    private static CodeFenceAttributes ParseInfoLine(FencedCodeBlock obj)
+    {
+        // Markdig's default info parser splits the line at the first whitespace:
+        // Info holds the first token, Arguments the trimmed remainder. Rejoin them
+        // and scan the whole line so the attribute syntax does not depend on where
+        // Markdig chose to split.
+        var line = string.IsNullOrEmpty(obj.Arguments)
+            ? obj.Info ?? string.Empty
+            : obj.Info + " " + obj.Arguments;
+
+        string? language = null;
+        string? title = null;
+        int? firstLine = null;
+        var collapse = false;
+        var lineNumbers = false;
+        var expectLanguage = true;
+        var position = 0;
+
+        while (position < line.Length)
         {
-            return null;
+            while (position < line.Length && char.IsWhiteSpace(line[position]))
+            {
+                position++;
+            }
+
+            if (position == line.Length)
+            {
+                break;
+            }
+
+            var start = position;
+            while (position < line.Length && !char.IsWhiteSpace(line[position]))
+            {
+                position++;
+            }
+
+            var token = line[start..position];
+
+            // Only the first token can be a language, and only if it is not itself
+            // an attribute — `​```collapse` means "collapse, no language", per mark.
+            if (expectLanguage)
+            {
+                expectLanguage = false;
+                if (!IsAttribute(token))
+                {
+                    language = MapLanguage(token);
+                    continue;
+                }
+            }
+
+            if (string.Equals(token, "title", StringComparison.OrdinalIgnoreCase))
+            {
+                // The title is the rest of the line, unquoted, spaces and all.
+                title = line[position..].Trim();
+                if (title.Length == 0)
+                {
+                    throw new NotSupportedException(
+                        "Code fence attribute 'title' has no value. Write `title My Title`, or drop the keyword.");
+                }
+
+                break;
+            }
+
+            if (string.Equals(token, "collapse", StringComparison.OrdinalIgnoreCase))
+            {
+                collapse = true;
+                continue;
+            }
+
+            if (string.Equals(token, "nocollapse", StringComparison.OrdinalIgnoreCase))
+            {
+                collapse = false;
+                continue;
+            }
+
+            if (string.Equals(token, "linenumbers", StringComparison.OrdinalIgnoreCase))
+            {
+                lineNumbers = true;
+                continue;
+            }
+
+            // A bare number is Confluence's firstline, which implies line numbering.
+            if (TryParseFirstLine(token, out var parsed))
+            {
+                firstLine = parsed;
+                lineNumbers = true;
+                continue;
+            }
+
+            throw new NotSupportedException(
+                $"Unsupported code fence attribute '{token}'. Supported: collapse, nocollapse, "
+                + "linenumbers, a positive line number, and `title <text>` (the title is the rest of the line, "
+                + "not title=<text>). A language, if given, must come first; write `-` for none.");
         }
 
-        var token = info.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries)[0];
-        return LanguageMap.TryGetValue(token, out var language) ? language : null;
+        return new CodeFenceAttributes(language, collapse, lineNumbers, firstLine, title);
     }
+
+    private static bool IsAttribute(string token) =>
+        string.Equals(token, "collapse", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(token, "nocollapse", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(token, "linenumbers", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(token, "title", StringComparison.OrdinalIgnoreCase)
+        || int.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out _);
+
+    /// <summary>
+    /// Parses a firstline token. <see cref="NumberStyles.None"/> rejects a sign, so a
+    /// negative number is an unknown attribute rather than a silently clamped one;
+    /// <c>0</c> is rejected here too because Confluence numbers from 1.
+    /// </summary>
+    private static bool TryParseFirstLine(string token, out int firstLine)
+    {
+        if (int.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) && parsed > 0)
+        {
+            firstLine = parsed;
+            return true;
+        }
+
+        firstLine = 0;
+        return false;
+    }
+
+    private static string? MapLanguage(string token) =>
+        LanguageMap.TryGetValue(token, out var language) ? language : null;
 
     private static string ExtractCode(FencedCodeBlock obj)
     {
@@ -413,6 +600,17 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
 
         return code.ToString();
     }
+
+    /// <summary>
+    /// Code macro parameters read off a fence info line. A <c>null</c> reference or
+    /// <c>false</c> means "not requested", and the parameter is omitted entirely.
+    /// </summary>
+    private readonly record struct CodeFenceAttributes(
+        string? Language,
+        bool Collapse,
+        bool LineNumbers,
+        int? FirstLine,
+        string? Title);
 }
 
 /// <summary>
