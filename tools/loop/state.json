@@ -1,18 +1,24 @@
 {
   "version": 1,
-  "startedAt": null,
-  "updatedAt": null,
-  "iteration": 0,
+  "startedAt": "2026-07-24T12:50:14Z",
+  "updatedAt": "2026-07-24T12:50:14Z",
+  "iteration": 1,
   "milestone": "M0",
-  "phase": "not-started",
-  "mtkBootstrapped": false,
-  "nextAction": "Run /mtk:setup-bootstrap (tech stack: dotnet), commit the generated setup, then begin M0 per PLAN.md §14: solution + Core/Cli/test projects, CI build workflow, config loader, state load/save, `docume --version`, minimal init.",
-  "blockers": [],
-  "gates": {},
+  "phase": "bootstrapped",
+  "mtkBootstrapped": true,
+  "nextAction": "Start M0 via /mtk:implement with PLAN.md §3+§4 as the spec: create DocuMe.slnx, src/DocuMe.Core + src/DocuMe.Cli (System.CommandLine + Spectre.Console) + tests/DocuMe.Core.Tests (xUnit + Shouldly + NSubstitute); `docume --version`; docume.json config loader + schema validation (PLAN.md §5.1); state.json load/save (§5.3); minimal `docume init`; CI build/test workflow. Verify: dotnet build + dotnet test green. M0 acceptance: tool packs, installs and runs locally from a NuGet pack. Note: .claude/ config is staged at .claude-proposed/ (gate setup-claude-dir in GATES.md) — CLAUDE.md at root is active and carries the critical rules.",
+  "blockers": [
+    "needs-allowlist: writes under .claude/ (Claude Code sensitive-file protection blocks Write/Edit/Bash on .claude paths in headless runs). NON-FATAL: bootstrap output staged at .claude-proposed/ — see GATES.md setup-claude-dir. Milestone work is not blocked."
+  ],
+  "gates": {
+    "setup-claude-dir": "pending"
+  },
   "confluence": {
     "sandboxSpaceKey": null,
     "productionSpaceKey": "AUR",
     "productionAllowed": false
   },
-  "done": []
+  "done": [
+    "iter1 (2026-07-24): MTK bootstrap (dotnet) — root CLAUDE.md (active), rules/references/settings/tech-stack staged at .claude-proposed/ (coding guidelines pinned @4043387), product.md + decisions.md seeded from PLAN.md, CODE_INDEX.md, .mtkignore, .claudeignore, tasks/lessons.md, .gitignore MTK entries. Greenfield: no build/test to run yet; dotnet SDK 10.0.100 + node v22 verified present."
+  ]
 }

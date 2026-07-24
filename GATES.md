@@ -17,3 +17,10 @@ _(none yet — the loop appends them as it reaches them)_
 
 - [ ] Create/choose a **sandbox Confluence space** and set `confluence.sandboxSpaceKey` in `tools/loop/state.json`
 - [ ] Export `DOCUME_CONFLUENCE_EMAIL` and `DOCUME_CONFLUENCE_TOKEN` in the shell that runs `tools/loop/docume-loop.sh`
+
+## Setup — not milestone-blocking, but do it soon
+
+- [ ] **setup-claude-dir** (opened 2026-07-24, iter 1) — Finalize the MTK bootstrap. The headless loop cannot write `.claude/` (Claude Code sensitive-file protection; nobody present to approve), so the bootstrap output is staged at `.claude-proposed/`. Review it, then from the repo root run:
+  `cp -R .claude-proposed/ .claude/` (merges alongside the existing `.claude/analytics.json`), then delete `.claude-proposed/` and commit.
+  Until this is done, Claude Code won't auto-load `.claude/rules/` and MTK skills fall back to marker-based stack detection; root `CLAUDE.md` (already in place) carries the critical rules either way.
+  Optional, to let future loop iterations maintain `.claude/` themselves: add `"Write(.claude/**)"` and `"Edit(.claude/**)"` to `permissions.allow` in `tools/loop/loop-settings.json`.

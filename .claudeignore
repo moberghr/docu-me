@@ -1,0 +1,10 @@
+.git/
+node_modules/
+dist/
+bin/
+obj/
+.venv/
+venv/
+__pycache__/
+TestResults/
+*.user

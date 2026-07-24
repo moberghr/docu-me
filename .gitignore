@@ -1,2 +1,7 @@
 tools/loop/logs/
 tools/loop/STOP
+
+# MTK (setup-bootstrap)
+tasks/todo.md
+.claude.local.md
+.mtk/
