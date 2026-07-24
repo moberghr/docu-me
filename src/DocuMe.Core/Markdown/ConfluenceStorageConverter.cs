@@ -21,12 +21,16 @@ public static class ConfluenceStorageConverter
     // row to the widest one, so an over-wide body row would grow the header with
     // a blank <th> that exists in neither the source nor GitHub's rendering.
     //
+    // GfmTaskListExtension replaces Markdig's own UseTaskLists() — see the parser
+    // there for why the stock one is too loose to use as-is.
+    //
     // FrontmatterParser.Pipeline must enable the same extensions: an extension
     // changes inline parsing, so a divergence would let the two disagree about
     // where the title's H1 is.
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseYamlFrontMatter()
         .UsePipeTables(new PipeTableOptions { UseHeaderForColumnCount = true })
+        .Use<GfmTaskListExtension>()
         .Build();
 
     /// <summary>Renders <paramref name="markdown"/> to a storage-format XHTML fragment.</summary>

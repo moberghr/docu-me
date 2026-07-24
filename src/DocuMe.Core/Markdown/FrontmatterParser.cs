@@ -24,6 +24,7 @@ public static class FrontmatterParser
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseYamlFrontMatter()
         .UsePipeTables(new PipeTableOptions { UseHeaderForColumnCount = true })
+        .Use<GfmTaskListExtension>()
         .Build();
 
     private static readonly IDeserializer Yaml = new DeserializerBuilder()

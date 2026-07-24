@@ -1,0 +1,31 @@
+<h2>Before publishing</h2>
+<ac:task-list>
+<ac:task>
+<ac:task-id>1</ac:task-id>
+<ac:task-status>complete</ac:task-status>
+<ac:task-body>Cut the release branch</ac:task-body>
+</ac:task>
+<ac:task>
+<ac:task-id>2</ac:task-id>
+<ac:task-status>incomplete</ac:task-status>
+<ac:task-body>Update <code>docume.json</code></ac:task-body>
+</ac:task>
+<ac:task>
+<ac:task-id>3</ac:task-id>
+<ac:task-status>complete</ac:task-status>
+<ac:task-body>Publish to <strong>staging</strong></ac:task-body>
+</ac:task>
+</ac:task-list>
+<p>Task ids keep counting across the page, so a second list starts at 4.</p>
+<ac:task-list>
+<ac:task>
+<ac:task-id>4</ac:task-id>
+<ac:task-status>incomplete</ac:task-status>
+<ac:task-body>Announce in #eng</ac:task-body>
+</ac:task>
+<ac:task>
+<ac:task-id>5</ac:task-id>
+<ac:task-status>complete</ac:task-status>
+<ac:task-body>Archive the old space</ac:task-body>
+</ac:task>
+</ac:task-list>

@@ -1,0 +1,15 @@
+<p>A list mixing task and plain items degrades to a plain list; the markers stay as text so completion state is not lost.</p>
+<ul>
+<li>[x] task item</li>
+<li>regular item</li>
+<li>[ ] another task item</li>
+</ul>
+<p>Ordering does not change the rule.</p>
+<ol>
+<li>[x] shipped</li>
+<li>still open</li>
+</ol>
+<p>A marker that does not open the item is ordinary text, exactly as GitHub renders it.</p>
+<ul>
+<li>mark the box [x] before signing</li>
+</ul>

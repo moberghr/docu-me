@@ -381,6 +381,114 @@ public sealed class ConfluenceStorageConverterTests
             + "<ac:plain-text-body><![CDATA[title Not A Title\ncollapse]]></ac:plain-text-body></ac:structured-macro>\n");
     }
 
+    [Theory]
+
+    // Confluence's own status strings, and GitHub's case-insensitive `[X]`.
+    [InlineData("- [x] done", "complete")]
+    [InlineData("- [X] done", "complete")]
+    [InlineData("- [ ] done", "incomplete")]
+    public void Convert_renders_an_all_task_list_as_a_confluence_task_list(string markdown, string status)
+    {
+        // Whole-output equality also pins marker consumption: the body is the author's
+        // text with no leftover "[x]" and no leading space — Markdig leaves the
+        // marker's separating space on the following literal, unlike goldmark/mark.
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe(
+            "<ac:task-list>\n<ac:task>\n<ac:task-id>1</ac:task-id>\n"
+            + $"<ac:task-status>{status}</ac:task-status>\n"
+            + "<ac:task-body>done</ac:task-body>\n</ac:task>\n</ac:task-list>\n");
+    }
+
+    [Theory]
+    [InlineData("- see [x](https://example.com) here", "see <a href=\"https://example.com\">x</a> here")]
+    [InlineData("- see [ ](https://example.com) here", "see <a href=\"https://example.com\"> </a> here")]
+    public void Convert_keeps_a_bracketed_link_in_a_list_item_a_link(string markdown, string expectedInner)
+    {
+        // The regression this slice's custom parser exists to prevent. Markdig's stock
+        // TaskListInlineParser matches [x]/[ ] anywhere inside a list item and is
+        // installed ahead of the link parser, so it eats the label of [x](url) and
+        // leaves "(url)" as text — a silently broken link. GfmTaskListInlineParser
+        // requires the marker to open the item, which is also GitHub's rule.
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe($"<ul>\n<li>{expectedInner}</li>\n</ul>\n");
+    }
+
+    [Theory]
+
+    // Mid-item text, and a marker protected by a code span (a wiki documenting the
+    // task-list syntax itself). Both render exactly as GitHub renders them.
+    [InlineData("- mark the box [x] before signing", "mark the box [x] before signing")]
+    [InlineData("- `[x]` means done", "<code>[x]</code> means done")]
+    public void Convert_keeps_a_marker_that_does_not_open_the_item_as_text(string markdown, string expectedInner)
+    {
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe($"<ul>\n<li>{expectedInner}</li>\n</ul>\n");
+    }
+
+    [Fact]
+    public void Convert_does_not_treat_a_marker_opening_a_later_paragraph_as_a_task()
+    {
+        // GFM recognizes a marker only where it opens the item, meaning the first
+        // paragraph; Markdig's stock parser accepts any paragraph in the item.
+        ConfluenceStorageConverter.Convert("- first\n\n  [x] not a marker\n").ShouldBe(
+            "<ul>\n<li><p>first</p>\n<p>[x] not a marker</p>\n</li>\n</ul>\n");
+    }
+
+    [Fact]
+    public void Convert_leaves_a_bracketed_x_outside_a_list_alone()
+    {
+        // Enabling the extension must not make "[x]" significant in ordinary prose.
+        ConfluenceStorageConverter.Convert("Tick [x] in the form.").ShouldBe("<p>Tick [x] in the form.</p>\n");
+    }
+
+    [Fact]
+    public void Convert_keeps_the_paragraph_in_a_loose_task_list_body()
+    {
+        // Looseness is honored exactly as for a plain list, so a task body is bare
+        // inline content when tight and keeps its <p> when loose.
+        ConfluenceStorageConverter.Convert("- [x] done\n\n- [ ] todo\n").ShouldBe(
+            "<ac:task-list>\n<ac:task>\n<ac:task-id>1</ac:task-id>\n<ac:task-status>complete</ac:task-status>\n"
+            + "<ac:task-body><p>done</p>\n</ac:task-body>\n</ac:task>\n"
+            + "<ac:task>\n<ac:task-id>2</ac:task-id>\n<ac:task-status>incomplete</ac:task-status>\n"
+            + "<ac:task-body><p>todo</p>\n</ac:task-body>\n</ac:task>\n</ac:task-list>\n");
+    }
+
+    [Fact]
+    public void Convert_numbers_task_ids_uniquely_per_page_and_identically_on_every_render()
+    {
+        // Confluence tracks task completion by id, so two lists on one page must not
+        // repeat ids (mark's per-list counter does). Re-rendering the same source must
+        // also produce the same ids, or the content hash (§8) would churn — hence a
+        // counter on the per-call renderer rather than a static one.
+        const string markdown = "- [x] a\n\ntext\n\n- [ ] b\n";
+
+        var first = ConfluenceStorageConverter.Convert(markdown);
+
+        first.ShouldContain("<ac:task-id>1</ac:task-id>");
+        first.ShouldContain("<ac:task-id>2</ac:task-id>");
+        ConfluenceStorageConverter.Convert(markdown).ShouldBe(first);
+    }
+
+    [Fact]
+    public void Convert_renders_a_task_list_nested_in_a_tight_list_item()
+    {
+        // The nesting-bug class from M1 slice 2: a tight outer item sets
+        // ImplicitParagraph, and the task body must honor its own list's looseness
+        // instead of inheriting the outer item's.
+        ConfluenceStorageConverter.Convert("- steps\n  - [x] done\n").ShouldBe(
+            "<ul>\n<li>steps<ac:task-list>\n<ac:task>\n<ac:task-id>1</ac:task-id>\n"
+            + "<ac:task-status>complete</ac:task-status>\n<ac:task-body>done</ac:task-body>\n"
+            + "</ac:task>\n</ac:task-list>\n</li>\n</ul>\n");
+    }
+
+    [Fact]
+    public void Convert_renders_an_ordered_task_list_as_a_task_list()
+    {
+        // Storage format has no numbered task list, so ordering is dropped rather
+        // than emitting <ol> with the markers demoted to text.
+        var storage = ConfluenceStorageConverter.Convert("1. [x] done\n2. [ ] todo\n");
+
+        storage.ShouldStartWith("<ac:task-list>");
+        storage.ShouldNotContain("<ol>");
+    }
+
     [Fact]
     public void Convert_empty_input_produces_empty_output()
     {

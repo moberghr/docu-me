@@ -1,6 +1,8 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text;
 using Markdig.Extensions.Tables;
+using Markdig.Extensions.TaskLists;
 using Markdig.Renderers;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
@@ -26,6 +28,8 @@ namespace DocuMe.Core.Markdown;
 /// </remarks>
 public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStorageRenderer>
 {
+    private int _taskId;
+
     public ConfluenceStorageRenderer(TextWriter writer, PageLinkResolver? linkResolver = null)
         : base(writer)
     {
@@ -43,6 +47,7 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
         ObjectRenderers.Add(new CodeInlineRenderer());
         ObjectRenderers.Add(new LinkInlineRenderer());
         ObjectRenderers.Add(new AutolinkInlineRenderer());
+        ObjectRenderers.Add(new TaskListRenderer());
         ObjectRenderers.Add(new LiteralInlineRenderer());
         ObjectRenderers.Add(new LineBreakInlineRenderer());
 
@@ -66,6 +71,20 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
     /// <c>HtmlRenderer.ImplicitParagraph</c>.
     /// </summary>
     public bool ImplicitParagraph { get; set; }
+
+    /// <summary>
+    /// Issues the next <c>&lt;ac:task-id&gt;</c>, numbering the page's tasks from 1 in
+    /// document order. The counter lives on the renderer instance, which
+    /// <see cref="ConfluenceStorageConverter"/> creates per call, so ids are unique
+    /// within a page and identical on every re-render of the same source (§8: the
+    /// content hash must not churn).
+    /// <para>
+    /// Deliberate deviation from mark, which restarts at 1 for every list and so
+    /// repeats ids when a page has more than one task list: Confluence tracks task
+    /// completion by id, and duplicates invite it to conflate two distinct tasks.
+    /// </para>
+    /// </summary>
+    public int NextTaskId() => ++_taskId;
 
     /// <summary>Writes text with XML character references so it is safe in storage-format markup.</summary>
     public ConfluenceStorageRenderer WriteEscaped(ReadOnlySpan<char> text)
@@ -161,11 +180,21 @@ internal sealed class ParagraphRenderer : MarkdownObjectRenderer<ConfluenceStora
 /// wrapper via <see cref="ConfluenceStorageRenderer.ImplicitParagraph"/>, matching
 /// Markdig's HTML renderer. Ordered-list start offset and bullet glyph are not
 /// representable in storage format and are intentionally dropped.
+/// <para>
+/// A list whose items are <em>all</em> task items becomes a native Confluence task
+/// list instead (§7) — see <see cref="WriteTaskList"/>.
+/// </para>
 /// </summary>
 internal sealed class ListRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, ListBlock>
 {
     protected override void Write(ConfluenceStorageRenderer renderer, ListBlock obj)
     {
+        if (TryGetTaskMarkers(obj, out var markers))
+        {
+            WriteTaskList(renderer, obj, markers);
+            return;
+        }
+
         var tag = obj.IsOrdered ? "ol" : "ul";
         renderer.Write('<').Write(tag).Write('>').Write('\n');
 
@@ -182,6 +211,104 @@ internal sealed class ListRenderer : MarkdownObjectRenderer<ConfluenceStorageRen
         }
 
         renderer.Write("</").Write(tag).Write('>').Write('\n');
+    }
+
+    /// <summary>
+    /// Collects one task marker per item, in item order, or fails when any item lacks
+    /// one. A <em>mixed</em> list is deliberately not a task list: storage format has
+    /// no element for a plain item inside <c>&lt;ac:task-list&gt;</c>, so mixing would
+    /// produce invalid markup. Such a list degrades to <c>&lt;ul&gt;</c>/<c>&lt;ol&gt;</c>
+    /// with the markers kept as text by <see cref="TaskListRenderer"/> — mark's rule
+    /// (its <c>isTaskList</c>), and the fallback PLAN.md §7 calls for.
+    /// </summary>
+    private static bool TryGetTaskMarkers(ListBlock list, [NotNullWhen(true)] out TaskList[]? markers)
+    {
+        markers = null;
+        if (list.Count == 0)
+        {
+            return false;
+        }
+
+        var found = new TaskList[list.Count];
+        for (var i = 0; i < list.Count; i++)
+        {
+            // GfmTaskListInlineParser only ever produces a marker in this position,
+            // so "first inline of the first block" is the whole test.
+            if (list[i] is not ListItemBlock { Count: > 0 } item
+                || item[0] is not ParagraphBlock { Inline.FirstChild: TaskList marker })
+            {
+                return false;
+            }
+
+            found[i] = marker;
+        }
+
+        markers = found;
+        return true;
+    }
+
+    /// <summary>
+    /// Writes the Confluence task list (<c>&lt;ac:task-list&gt;</c> /
+    /// <c>&lt;ac:task&gt;</c> / <c>&lt;ac:task-id&gt;</c> / <c>&lt;ac:task-status&gt;</c> /
+    /// <c>&lt;ac:task-body&gt;</c>), the shape read from mark's
+    /// <c>renderer/tasklist.go</c> and its <c>testdata/tasklists.html</c> fixture; the
+    /// status strings are Confluence's <c>complete</c>/<c>incomplete</c>.
+    /// <para>
+    /// Ordered-ness is dropped: <c>1. [x] done</c> is a task list too, and a task list
+    /// has no numbered variant. Tight/loose is honored exactly as for a plain list, so
+    /// a tight item's body is bare inline content and a loose one keeps its
+    /// <c>&lt;p&gt;</c>. A nested task list lands inside its parent's task body, which
+    /// is how Confluence nests tasks.
+    /// </para>
+    /// </summary>
+    private static void WriteTaskList(ConfluenceStorageRenderer renderer, ListBlock obj, TaskList[] markers)
+    {
+        renderer.Write("<ac:task-list>").Write('\n');
+
+        for (var i = 0; i < obj.Count; i++)
+        {
+            var item = (ListItemBlock)obj[i];
+            var status = markers[i].Checked ? "complete" : "incomplete";
+            ConsumeMarker(markers[i]);
+
+            renderer.Write("<ac:task>").Write('\n');
+            renderer.Write("<ac:task-id>")
+                .Write(renderer.NextTaskId().ToString(CultureInfo.InvariantCulture))
+                .Write("</ac:task-id>")
+                .Write('\n');
+            renderer.Write("<ac:task-status>").Write(status).Write("</ac:task-status>").Write('\n');
+            renderer.Write("<ac:task-body>");
+
+            var previousImplicit = renderer.ImplicitParagraph;
+            renderer.ImplicitParagraph = !obj.IsLoose;
+
+            renderer.WriteChildren(item);
+
+            renderer.ImplicitParagraph = previousImplicit;
+            renderer.Write("</ac:task-body>").Write('\n');
+            renderer.Write("</ac:task>").Write('\n');
+        }
+
+        renderer.Write("</ac:task-list>").Write('\n');
+    }
+
+    /// <summary>
+    /// Drops the marker and the one space separating it from the body, so the task
+    /// body starts at the author's own text. GFM spells the marker <c>[x] </c> with
+    /// that separator included, and goldmark (so also mark) consumes it in the parser,
+    /// whereas Markdig leaves it on the following literal. Mutating the tree is safe
+    /// here for the same reason as in <see cref="QuoteBlockRenderer"/>:
+    /// <see cref="ConfluenceStorageConverter"/> parses a fresh document per call and
+    /// discards it after rendering.
+    /// </summary>
+    private static void ConsumeMarker(TaskList marker)
+    {
+        if (marker.NextSibling is LiteralInline literal && literal.Content.CurrentChar == ' ')
+        {
+            literal.Content.SkipChar();
+        }
+
+        marker.Remove();
     }
 }
 
@@ -863,6 +990,31 @@ internal sealed class LinkReferenceDefinitionGroupRenderer
     protected override void Write(ConfluenceStorageRenderer renderer, LinkReferenceDefinitionGroup obj)
     {
         // Intentionally emits nothing.
+    }
+}
+
+/// <summary>
+/// A task marker reached here belongs to a list that is <em>not</em> all-task (see
+/// <see cref="ListRenderer.TryGetTaskMarkers"/>): the list rendered as a plain
+/// <c>&lt;ul&gt;</c>/<c>&lt;ol&gt;</c>, so the marker is written back as text and the
+/// item's completion state stays visible instead of being silently dropped. This is
+/// mark's fallback too (<c>renderer/tasklist.go</c>, <c>renderTaskCheckBox</c>),
+/// confirmed against its <c>testdata/tasklists-mixed.html</c> fixture, which renders
+/// <c>&lt;li&gt;[x] task item&lt;/li&gt;</c>.
+/// <para>
+/// PLAN.md §7 words this fallback as "emoji markers", but mark — the reference §7
+/// names for task lists — emits the source spelling, and echoing what the author
+/// typed invents no content. The one normalization is case: <c>[X]</c> is written
+/// back as <c>[x]</c>, since <see cref="TaskList"/> keeps only the boolean.
+/// </para>
+/// </summary>
+internal sealed class TaskListRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, TaskList>
+{
+    protected override void Write(ConfluenceStorageRenderer renderer, TaskList obj)
+    {
+        // No trailing space: unlike the task-list path this leaves the marker's
+        // separator on the following literal, so the item reads `[x] text` once.
+        renderer.Write(obj.Checked ? "[x]" : "[ ]");
     }
 }
 
