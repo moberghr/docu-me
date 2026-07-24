@@ -39,6 +39,7 @@ public sealed class ConfigLoaderTests : IDisposable
         config.Confluence.SpaceKey.ShouldBe("AUR");
         config.Confluence.SpaceId.ShouldBe("2431647748");
         config.Wiki.Root.ShouldBe("docs/wiki");
+
         // Defaults fill in unspecified sections (PLAN.md §5.1).
         config.Labels.Approved.ShouldBe("approved");
         config.Labels.Stale.ShouldBe("stale");

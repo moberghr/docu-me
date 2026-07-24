@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using DocuMe.Core.Config;
 using DocuMe.Core.Json;
@@ -14,9 +15,17 @@ namespace DocuMe.Core.Scaffolding;
 /// </summary>
 public static class ProjectScaffolder
 {
+    [SuppressMessage(
+        "Major Code Smell",
+        "S1075:URIs should not be hardcoded",
+        Justification = "The published $schema location is a fixed identifier, not a configurable endpoint (PLAN.md §5.1).")]
     private const string SchemaUrl =
         "https://raw.githubusercontent.com/moberg/docu-me/main/schema/docume.schema.json";
 
+    [SuppressMessage(
+        "Major Code Smell",
+        "S1075:URIs should not be hardcoded",
+        Justification = "Deliberate placeholder text written into the scaffolded docume.json for the user to replace.")]
     private const string BaseUrlPlaceholder = "https://your-domain.atlassian.net/wiki";
 
     private const string SpaceKeyPlaceholder = "SPACE";

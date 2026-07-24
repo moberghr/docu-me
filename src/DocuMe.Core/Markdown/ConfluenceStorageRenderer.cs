@@ -42,6 +42,7 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
         ObjectRenderers.Add(new AutolinkInlineRenderer());
         ObjectRenderers.Add(new LiteralInlineRenderer());
         ObjectRenderers.Add(new LineBreakInlineRenderer());
+
         // Catch-all — MUST stay last so specific renderers win first-match.
         ObjectRenderers.Add(new UnknownConstructRenderer());
     }
@@ -84,6 +85,7 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
                     break;
             }
         }
+
         return this;
     }
 
@@ -111,6 +113,7 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
                     break;
             }
         }
+
         return this;
     }
 }
@@ -226,14 +229,17 @@ internal sealed class QuoteBlockRenderer : MarkdownObjectRenderer<ConfluenceStor
             {
                 break;
             }
+
             if (child is not LiteralInline literal)
             {
                 return;
             }
+
             firstLine.Append(literal.Content.AsSpan());
         }
 
         var marker = firstLine.ToString().Trim();
+
         // GitHub matches the alert keyword case-insensitively, so `[!note]` is
         // as much an alert as `[!NOTE]`; uppercase before the (uppercase) lookup
         // so a lowercase alert still fails loud rather than silently downgrading.
@@ -289,7 +295,7 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
         }
 
         renderer.Write("<ac:plain-text-body><![CDATA[");
-        renderer.Write(ExtractCode(obj).Replace("]]>", "]]]]><![CDATA[>"));
+        renderer.Write(ExtractCode(obj).Replace("]]>", "]]]]><![CDATA[>", StringComparison.Ordinal));
         renderer.Write("]]></ac:plain-text-body></ac:structured-macro>").Write('\n');
     }
 
@@ -315,8 +321,10 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
             {
                 code.Append('\n');
             }
+
             code.Append(slices[i].Slice.AsSpan());
         }
+
         return code.ToString();
     }
 }
@@ -387,12 +395,14 @@ internal sealed class LinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStor
         if (IsExternal(url))
         {
             renderer.Write("<a href=\"").WriteAttributeEscaped(url).Write('"');
+
             // A markdown link title ([text](url "tip")) is a tooltip — representable
             // on an <a>, so preserve it rather than silently dropping it.
             if (!string.IsNullOrEmpty(obj.Title))
             {
                 renderer.Write(" title=\"").WriteAttributeEscaped(obj.Title).Write('"');
             }
+
             renderer.Write('>');
             renderer.WriteChildren(obj);
             renderer.Write("</a>");
@@ -400,7 +410,7 @@ internal sealed class LinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStor
         }
 
         // Relative link: strip any #fragment (S2 default — dropped, not preserved).
-        var fragment = url.IndexOf('#');
+        var fragment = url.IndexOf('#', StringComparison.Ordinal);
         var path = fragment < 0 ? url : url[..fragment];
         if (path.Length == 0)
         {
@@ -450,7 +460,7 @@ internal sealed class LinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStor
             return true;
         }
 
-        var colon = url.IndexOf(':');
+        var colon = url.IndexOf(':', StringComparison.Ordinal);
         if (colon <= 0)
         {
             return false;
@@ -467,6 +477,7 @@ internal sealed class LinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStor
                 return false;
             }
         }
+
         return true;
     }
 }
@@ -542,6 +553,7 @@ internal sealed class UnknownConstructRenderer : MarkdownObjectRenderer<Confluen
             case MarkdownDocument document:
                 renderer.WriteChildren(document);
                 return;
+
             // The exact-type root inline container of a leaf block (NOT its
             // subclasses like AutolinkInline, which must fail until supported).
             case ContainerInline container when obj.GetType() == typeof(ContainerInline):

@@ -1,0 +1,314 @@
+root = true
+
+# Moberg house analyzer severities, ported from app-templates
+# fullstack-app/backend-server/.editorconfig and scoped to DocuMe's CLI + library shape.
+# Deviations from the house file are marked "DocuMe:" — the EF Core migrations glob, the Aspire
+# AppHost glob, and the top-level-statement Program.cs glob are dropped (none exist here), and the
+# three relaxations the house justifies with EF/Warp specifics are left ACTIVE rather than inherited.
+# See .claude/references/dotnet/moberg-house-standards.md.
+
+[*]
+indent_style = space
+indent_size = 4
+tab_width = 4
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{json,yml,yaml,csproj,props,targets,slnx,config}]
+indent_size = 2
+
+[*.md]
+# Markdown uses trailing spaces as a hard line break; golden fixtures depend on it.
+trim_trailing_whitespace = false
+
+[*.cs]
+# ============================================================
+# Global analyzer suppressions
+# ============================================================
+
+# MA0038 — mark method as static. Deprecated by the analyzer (superseded by CA1822),
+# and fires on interface-implementation methods where static conversion isn't possible.
+dotnet_diagnostic.MA0038.severity = none
+
+# ============================================================
+# C# Code Style
+# ============================================================
+
+# Namespace
+csharp_style_namespace_declarations = file_scoped:warning
+
+# var preferences
+csharp_style_var_for_built_in_types = true:warning
+csharp_style_var_when_type_is_apparent = true:warning
+csharp_style_var_elsewhere = true:warning
+
+# Braces
+csharp_prefer_braces = true:warning
+
+# Using directives
+csharp_using_directive_placement = outside_namespace:warning
+
+# Simple using statement
+csharp_prefer_simple_using_statement = true:suggestion
+
+# Expression-bodied members
+csharp_style_expression_bodied_methods = false:silent
+csharp_style_expression_bodied_constructors = false:silent
+csharp_style_expression_bodied_operators = false:silent
+csharp_style_expression_bodied_properties = true:silent
+csharp_style_expression_bodied_indexers = true:silent
+csharp_style_expression_bodied_accessors = true:silent
+csharp_style_expression_bodied_lambdas = true:silent
+csharp_style_expression_bodied_local_functions = false:silent
+
+# Pattern matching
+csharp_style_prefer_null_check_over_type_check = true:suggestion
+csharp_style_prefer_local_over_anonymous_function = true:suggestion
+csharp_prefer_simple_default_expression = true:suggestion
+csharp_style_prefer_index_operator = true:suggestion
+csharp_style_prefer_top_level_statements = true:silent
+
+# Throw expression
+csharp_style_throw_expression = true:suggestion
+
+# Formatting
+csharp_indent_labels = one_less_than_current
+csharp_space_around_binary_operators = before_and_after
+
+# ============================================================
+# .NET Code Style
+# ============================================================
+
+# Sort using directives
+dotnet_sort_system_directives_first = true
+
+# Qualification (no this.)
+dotnet_style_qualification_for_field = false:warning
+dotnet_style_qualification_for_property = false:warning
+dotnet_style_qualification_for_method = false:warning
+dotnet_style_qualification_for_event = false:warning
+
+# Preferences
+dotnet_style_operator_placement_when_wrapping = beginning_of_line
+dotnet_style_coalesce_expression = true:suggestion
+dotnet_style_null_propagation = true:suggestion
+dotnet_style_prefer_is_null_check_over_reference_equality_method = true:suggestion
+dotnet_style_prefer_auto_properties = true:silent
+dotnet_style_object_initializer = true:suggestion
+dotnet_style_collection_initializer = true:suggestion
+dotnet_style_prefer_simplified_boolean_expressions = true:suggestion
+dotnet_style_prefer_conditional_expression_over_assignment = true:silent
+dotnet_style_prefer_conditional_expression_over_return = true:silent
+dotnet_style_explicit_tuple_names = true:suggestion
+dotnet_style_prefer_inferred_tuple_names = true:suggestion
+dotnet_style_prefer_inferred_anonymous_type_member_names = true:suggestion
+dotnet_style_prefer_compound_assignment = true:warning
+dotnet_style_prefer_simplified_interpolation = true:suggestion
+dotnet_style_namespace_match_folder = true:suggestion
+
+# ============================================================
+# Naming Rules
+# ============================================================
+
+# Private const/static readonly fields: PascalCase (no underscore)
+dotnet_naming_rule.constant_fields_should_be_pascal_case.severity = warning
+dotnet_naming_rule.constant_fields_should_be_pascal_case.symbols = constant_fields
+dotnet_naming_rule.constant_fields_should_be_pascal_case.style = pascal_case
+
+dotnet_naming_symbols.constant_fields.applicable_kinds = field
+dotnet_naming_symbols.constant_fields.applicable_accessibilities = internal, private, private_protected
+dotnet_naming_symbols.constant_fields.required_modifiers = const
+
+dotnet_naming_rule.static_readonly_fields_should_be_pascal_case.severity = warning
+dotnet_naming_rule.static_readonly_fields_should_be_pascal_case.symbols = static_readonly_fields
+dotnet_naming_rule.static_readonly_fields_should_be_pascal_case.style = pascal_case
+
+dotnet_naming_symbols.static_readonly_fields.applicable_kinds = field
+dotnet_naming_symbols.static_readonly_fields.applicable_accessibilities = internal, private, private_protected
+dotnet_naming_symbols.static_readonly_fields.required_modifiers = static, readonly
+
+# Private fields: _camelCase
+dotnet_naming_rule.private_or_internal_field_should_be_begins_with__.severity = warning
+dotnet_naming_rule.private_or_internal_field_should_be_begins_with__.symbols = private_or_internal_field
+dotnet_naming_rule.private_or_internal_field_should_be_begins_with__.style = begins_with__
+
+dotnet_naming_symbols.private_or_internal_field.applicable_kinds = field
+dotnet_naming_symbols.private_or_internal_field.applicable_accessibilities = internal, private, private_protected
+dotnet_naming_symbols.private_or_internal_field.required_modifiers =
+
+dotnet_naming_style.begins_with__.required_prefix = _
+dotnet_naming_style.begins_with__.required_suffix =
+dotnet_naming_style.begins_with__.word_separator =
+dotnet_naming_style.begins_with__.capitalization = camel_case
+
+# Interfaces: IPascalCase
+dotnet_naming_rule.interface_should_be_begins_with_i.severity = warning
+dotnet_naming_rule.interface_should_be_begins_with_i.symbols = interface
+dotnet_naming_rule.interface_should_be_begins_with_i.style = begins_with_i
+
+dotnet_naming_symbols.interface.applicable_kinds = interface
+dotnet_naming_symbols.interface.applicable_accessibilities = public, internal, private, protected, protected_internal, private_protected
+
+dotnet_naming_style.begins_with_i.required_prefix = I
+dotnet_naming_style.begins_with_i.required_suffix =
+dotnet_naming_style.begins_with_i.word_separator =
+dotnet_naming_style.begins_with_i.capitalization = pascal_case
+
+# Types: PascalCase
+dotnet_naming_rule.types_should_be_pascal_case.severity = suggestion
+dotnet_naming_rule.types_should_be_pascal_case.symbols = types
+dotnet_naming_rule.types_should_be_pascal_case.style = pascal_case
+
+dotnet_naming_symbols.types.applicable_kinds = class, struct, interface, enum
+dotnet_naming_symbols.types.applicable_accessibilities = public, internal, private, protected, protected_internal, private_protected
+
+# Non-field members: PascalCase
+dotnet_naming_rule.non_field_members_should_be_pascal_case.severity = suggestion
+dotnet_naming_rule.non_field_members_should_be_pascal_case.symbols = non_field_members
+dotnet_naming_rule.non_field_members_should_be_pascal_case.style = pascal_case
+
+dotnet_naming_symbols.non_field_members.applicable_kinds = property, event, method
+dotnet_naming_symbols.non_field_members.applicable_accessibilities = public, internal, private, protected, protected_internal, private_protected
+
+dotnet_naming_style.pascal_case.required_prefix =
+dotnet_naming_style.pascal_case.required_suffix =
+dotnet_naming_style.pascal_case.word_separator =
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+
+# ============================================================
+# StyleCop.Analyzers
+# ============================================================
+dotnet_diagnostic.SA1309.severity = none
+dotnet_diagnostic.SA1101.severity = none
+dotnet_diagnostic.SA1402.severity = none
+dotnet_diagnostic.SA1649.severity = none
+dotnet_diagnostic.SA1633.severity = none
+dotnet_diagnostic.SA1600.severity = none
+dotnet_diagnostic.SA1602.severity = none
+dotnet_diagnostic.SA1611.severity = none
+dotnet_diagnostic.SA1615.severity = none
+dotnet_diagnostic.SA1623.severity = none
+dotnet_diagnostic.SA1629.severity = none
+dotnet_diagnostic.SA0001.severity = none
+dotnet_diagnostic.SA1200.severity = warning
+dotnet_diagnostic.SA1208.severity = warning
+dotnet_diagnostic.SA1209.severity = warning
+dotnet_diagnostic.SA1210.severity = warning
+dotnet_diagnostic.SA1211.severity = warning
+dotnet_diagnostic.SA1217.severity = warning
+dotnet_diagnostic.SA1000.severity = none
+dotnet_diagnostic.SA1009.severity = none
+dotnet_diagnostic.SA1413.severity = none
+dotnet_diagnostic.SA1503.severity = warning
+dotnet_diagnostic.CS1591.severity = none
+
+# ============================================================
+# Roslynator
+# ============================================================
+dotnet_diagnostic.RCS1036.severity = none
+dotnet_diagnostic.RCS1163.severity = none
+# RCS1194: Implement standard exception constructors — DocuMe's config/state exceptions are
+# purpose-built (they always carry the offending path / version).
+dotnet_diagnostic.RCS1194.severity = none
+dotnet_diagnostic.RCS1021.severity = warning
+dotnet_diagnostic.RCS1251.severity = warning
+dotnet_diagnostic.RCS1261.severity = warning
+dotnet_diagnostic.RCS1118.severity = warning
+# DocuMe: the house file sets RCS1077 to none because "optimize LINQ" misfires on EF query
+# projections. DocuMe has no EF, so the rule stays active at its default severity.
+dotnet_diagnostic.RCS1158.severity = none
+dotnet_diagnostic.RCS1249.severity = none
+dotnet_diagnostic.RCS1226.severity = none
+dotnet_diagnostic.RCS1112.severity = none
+dotnet_diagnostic.RCS1110.severity = none
+dotnet_diagnostic.RCS1089.severity = none
+
+# ============================================================
+# SonarAnalyzer
+# ============================================================
+dotnet_diagnostic.S1135.severity = suggestion
+dotnet_diagnostic.S3459.severity = none
+dotnet_diagnostic.S3925.severity = none
+dotnet_diagnostic.S2094.severity = none
+dotnet_diagnostic.S2326.severity = none
+dotnet_diagnostic.S3010.severity = none
+dotnet_diagnostic.S6667.severity = none
+dotnet_diagnostic.S3260.severity = none
+dotnet_diagnostic.S3011.severity = none
+dotnet_diagnostic.S927.severity = none
+dotnet_diagnostic.S2325.severity = none
+dotnet_diagnostic.S1481.severity = warning
+dotnet_diagnostic.S108.severity = none
+dotnet_diagnostic.S3881.severity = none
+dotnet_diagnostic.S6966.severity = warning
+dotnet_diagnostic.S1133.severity = warning
+dotnet_diagnostic.S1123.severity = none
+dotnet_diagnostic.S112.severity = warning
+
+# ============================================================
+# Meziantou.Analyzer
+# ============================================================
+dotnet_diagnostic.MA0004.severity = none
+dotnet_diagnostic.MA0006.severity = warning
+dotnet_diagnostic.MA0048.severity = none
+dotnet_diagnostic.MA0016.severity = none
+dotnet_diagnostic.MA0002.severity = none
+dotnet_diagnostic.MA0015.severity = warning
+dotnet_diagnostic.MA0051.severity = none
+dotnet_diagnostic.MA0026.severity = suggestion
+dotnet_diagnostic.MA0011.severity = none
+dotnet_diagnostic.MA0018.severity = none
+dotnet_diagnostic.MA0003.severity = none
+dotnet_diagnostic.MA0007.severity = warning
+dotnet_diagnostic.MA0040.severity = warning
+dotnet_diagnostic.MA0042.severity = warning
+dotnet_diagnostic.MA0076.severity = none
+dotnet_diagnostic.MA0001.severity = warning
+
+# ============================================================
+# Built-in .NET Analyzers
+# ============================================================
+dotnet_diagnostic.IDE0003.severity = warning
+dotnet_diagnostic.IDE0052.severity = warning
+dotnet_diagnostic.CA1822.severity = none
+# DocuMe: the house file sets CA1725 to none for Warp's `req`/`ct` handler convention. DocuMe has no
+# Warp handlers, so parameter names must match the interfaces/base classes we implement (Markdig).
+dotnet_diagnostic.CA2016.severity = silent
+dotnet_diagnostic.CA2208.severity = none
+dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1727.severity = none
+dotnet_diagnostic.CA1873.severity = none
+dotnet_diagnostic.CA1861.severity = warning
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA1305.severity = none
+dotnet_diagnostic.CA1852.severity = suggestion
+dotnet_diagnostic.CA1711.severity = none
+dotnet_diagnostic.CA1000.severity = none
+dotnet_diagnostic.CA1805.severity = none
+dotnet_diagnostic.IDE1006.severity = none
+dotnet_diagnostic.IDE0290.severity = none
+dotnet_diagnostic.IDE0130.severity = none
+dotnet_diagnostic.IDE0300.severity = warning
+dotnet_diagnostic.IDE0028.severity = warning
+# DocuMe: the house file sets IDE0305 to none because the collection-expression suggestion misfires
+# on EF projection .ToList() calls. No EF here, so the rule stays active.
+dotnet_diagnostic.IDE0270.severity = warning
+dotnet_diagnostic.IDE0301.severity = warning
+dotnet_diagnostic.IDE0059.severity = warning
+dotnet_diagnostic.IDE0039.severity = warning
+
+# Using-directive ordering category handled by SA rules above
+dotnet_analyzer_diagnostic.category-StyleCop.CSharp.OrderingRules.severity = none
+
+# ============================================================
+# Test project — relaxed rules
+# ============================================================
+[**/DocuMe.Core.Tests/**/*.cs]
+dotnet_diagnostic.SA1401.severity = none
+dotnet_diagnostic.CA1051.severity = none
+dotnet_diagnostic.S112.severity = none
+dotnet_diagnostic.MA0025.severity = none
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.S2094.severity = none

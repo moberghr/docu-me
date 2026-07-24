@@ -57,5 +57,5 @@ public sealed class GoldenFileTests
         Directory.EnumerateFiles(GoldenDir, "*.md").ShouldNotBeEmpty();
     }
 
-    private static string Normalize(string s) => s.Replace("\r\n", "\n");
+    private static string Normalize(string s) => s.Replace("\r\n", "\n", StringComparison.Ordinal);
 }

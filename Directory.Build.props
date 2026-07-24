@@ -11,4 +11,26 @@
     <Version>0.1.0</Version>
   </PropertyGroup>
 
+  <!-- Maximum-strict analysis (Moberg house standard). Analyzer-rule severities, and the small
+       set we intentionally relax, live in .editorconfig — root for global rules, per-project
+       globs for tests. See .claude/references/dotnet/moberg-house-standards.md. -->
+  <PropertyGroup>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- Keep NuGet audit ON and visible (NuGetAuditMode=all surfaces transitive advisories), but
+         don't fail the build on advisories in transitive packages we can't directly patch. Bump the
+         owning direct dependency when a fix ships. -->
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!-- Analyzers applied to every project (PrivateAssets=all so they don't flow downstream). -->
+  <ItemGroup>
+    <PackageReference Include="StyleCop.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="Roslynator.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="SonarAnalyzer.CSharp" PrivateAssets="all" />
+    <PackageReference Include="Meziantou.Analyzer" PrivateAssets="all" />
+  </ItemGroup>
+
 </Project>

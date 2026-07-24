@@ -26,8 +26,10 @@ public sealed class FrontmatterParserTests
         parsed.Frontmatter.Sources.ShouldBe(["Loans/**", "AppApi/Services/LoanService.cs"]);
         parsed.Frontmatter.Title.ShouldBe("Loans Domain");
         parsed.Frontmatter.PageId.ShouldBe("123456");
+
         // Frontmatter override wins over the first H1.
         parsed.Title.ShouldBe("Loans Domain");
+
         // The YAML block is gone; the body begins at the first markdown line.
         parsed.Body.ShouldNotContain("sources:");
         parsed.Body.TrimStart().ShouldStartWith("# Heading From Body");

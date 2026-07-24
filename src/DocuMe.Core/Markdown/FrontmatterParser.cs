@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using Markdig;
 using Markdig.Extensions.Yaml;
@@ -54,16 +55,20 @@ public static class FrontmatterParser
     /// <summary>Slices the block's source span and drops the <c>---</c> fence lines.</summary>
     private static string RawYaml(string markdown, YamlFrontMatterBlock block)
     {
-        var raw = markdown.Substring(block.Span.Start, block.Span.Length).Replace("\r\n", "\n");
+        var raw = markdown
+            .Substring(block.Span.Start, block.Span.Length)
+            .Replace("\r\n", "\n", StringComparison.Ordinal);
         var lines = raw.Split('\n').ToList();
-        if (lines.Count > 0 && lines[0].Trim() == "---")
+        if (lines.Count > 0 && string.Equals(lines[0].Trim(), "---", StringComparison.Ordinal))
         {
             lines.RemoveAt(0);
         }
-        if (lines.Count > 0 && lines[^1].Trim() == "---")
+
+        if (lines.Count > 0 && string.Equals(lines[^1].Trim(), "---", StringComparison.Ordinal))
         {
             lines.RemoveAt(lines.Count - 1);
         }
+
         return string.Join('\n', lines);
     }
 
@@ -110,10 +115,15 @@ public static class FrontmatterParser
                     break;
             }
         }
+
         var title = text.ToString().Trim();
         return title.Length == 0 ? null : title;
     }
 
+    [SuppressMessage(
+        "Minor Code Smell",
+        "S1144:Unused private types or members should be removed",
+        Justification = "The setters are invoked by YamlDotNet through reflection, which the analyzer cannot see.")]
     private sealed class FrontmatterDto
     {
         public List<string>? Sources { get; set; }

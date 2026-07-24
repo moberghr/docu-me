@@ -11,8 +11,10 @@ namespace DocuMe.Core.Tests.Markdown;
 public sealed class ConfluenceStorageConverterTests
 {
     [Theory]
-    [InlineData("    indented code")]     // CodeBlock (indented — only fenced is supported)
-    [InlineData("<div>raw html</div>")]   // HtmlBlock
+
+    // An indented CodeBlock (only fenced code is supported), then an HtmlBlock.
+    [InlineData("    indented code")]
+    [InlineData("<div>raw html</div>")]
     public void Convert_throws_on_unsupported_block_construct(string markdown)
     {
         // Every construct above lacks a dedicated renderer, so the catch-all must
@@ -96,8 +98,8 @@ public sealed class ConfluenceStorageConverterTests
     [Fact]
     public void Convert_keeps_the_code_macro_well_formed_when_the_body_contains_the_cdata_terminator()
     {
-        // A literal ]]> inside the code would prematurely close the CDATA section;
-        // it must be split so the storage fragment stays parseable XML.
+        // A literal CDATA terminator inside the code would prematurely close the
+        // section, so it must be split to keep the storage fragment parseable XML.
         var storage = ConfluenceStorageConverter.Convert("```\na]]>b\n```");
 
         storage.ShouldContain("<![CDATA[a]]]]><![CDATA[>b]]>");

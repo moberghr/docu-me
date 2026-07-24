@@ -15,6 +15,16 @@
     <PackageVersion Include="System.CommandLine" Version="2.0.10" />
   </ItemGroup>
 
+  <!-- Analyzers (max-strict house set, versions mirrored from app-templates
+       fullstack-app/backend-server/Directory.Packages.props). StyleCop's 1.2.0-beta is the
+       de-facto current release (its last "stable" 1.1.118 predates modern analyzer infra). -->
+  <ItemGroup>
+    <PackageVersion Include="StyleCop.Analyzers" Version="1.2.0-beta.556" />
+    <PackageVersion Include="Roslynator.Analyzers" Version="4.15.0" />
+    <PackageVersion Include="SonarAnalyzer.CSharp" Version="10.27.0.140913" />
+    <PackageVersion Include="Meziantou.Analyzer" Version="3.0.112" />
+  </ItemGroup>
+
   <!-- Test dependencies (PLAN.md §4): xUnit + Shouldly + NSubstitute. -->
   <ItemGroup>
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
