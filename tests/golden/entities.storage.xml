@@ -1,0 +1,35 @@
+<h2>Character references © 2026</h2>
+<p>Named references publish as the character they resolve to: © ® ™ — → …</p>
+<p>XML predefines five entity names. &amp; &lt; and &gt; round-trip unchanged, because the escaper writes them back.</p>
+<p>The other two resolve to characters that need no escaping in element content: " and '.</p>
+<p>A bare &amp; that is part of no reference is escaped the same way.</p>
+<p>Numeric references resolve as well: decimal ©, hexadecimal ©, and an astral one 😀.</p>
+<p>An unrecognized reference stays the literal text the author typed: &amp;nosuchthing; and &amp;copy with no semicolon.</p>
+<p>Inside a code span the source spelling survives, because a span is never entity-parsed: <code>&amp;copy;</code> and <code>&amp;amp;</code>.</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">text</ac:parameter><ac:plain-text-body><![CDATA[literal &copy; and &amp; inside a fence]]></ac:plain-text-body></ac:structured-macro>
+<ul>
+<li>A list item with © in it</li>
+<li>A list item with an — dash</li>
+</ul>
+<table>
+<tbody>
+<tr>
+<th>Symbol</th>
+<th>Meaning &amp; note</th>
+</tr>
+<tr>
+<td>©</td>
+<td>copyright</td>
+</tr>
+<tr>
+<td>→</td>
+<td>x &amp; y</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>A quoted © line.</p>
+</blockquote>
+<p>A <a href="https://example.com/terms">link with © in its text</a> and a <a href="https://example.com/t" title="Terms © 2026">titled link</a>.</p>
+<p><ac:image ac:alt="alt text with © inside"><ri:attachment ri:filename="badge.png"/></ac:image></p>
+<p><strong>Bold ©</strong> and <em>italic —</em>.</p>

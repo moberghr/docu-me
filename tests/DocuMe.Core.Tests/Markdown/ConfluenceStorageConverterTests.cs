@@ -225,6 +225,56 @@ public sealed class ConfluenceStorageConverterTests
     }
 
     [Fact]
+    public void Convert_resolves_nbsp_to_a_non_breaking_space()
+    {
+        // The reason tests/golden/entities.md deliberately omits &nbsp;: U+00A0 is invisible
+        // in a golden file, so a hand review (§4.3) could not tell it from a plain space.
+        // Asserted here as an explicit '\u00A0' escape rather than a typed character: a
+        // literal one in this file would be exactly as invisible as in the golden, and anyone
+        // "tidying" it into a plain space would leave a test that passes against the wrong
+        // output. What publishes is the character, not the name: '&nbsp;' is undefined in XML,
+        // so echoing the name would invite Confluence to rewrite the body on save, churning
+        // the §8 content hash and invalidating an approval nothing really changed (§9.2).
+        ConfluenceStorageConverter.Convert("A price of 10&nbsp;000 kr.")
+            .ShouldBe("<p>A price of 10\u00A0000 kr.</p>\n");
+    }
+
+    [Fact]
+    public void Convert_does_not_double_escape_the_ampersand_entity()
+    {
+        // The escaper re-escapes what the entity resolves to, so '&amp;' transcodes to '&'
+        // and is written back as '&amp;'. A renderer that emitted the source spelling
+        // unescaped, or escaped the already-escaped text, would publish '&amp;amp;'.
+        ConfluenceStorageConverter.Convert("Loans &amp; leases.")
+            .ShouldBe("<p>Loans &amp; leases.</p>\n");
+    }
+
+    [Fact]
+    public void Convert_does_not_let_an_entity_smuggle_markup_into_the_body()
+    {
+        // '&lt;' resolves to '<', which the escaper puts straight back. Publishing the
+        // resolved character raw would turn author prose — or Confluence content echoed
+        // back into a page (§0.2) — into live storage-format markup.
+        ConfluenceStorageConverter.Convert("Beware &lt;script&gt;alert(1)&lt;/script&gt;.")
+            .ShouldBe("<p>Beware &lt;script&gt;alert(1)&lt;/script&gt;.</p>\n");
+    }
+
+    [Fact]
+    public void Convert_resolves_an_entity_in_image_alt_text_without_breaking_the_attribute()
+    {
+        // ac:alt is built by FlattenAltText, whose switch had no entity case and so threw.
+        // '&quot;' is the case that matters: it resolves to a bare '"' inside a
+        // double-quoted XML attribute, and only WriteAttributeEscaped putting it back as
+        // '&quot;' keeps the attribute intact.
+        ConfluenceStorageConverter.Convert(
+            "![a &quot;quoted&quot; &copy; badge](images/badge.png)",
+            attachmentResolver: _ => "badge.png")
+            .ShouldBe(
+                "<p><ac:image ac:alt=\"a &quot;quoted&quot; © badge\">"
+                + "<ri:attachment ri:filename=\"badge.png\"/></ac:image></p>\n");
+    }
+
+    [Fact]
     public void Convert_keeps_a_comment_inside_a_fence_as_code()
     {
         // A fence body is CDATA and never sees inline parsing, so the comment is code the

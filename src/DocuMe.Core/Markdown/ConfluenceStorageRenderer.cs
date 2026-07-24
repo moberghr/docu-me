@@ -59,6 +59,7 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
         ObjectRenderers.Add(new AutolinkInlineRenderer());
         ObjectRenderers.Add(new TaskListRenderer());
         ObjectRenderers.Add(new LiteralInlineRenderer());
+        ObjectRenderers.Add(new HtmlEntityInlineRenderer());
         ObjectRenderers.Add(new LineBreakInlineRenderer());
         ObjectRenderers.Add(new HtmlInlineRenderer());
 
@@ -1306,6 +1307,15 @@ internal sealed class LinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStor
                     case CodeInline code:
                         alt.Append(code.Content);
                         break;
+
+                    // The resolved character, matching HtmlEntityInlineRenderer: ac:alt is
+                    // an XML attribute, so an HTML-only entity name would be as undefined
+                    // there as in the body, and WriteAttributeEscaped re-escapes whatever
+                    // this resolves to (a `&quot;` becomes `"` here and `&quot;` again on
+                    // the way out, so it cannot break out of the attribute).
+                    case HtmlEntityInline entity:
+                        alt.Append(entity.Transcoded.AsSpan());
+                        break;
                     case LineBreakInline:
                         alt.Append(' ');
                         break;
@@ -1618,6 +1628,42 @@ internal sealed class LiteralInlineRenderer : MarkdownObjectRenderer<ConfluenceS
 {
     protected override void Write(ConfluenceStorageRenderer renderer, LiteralInline obj)
         => renderer.WriteEscaped(obj.Content.AsSpan());
+}
+
+/// <summary>
+/// A character reference — named (<c>&amp;copy;</c>) or numeric (<c>&amp;#169;</c>,
+/// <c>&amp;#xA9;</c>) — is published as the <em>character it resolves to</em>, taken from
+/// Markdig's <see cref="HtmlEntityInline.Transcoded"/> and put back through
+/// <see cref="ConfluenceStorageRenderer.WriteEscaped"/>.
+/// <para>
+/// The choice is resolved character over source spelling because storage format is XML, and
+/// XML predefines only five entity names (<c>&amp;amp;</c>, <c>&amp;lt;</c>,
+/// <c>&amp;gt;</c>, <c>&amp;quot;</c>, <c>&amp;apos;</c>). An HTML-only name such as
+/// <c>&amp;copy;</c> or <c>&amp;nbsp;</c> is undefined in an XML document, so echoing it
+/// would invite Confluence to reject the body or silently rewrite it on save — and a
+/// server-side rewrite is §8 hash drift, which invalidates approvals nothing changed
+/// (§9.2). Same reasoning as the strikethrough decision, which emits the editor's own
+/// shape rather than the shape that reads best in source. Resolved characters are plain
+/// UTF-8 and unambiguous.
+/// </para>
+/// <para>
+/// Escaping on the way out is what keeps the round-trip honest: <c>&amp;amp;</c>
+/// transcodes to <c>&amp;</c> and is re-escaped to <c>&amp;amp;</c>, never
+/// <c>&amp;amp;amp;</c>. <c>&amp;amp;</c>, <c>&amp;lt;</c> and <c>&amp;gt;</c> therefore
+/// come out byte-identical; <c>&amp;quot;</c> and <c>&amp;apos;</c> resolve to a bare
+/// <c>"</c> and <c>'</c>, which need no escaping in element content (they are escaped
+/// again by <see cref="ConfluenceStorageRenderer.WriteAttributeEscaped"/> when the text
+/// lands in an attribute instead). A reference Markdig does
+/// not recognize (<c>&amp;nosuchthing;</c>, or <c>&amp;copy</c> with no semicolon) never
+/// becomes one of these nodes at all — it stays a <see cref="LiteralInline"/> and is
+/// escaped as the literal text the author typed.
+/// </para>
+/// </summary>
+internal sealed class HtmlEntityInlineRenderer
+    : MarkdownObjectRenderer<ConfluenceStorageRenderer, HtmlEntityInline>
+{
+    protected override void Write(ConfluenceStorageRenderer renderer, HtmlEntityInline obj)
+        => renderer.WriteEscaped(obj.Transcoded.AsSpan());
 }
 
 /// <summary>Soft breaks become a space; hard breaks (two trailing spaces / <c>\</c>) become <c>&lt;br/&gt;</c>.</summary>
