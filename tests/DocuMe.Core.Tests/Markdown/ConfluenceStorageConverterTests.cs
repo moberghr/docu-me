@@ -14,13 +14,14 @@ public sealed class ConfluenceStorageConverterTests
 {
     [Theory]
 
-    // An indented CodeBlock (only fenced code is supported), then an HtmlBlock.
+    // An indented CodeBlock (only fenced code is supported), then a raw HTML block.
     [InlineData("    indented code")]
     [InlineData("<div>raw html</div>")]
     public void Convert_throws_on_unsupported_block_construct(string markdown)
     {
-        // Every construct above lacks a dedicated renderer, so the catch-all must
-        // throw rather than silently drop or mis-transform it.
+        // Neither construct has a storage-format mapping, so conversion must throw rather
+        // than silently drop or mis-transform it. The first reaches the catch-all; the
+        // second is rejected by HtmlBlockRenderer, which admits comments only.
         var ex = Should.Throw<NotSupportedException>(() => ConfluenceStorageConverter.Convert(markdown));
         ex.Message.ShouldContain("No storage-format renderer");
     }
@@ -144,6 +145,93 @@ public sealed class ConfluenceStorageConverterTests
                 "```mermaid\n\n```",
                 mermaidResolver: _ => "d.svg"));
         ex.Message.ShouldContain("Mermaid fence is empty");
+    }
+
+    [Theory]
+
+    // A comment sharing its closing line with author text, at every position CommonMark
+    // can produce one: opening a document, interrupting a paragraph, closing a multi-line
+    // comment, and with no separating space at all.
+    [InlineData("<!-- c --> and then text.", "and then text.")]
+    [InlineData("Before.\n<!-- c --> tail\nAfter.", "tail")]
+    [InlineData("<!-- a\nb --> tail", "tail")]
+    [InlineData("<!-- a -->text", "text")]
+    public void Convert_throws_when_a_comment_block_carries_author_text(string markdown, string tail)
+    {
+        // THE reason this slice cannot drop on HtmlBlock.Type alone. CommonMark's comment
+        // block ends at the line *containing* '-->', and the whole of that line belongs to
+        // the block — so a blanket drop would silently delete the tail. It is also why this
+        // fails loud instead of emitting the tail: the tail never went through inline
+        // parsing, so a '**bold**' in it would publish as literal asterisks.
+        var ex = Should.Throw<NotSupportedException>(() => ConfluenceStorageConverter.Convert(markdown));
+        ex.Message.ShouldContain("shares its line with content that is not a comment");
+        ex.Message.ShouldContain(tail);
+    }
+
+    [Theory]
+    [InlineData("Before.\n\n<!-- oops\n\nAfter.")]
+    [InlineData("<!-->")]
+    public void Convert_throws_on_an_unterminated_comment(string markdown)
+    {
+        // An unclosed comment runs to the end of its container, so the first case has a
+        // whole paragraph ("After.") inside the comment block — dropping it would delete
+        // the rest of the page. The second is HTML5's abrupt-closing form, left to fail
+        // rather than guessed at: its closer would have to reuse the opener's own '--'.
+        var ex = Should.Throw<NotSupportedException>(() => ConfluenceStorageConverter.Convert(markdown));
+        ex.Message.ShouldContain("Unterminated HTML comment");
+    }
+
+    [Fact]
+    public void Convert_throws_on_inline_raw_html()
+    {
+        // Only comments are dropped; a real tag has no storage-format mapping, and
+        // Confluence would reject or rewrite it on save.
+        var ex = Should.Throw<NotSupportedException>(
+            () => ConfluenceStorageConverter.Convert("Text with <b>bold</b>."));
+        ex.Message.ShouldContain("inline raw HTML");
+        ex.Message.ShouldContain("<b>");
+    }
+
+    [Fact]
+    public void Convert_keeps_the_authors_spacing_when_it_drops_an_inline_comment()
+    {
+        // Deliberate: the comment node is dropped and nothing else is touched, leaving the
+        // double space. Collapsing it would make the renderer an editor of the author's
+        // whitespace (and would then owe the same answer for leading, trailing and heading
+        // space) for no gain — XHTML collapses consecutive whitespace when rendered, so a
+        // Confluence reader sees one space either way. Pinned because the double space looks
+        // like a bug and invites a "fix" that would churn the §8 content hash.
+        ConfluenceStorageConverter.Convert("Text with an <!-- c --> comment.")
+            .ShouldBe("<p>Text with an  comment.</p>\n");
+    }
+
+    [Fact]
+    public void Convert_drops_a_comment_block_without_leaving_a_blank_line()
+    {
+        // The renderer emits nothing at all, not even a newline, so a comment between two
+        // paragraphs leaves neither a stray blank line nor an empty <p></p>.
+        ConfluenceStorageConverter.Convert("Before.\n\n<!-- note -->\n\nAfter.")
+            .ShouldBe("<p>Before.</p>\n<p>After.</p>\n");
+    }
+
+    [Fact]
+    public void Convert_drops_the_hand_edited_marker_pair_and_keeps_what_it_wraps()
+    {
+        // The row PLAN.md §7 names explicitly. DocuMe's own refresh workflow writes these
+        // markers into consumer wikis (§6, §9), so a page carrying one has to convert.
+        ConfluenceStorageConverter.Convert(
+            "<!-- HAND-EDITED START -->\n\nKept.\n\n<!-- HAND-EDITED END -->")
+            .ShouldBe("<p>Kept.</p>\n");
+    }
+
+    [Fact]
+    public void Convert_keeps_a_comment_inside_a_fence_as_code()
+    {
+        // A fence body is CDATA and never sees inline parsing, so the comment is code the
+        // author is showing, not a comment to strip. Free today, pinned so a future slice
+        // cannot regress it.
+        ConfluenceStorageConverter.Convert("```html\n<!-- shown -->\n```")
+            .ShouldContain("<![CDATA[<!-- shown -->]]>");
     }
 
     [Theory]

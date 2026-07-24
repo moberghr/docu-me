@@ -1,0 +1,30 @@
+<h2>HTML comments</h2>
+<p>Prose before a standalone comment.</p>
+<p>Prose after it: no blank line and no empty paragraph is left behind.</p>
+<p>Content wrapped by DocuMe's own refresh markers survives; the markers do not.</p>
+<p>Text with an  comment keeps the author's spacing verbatim.</p>
+<p>A comment may also trail a sentence. </p>
+<p>One  two  three.</p>
+<h3>Heading with a trailing comment </h3>
+<ul>
+<li>one  item</li>
+<li>two</li>
+<li>three</li>
+</ul>
+<table>
+<tbody>
+<tr>
+<th>Column</th>
+<th>Notes</th>
+</tr>
+<tr>
+<td> cell</td>
+<td>mid  cell</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>Quoted prose stays quoted.</p>
+</blockquote>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">html</ac:parameter><ac:plain-text-body><![CDATA[<!-- Inside a fence a comment is code, so it survives verbatim. -->]]></ac:plain-text-body></ac:structured-macro>
+<p>Last paragraph.</p>

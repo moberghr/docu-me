@@ -21,7 +21,8 @@ namespace DocuMe.Core.Markdown;
 /// GitHub-alert panel macros; fenced code blocks (code macro); thematic breaks;
 /// links (external, relative .md page links, autolinks); GFM tables; a root-level
 /// <c>[TOC]</c> line (table-of-contents macro); images (attachment or external URL);
-/// <c>```mermaid</c> fences (rendered-diagram attachment).
+/// <c>```mermaid</c> fences (rendered-diagram attachment); HTML comments in both the
+/// block and inline form (dropped).
 /// That completes the §7 construct table. Until a construct has a
 /// dedicated renderer, <see cref="UnknownConstructRenderer"/> makes the converter
 /// <em>fail loudly</em> rather than silently drop or mis-transform it (PLAN.md §7
@@ -51,6 +52,7 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
         ObjectRenderers.Add(new ThematicBreakRenderer());
         ObjectRenderers.Add(new TableRenderer());
         ObjectRenderers.Add(new LinkReferenceDefinitionGroupRenderer());
+        ObjectRenderers.Add(new HtmlBlockRenderer());
         ObjectRenderers.Add(new EmphasisRenderer());
         ObjectRenderers.Add(new CodeInlineRenderer());
         ObjectRenderers.Add(new LinkInlineRenderer());
@@ -58,6 +60,7 @@ public sealed class ConfluenceStorageRenderer : TextRendererBase<ConfluenceStora
         ObjectRenderers.Add(new TaskListRenderer());
         ObjectRenderers.Add(new LiteralInlineRenderer());
         ObjectRenderers.Add(new LineBreakInlineRenderer());
+        ObjectRenderers.Add(new HtmlInlineRenderer());
 
         // Catch-all — MUST stay last so specific renderers win first-match.
         ObjectRenderers.Add(new UnknownConstructRenderer());
@@ -1399,6 +1402,190 @@ internal sealed class LinkReferenceDefinitionGroupRenderer
     protected override void Write(ConfluenceStorageRenderer renderer, LinkReferenceDefinitionGroup obj)
     {
         // Intentionally emits nothing.
+    }
+}
+
+/// <summary>
+/// HTML <em>blocks</em>. A block that holds nothing but HTML comments is dropped from the
+/// output (§7: "markers are repo-side concerns") — DocuMe's own refresh workflow writes
+/// <c>&lt;!-- HAND-EDITED START --&gt;</c> / <c>&lt;!-- HAND-EDITED END --&gt;</c> markers into
+/// consumer wikis (§6, §9), so a page carrying one has to convert. Every other HTML block
+/// fails loud.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Dropping on <see cref="HtmlBlock.Type"/> alone would be silently destructive, which the
+/// parse tree makes plain. CommonMark's comment block (type 2) starts at a line beginning
+/// <c>&lt;!--</c> and ends at the line <em>containing</em> <c>--&gt;</c>, and the whole of
+/// that closing line belongs to the block — so <c>&lt;!-- c --&gt; tail</c> is one
+/// comment-typed block carrying the author's <c>tail</c>. Worse, an unterminated
+/// <c>&lt;!-- oops</c> runs to the end of its container, swallowing every following
+/// paragraph into one comment-typed block. Both were verified against the real tree.
+/// A blanket drop would therefore delete author content with no error at all.
+/// </para>
+/// <para>
+/// Hence the contract is <em>comment-only</em>: the block is dropped when
+/// <see cref="IsCommentOnly"/> can account for all of its text as well-formed comments plus
+/// whitespace, and throws otherwise. Failing loud on <c>&lt;!-- c --&gt; tail</c> rejects a
+/// line GitHub does render, which is the deliberate trade: the tail was never inline-parsed,
+/// so emitting it would publish any markdown in it (<c>**bold**</c>, a link) as literal text.
+/// A one-line error the author fixes by moving the comment beats either silent loss or
+/// silent mangling — the same call the fence-attribute and <c>{width=300}</c> paths make.
+/// </para>
+/// </remarks>
+internal sealed class HtmlBlockRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, HtmlBlock>
+{
+    protected override void Write(ConfluenceStorageRenderer renderer, HtmlBlock obj)
+    {
+        var text = ReadLines(obj);
+
+        if (obj.Type != HtmlBlockType.Comment)
+        {
+            // Storage format is not HTML: Confluence rejects or rewrites raw markup on
+            // save, so a passed-through tag is drift against the stored body and churn in
+            // the approval hash (§8) even when it appears to work.
+            throw new NotSupportedException(
+                $"No storage-format renderer for a raw HTML block ({Describe(text)}). Only HTML "
+                + "comments are supported, and they are dropped from the output (PLAN.md §7); "
+                + "storage format is not HTML, so a raw tag has no reliable mapping. Express the "
+                + "content in markdown, or use a Confluence macro.");
+        }
+
+        if (IsCommentOnly(text, out var remainder))
+        {
+            // Intentionally emits nothing — not even a newline, so a comment between two
+            // paragraphs leaves no blank line and no empty <p></p> behind it.
+            return;
+        }
+
+        if (remainder.StartsWith("<!--", StringComparison.Ordinal))
+        {
+            throw new NotSupportedException(
+                $"Unterminated HTML comment ({Describe(remainder)}). Markdown runs an unclosed "
+                + "comment to the end of the document, so everything after it would be dropped "
+                + "as comment text rather than published. Close it with '-->'.");
+        }
+
+        throw new NotSupportedException(
+            $"An HTML comment shares its line with content that is not a comment "
+            + $"({Describe(remainder)}). Markdown treats the whole line as one HTML block, so "
+            + "that content never became markdown and publishing it would emit it literally "
+            + "(a '**bold**' would stay asterisks). Put the comment on a line of its own.");
+    }
+
+    /// <summary>
+    /// True when <paramref name="text"/> is a run of well-formed <c>&lt;!-- … --&gt;</c>
+    /// comments separated only by whitespace, so dropping the block loses nothing the author
+    /// wrote. Otherwise <paramref name="remainder"/> is the first text that could not be
+    /// accounted for, which the caller turns into a diagnostic.
+    /// </summary>
+    private static bool IsCommentOnly(string text, out string remainder)
+    {
+        var position = 0;
+        while (true)
+        {
+            while (position < text.Length && char.IsWhiteSpace(text[position]))
+            {
+                position++;
+            }
+
+            if (position == text.Length)
+            {
+                remainder = string.Empty;
+                return true;
+            }
+
+            if (!text.AsSpan(position).StartsWith("<!--", StringComparison.Ordinal))
+            {
+                remainder = text[position..].Trim();
+                return false;
+            }
+
+            // Search from past the opener so its own '--' cannot double as the closer:
+            // HTML5's abrupt-closing forms ('<!-->', '<!--->') are left to fail loud rather
+            // than guessed at, while the canonical empty comment '<!---->' still matches.
+            var close = text.IndexOf("-->", position + 4, StringComparison.Ordinal);
+            if (close < 0)
+            {
+                remainder = text[position..].Trim();
+                return false;
+            }
+
+            position = close + 3;
+        }
+    }
+
+    /// <summary>Rejoins the block's raw lines with <c>\n</c>, exactly as the parser sliced them.</summary>
+    private static string ReadLines(HtmlBlock obj)
+    {
+        var lines = obj.Lines;
+        var slices = lines.Lines;
+        var text = new StringBuilder();
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (i > 0)
+            {
+                text.Append('\n');
+            }
+
+            text.Append(slices[i].Slice.AsSpan());
+        }
+
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// Quotes a one-line excerpt for an error message, so a block that swallowed half a page
+    /// still produces a readable diagnostic.
+    /// </summary>
+    private static string Describe(string text)
+    {
+        var firstLine = text.AsSpan();
+        var breakAt = firstLine.IndexOf('\n');
+        if (breakAt >= 0)
+        {
+            firstLine = firstLine[..breakAt];
+        }
+
+        var excerpt = firstLine.Length > 60 ? string.Concat(firstLine[..60], "…") : firstLine.ToString();
+        return firstLine.Length < text.Length ? $"'{excerpt}' …" : $"'{excerpt}'";
+    }
+}
+
+/// <summary>
+/// Inline raw HTML. An inline HTML <em>comment</em> is dropped (§7, the same rule
+/// <see cref="HtmlBlockRenderer"/> applies to block comments); any other inline tag fails
+/// loud.
+/// </summary>
+/// <remarks>
+/// The comment node is dropped and nothing else is touched, so
+/// <c>Text with an &lt;!-- c --&gt; comment.</c> keeps both surrounding spaces and publishes
+/// as <c>Text with an  comment.</c>. That double space is deliberate. Collapsing it would
+/// make the renderer an editor of the author's whitespace, and the same rule would then owe
+/// an answer for a leading space, a trailing space and a heading — a widening surface for no
+/// gain, because XHTML collapses consecutive whitespace when rendered, so a Confluence reader
+/// sees exactly one space either way. Keeping the transform "drop the node, touch nothing
+/// else" is also what makes the §8 content hash explainable.
+/// </remarks>
+internal sealed class HtmlInlineRenderer : MarkdownObjectRenderer<ConfluenceStorageRenderer, HtmlInline>
+{
+    protected override void Write(ConfluenceStorageRenderer renderer, HtmlInline obj)
+    {
+        var tag = obj.Tag ?? string.Empty;
+
+        // As in the block renderer, the closer must start past the opener, so the opener's
+        // own '--' cannot serve as it.
+        if (tag.StartsWith("<!--", StringComparison.Ordinal)
+            && tag.AsSpan(4).EndsWith("-->", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        throw new NotSupportedException(
+            $"No storage-format renderer for inline raw HTML '{tag}'. Only HTML comments are "
+            + "supported inline, and they are dropped from the output (PLAN.md §7); storage "
+            + "format is not HTML, so Confluence would reject or rewrite the tag on save. Use "
+            + "markdown, or a Confluence macro.");
     }
 }
 
