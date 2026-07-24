@@ -1,0 +1,56 @@
+namespace DocuMe.Core.Tests.Markdown;
+
+/// <summary>
+/// Locates the real <c>templates/tools/render-mermaid.mjs</c> and its npm dependency, for the tests
+/// that exercise <c>beautiful-mermaid</c> itself rather than a stub.
+/// </summary>
+/// <remarks>
+/// Shared by <see cref="MermaidRendererTests"/> and the render pass's own suite: both need the same
+/// "is this machine set up to render" question answered the same way, and both skip rather than fail
+/// when it is not, so a clone without <c>npm ci</c> still gets a green <c>dotnet test</c>.
+/// </remarks>
+internal static class BundledRenderScript
+{
+    /// <summary>Why a test skipped, and what to run so it does not.</summary>
+    public const string DependencyMissingReason =
+        "beautiful-mermaid is not installed: run 'npm ci' at the repo root to exercise the real "
+        + "render-mermaid.mjs end to end.";
+
+    /// <summary>
+    /// The script's path, or <c>null</c> when it or <c>beautiful-mermaid</c> is absent.
+    /// </summary>
+    public static string? TryFind()
+    {
+        var repoRoot = FindRepoRoot();
+        if (repoRoot is null)
+        {
+            return null;
+        }
+
+        var script = Path.Combine(repoRoot, "templates", "tools", "render-mermaid.mjs");
+        var dependency = Path.Combine(repoRoot, "node_modules", "beautiful-mermaid");
+
+        return File.Exists(script) && Directory.Exists(dependency) ? script : null;
+    }
+
+    /// <summary>
+    /// Walks up from the test assembly to the directory holding <c>DocuMe.slnx</c>. The real script
+    /// cannot be copied beside the assembly like the goldens are: Node resolves
+    /// <c>beautiful-mermaid</c> from the script's own location upwards, so it has to run from its
+    /// place in the tree.
+    /// </summary>
+    private static string? FindRepoRoot()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
+             directory is not null;
+             directory = directory.Parent)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "DocuMe.slnx")))
+            {
+                return directory.FullName;
+            }
+        }
+
+        return null;
+    }
+}

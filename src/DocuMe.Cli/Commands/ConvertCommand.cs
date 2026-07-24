@@ -34,26 +34,50 @@ internal static class ConvertCommand
             AllowMultipleArgumentsPerToken = true,
         };
 
+        var renderMermaidOption = new Option<bool>("--render-mermaid")
+        {
+            Description =
+                "Also render every mermaid diagram through Node and report the ones that fail. "
+                + "Off by default: it starts a process per diagram and needs beautiful-mermaid "
+                + "installed. Without it, diagrams are counted but never checked.",
+        };
+        var rendererOption = new Option<string>("--renderer")
+        {
+            Description =
+                "Path to render-mermaid.mjs for --render-mermaid. Defaults to where `docume init` "
+                + "scaffolds it and docume.json -> mermaid.renderer names it.",
+            DefaultValueFactory = _ => "tools/render-mermaid.mjs",
+        };
+
         var command = new Command(
             "convert",
             "Convert every wiki page and report failures and degradations. Read-only: nothing is published.")
         {
             wikiRootArgument,
             acceptOption,
+            renderMermaidOption,
+            rendererOption,
         };
 
-        command.SetAction(parseResult =>
+        command.SetAction((parseResult, cancellationToken) =>
         {
             var wikiRoot = parseResult.GetValue(wikiRootArgument)!;
             var policy = new AcceptancePolicy(parseResult.GetValue(acceptOption) ?? []);
+            var renderer = parseResult.GetValue(renderMermaidOption)
+                ? new MermaidRenderer(Path.GetFullPath(parseResult.GetValue(rendererOption)!))
+                : null;
 
-            return Run(wikiRoot, policy);
+            return RunAsync(wikiRoot, policy, renderer, cancellationToken);
         });
 
         return command;
     }
 
-    private static int Run(string wikiRoot, AcceptancePolicy policy)
+    private static async Task<int> RunAsync(
+        string wikiRoot,
+        AcceptancePolicy policy,
+        MermaidRenderer? mermaidRenderer,
+        CancellationToken cancellationToken)
     {
         var full = Path.GetFullPath(wikiRoot);
         AnsiConsole.MarkupLine($"Wiki root: [blue]{full.EscapeMarkup()}[/]");
@@ -83,6 +107,27 @@ internal static class ConvertCommand
         }
 
         var report = ConversionAcceptance.RunTree(tree, policy);
+
+        if (mermaidRenderer is not null && report.Diagrams.Count > 0)
+        {
+            var distinct = report.Diagrams.Select(diagram => diagram.Source).Distinct(StringComparer.Ordinal).Count();
+            AnsiConsole.MarkupLine($"Rendering {distinct} distinct mermaid diagram(s) through Node…");
+
+            try
+            {
+                report = await MermaidAcceptance
+                    .RenderDiagramsAsync(report, mermaidRenderer, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (MermaidRenderException ex)
+            {
+                // A setup fault, not a diagram's: it would have failed every diagram identically,
+                // so reporting it as findings would read as a broken corpus.
+                AnsiConsole.MarkupLine($"[red]The mermaid render pass could not run:[/] {ex.Message.EscapeMarkup()}");
+                return 1;
+            }
+        }
+
         Render(report);
         return report.MeetsAcceptanceBar ? 0 : 1;
     }
@@ -102,7 +147,54 @@ internal static class ConvertCommand
 
         RenderFailures(report);
         RenderDiagnostics(report);
+        RenderDiagrams(report);
         RenderVerdict(report);
+    }
+
+    /// <summary>
+    /// The mermaid section. Prints the dialect census either way, because "27 diagrams, none
+    /// checked" is a materially different result from "27 diagrams, all render" and a report that
+    /// looked identical in both cases would be the silent failure this pass exists to remove.
+    /// </summary>
+    private static void RenderDiagrams(AcceptanceReport report)
+    {
+        var diagrams = report.Diagrams;
+        if (diagrams.Count == 0)
+        {
+            return;
+        }
+
+        AnsiConsole.WriteLine();
+
+        if (report.Renders is null)
+        {
+            AnsiConsole.MarkupLine(
+                $"[yellow]MERMAID DIAGRAMS — {diagrams.Count} found, NOT CHECKED[/] "
+                + "(pass --render-mermaid to render them; conversion cannot tell whether a diagram renders)");
+            return;
+        }
+
+        var renders = report.Renders;
+        var color = renders.AllRendered ? "green" : "red";
+        AnsiConsole.MarkupLine(
+            $"[{color}]MERMAID DIAGRAMS[/] — {renders.Count} found ({renders.DistinctCount} distinct), "
+            + $"{renders.FailedCount} failed to render on {renders.FailedPageCount} page(s)");
+
+        foreach (var group in renders.Failures)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine($"  [red]{group.Count} diagram(s)[/]: {group.Reason.EscapeMarkup()}");
+            RenderConstructs(
+                group.ByDialect,
+                group.Occurrences.Select(occurrence => ((string?)occurrence.Dialect, occurrence.Path)));
+        }
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("  [grey]dialect census (every diagram, rendered or not):[/]");
+        foreach (var dialect in renders.ByDialect)
+        {
+            AnsiConsole.MarkupLine($"      [bold]{dialect.Construct.EscapeMarkup()}[/] ({dialect.Count})");
+        }
     }
 
     private static void RenderFailures(AcceptanceReport report)
@@ -159,16 +251,27 @@ internal static class ConvertCommand
     {
         AnsiConsole.WriteLine();
 
+        // An unchecked diagram is named in the verdict itself: the bar can be MET while the corpus
+        // holds a diagram that will fail at publish, and a bare "MET" would hide exactly that.
+        var uncheckedNote = report.Renders is null && report.Diagrams.Count > 0
+            ? $", {report.Diagrams.Count} diagram(s) unchecked"
+            : string.Empty;
+
         if (report.MeetsAcceptanceBar)
         {
             AnsiConsole.MarkupLine(
-                $"[green]ACCEPTANCE (PLAN.md §4.4): MET[/] — {report.PageCount} pages, 0 errors, 0 warnings");
+                $"[green]ACCEPTANCE (PLAN.md §4.4): MET[/] — {report.PageCount} pages, 0 errors, "
+                + $"0 warnings{uncheckedNote}");
             return;
         }
 
+        var diagrams = report.Renders is null || report.Renders.AllRendered
+            ? string.Empty
+            : $", {report.Renders.FailedCount} unrenderable diagram(s)";
+
         AnsiConsole.MarkupLine(
             $"[red]ACCEPTANCE (PLAN.md §4.4): NOT MET[/] — {report.FailedPageCount} failed page(s), "
-            + $"{report.WarningCount} warning(s)");
+            + $"{report.WarningCount} warning(s){diagrams}{uncheckedNote}");
     }
 
     /// <summary>The "by dialect" axis: each construct with its count and the pages it occurred on.</summary>

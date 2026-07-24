@@ -187,13 +187,44 @@ public sealed class ConversionAcceptanceTests : IDisposable
     }
 
     [Fact]
+    public void Collects_every_mermaid_source_in_render_order_without_rendering_one()
+    {
+        var report = RunGolden();
+
+        // The diagram resolver already sees every fence, so wrapping it hands the render pass its
+        // work list free — no second parse, and no process started by a conversion-only run.
+        report.Renders.ShouldBeNull();
+        report.Diagrams.Select(diagram => diagram.Path).Distinct(StringComparer.Ordinal).ShouldBe(["mermaid.md"]);
+        report.Diagrams.Select(diagram => diagram.Dialect).ShouldBe(
+            ["graph TD;", "sequenceDiagram", "pie title Pets", "flowchart LR"]);
+    }
+
+    [Fact]
+    public void Keeps_the_diagrams_a_page_collected_before_it_failed()
+    {
+        var report = ConversionAcceptance.Run(
+        [
+            new AcceptancePage(
+                "mixed.md",
+                "```mermaid\ngraph TD\n  A --> B\n```\n\n```dot\ndigraph {}\n```\n",
+                new PageResolvers(_ => null, _ => null, _ => "mermaid-graph.svg")),
+        ]);
+
+        // Same rule as the diagnostics: a page that failed on one construct still tells the render
+        // pass which diagrams it holds, so one run answers both questions.
+        report.FailedPageCount.ShouldBe(1);
+        report.Diagrams.Count.ShouldBe(1);
+        report.Diagrams[0].Dialect.ShouldBe("graph TD");
+    }
+
+    [Fact]
     public void A_failure_message_quoting_nothing_groups_by_its_whole_text()
     {
         const string message = "GFM pipe tables cannot express merged cells.";
         List<PageConversionResult> pages =
         [
-            new("a.md", new ConversionFailure(message, null, message), []),
-            new("b.md", new ConversionFailure(message, null, message), []),
+            new("a.md", new ConversionFailure(message, null, message), [], []),
+            new("b.md", new ConversionFailure(message, null, message), [], []),
         ];
 
         var report = AcceptanceReport.From(pages, AcceptancePolicy.Strict);

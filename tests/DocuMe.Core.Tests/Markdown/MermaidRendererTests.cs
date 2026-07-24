@@ -22,9 +22,7 @@ namespace DocuMe.Core.Tests.Markdown;
 /// </remarks>
 public sealed class MermaidRendererTests : IDisposable
 {
-    private const string DependencyMissingReason =
-        "beautiful-mermaid is not installed: run 'npm ci' at the repo root to exercise the real "
-        + "render-mermaid.mjs end to end.";
+    private const string DependencyMissingReason = BundledRenderScript.DependencyMissingReason;
 
     private readonly string _stubDirectory = Path.Combine(
         Path.GetTempPath(),
@@ -251,40 +249,7 @@ public sealed class MermaidRendererTests : IDisposable
         error.Message.ShouldContain("Invalid mermaid header");
     }
 
-    private static string? TryFindRealScript()
-    {
-        var repoRoot = FindRepoRoot();
-        if (repoRoot is null)
-        {
-            return null;
-        }
-
-        var script = Path.Combine(repoRoot, "templates", "tools", "render-mermaid.mjs");
-        var dependency = Path.Combine(repoRoot, "node_modules", "beautiful-mermaid");
-
-        return File.Exists(script) && Directory.Exists(dependency) ? script : null;
-    }
-
-    /// <summary>
-    /// Walks up from the test assembly to the directory holding <c>DocuMe.slnx</c>. The real
-    /// script cannot be copied beside the assembly like the goldens are: Node resolves
-    /// <c>beautiful-mermaid</c> from the script's own location upwards, so it has to run from
-    /// its place in the tree.
-    /// </summary>
-    private static string? FindRepoRoot()
-    {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
-             directory is not null;
-             directory = directory.Parent)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "DocuMe.slnx")))
-            {
-                return directory.FullName;
-            }
-        }
-
-        return null;
-    }
+    private static string? TryFindRealScript() => BundledRenderScript.TryFind();
 
     private string WriteStub(string body)
     {

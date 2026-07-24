@@ -1,4 +1,3 @@
-using System.Text;
 using DocuMe.Core.Markdown;
 
 namespace DocuMe.Core.Acceptance;
@@ -98,6 +97,15 @@ public static class ConversionAcceptance
     private static PageConversionResult ConvertOne(AcceptancePage page)
     {
         var diagnostics = new List<ConversionDiagnostic>();
+        var diagrams = new List<string>();
+
+        // The diagram resolver already sees every mermaid fence the converter renders, so wrapping
+        // it hands the render pass its work list with no second parse of the markdown.
+        string? Collect(string mermaidSource)
+        {
+            diagrams.Add(mermaidSource);
+            return page.Resolvers.Diagram(mermaidSource);
+        }
 
         try
         {
@@ -105,10 +113,10 @@ public static class ConversionAcceptance
                 page.Body,
                 page.Resolvers.Link,
                 page.Resolvers.Attachment,
-                page.Resolvers.Diagram,
+                Collect,
                 diagnostics);
 
-            return new PageConversionResult(page.Path, null, diagnostics);
+            return new PageConversionResult(page.Path, null, diagnostics, diagrams);
         }
         catch (NotSupportedException ex)
         {
@@ -116,7 +124,7 @@ public static class ConversionAcceptance
             // is the only one this runner turns into a report row. Anything else is a converter
             // bug and keeps crashing the run — a bug quietly tallied as an acceptance finding
             // would be read as "that page needs different markdown".
-            return new PageConversionResult(page.Path, Describe(ex.Message), diagnostics);
+            return new PageConversionResult(page.Path, Describe(ex.Message), diagnostics, diagrams);
         }
     }
 
@@ -126,36 +134,9 @@ public static class ConversionAcceptance
     /// </summary>
     private static ConversionFailure Describe(string message)
     {
-        // Odd-indexed segments of a split on ' are the quoted ones. A message ending mid-quote
-        // (an odd number of apostrophes, e.g. one in prose) leaves a trailing unpaired segment
-        // that is put back verbatim rather than mistaken for a token.
-        var segments = message.Split('\'');
-        if (segments.Length < 3)
-        {
-            return new ConversionFailure(message, null, message);
-        }
-
-        var kind = new StringBuilder();
-        string? token = null;
-
-        for (var i = 0; i < segments.Length; i++)
-        {
-            if (i % 2 == 0)
-            {
-                _ = kind.Append(segments[i]);
-                continue;
-            }
-
-            if (i == segments.Length - 1)
-            {
-                _ = kind.Append('\'').Append(segments[i]);
-                continue;
-            }
-
-            token ??= segments[i];
-            _ = kind.Append("'…'");
-        }
-
-        return new ConversionFailure(kind.ToString(), token, message);
+        // The converter's fail-loud sites quote the offending token with ' — a fence dialect, a
+        // node type, an attribute name — so the message minus its quoted tokens is the construct.
+        var (kind, token) = QuotedTokens.Normalize(message, '\'');
+        return new ConversionFailure(kind, token, message);
     }
 }

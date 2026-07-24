@@ -13,10 +13,16 @@ namespace DocuMe.Core.Acceptance;
 /// the converter keeps the diagnostics it reported before the throw, so one pass tells a reader
 /// "this page failed on X <em>and</em> degrades Y".
 /// </param>
+/// <param name="Diagrams">
+/// Every <c>```mermaid</c> fence body the page holds, in render order — collected, not rendered
+/// (<see cref="MermaidAcceptance"/>). Like <paramref name="Diagnostics"/>, what a page reported
+/// before a later throw is kept.
+/// </param>
 public sealed record PageConversionResult(
     string Path,
     ConversionFailure? Failure,
-    IReadOnlyList<ConversionDiagnostic> Diagnostics)
+    IReadOnlyList<ConversionDiagnostic> Diagnostics,
+    IReadOnlyList<string> Diagrams)
 {
     /// <summary>Whether the page produced storage format at all.</summary>
     public bool Succeeded => Failure is null;
@@ -112,14 +118,31 @@ public sealed record DiagnosticGroup(
 /// <param name="Failures">Failed pages grouped by construct, most pages first.</param>
 /// <param name="Diagnostics">Degradations grouped by code, warnings first then most frequent.</param>
 /// <param name="Policy">The policy that assigned the severities.</param>
+/// <param name="Renders">
+/// The mermaid render pass, or <c>null</c> when it did not run — it is opt-in because it starts a
+/// Node process per diagram (<see cref="MermaidAcceptance"/>). A report without it says nothing
+/// about whether the corpus's diagrams render, which is why a reader of
+/// <see cref="MeetsAcceptanceBar"/> has to be told how many diagrams went unchecked.
+/// </param>
 public sealed record AcceptanceReport(
     IReadOnlyList<PageConversionResult> Pages,
     IReadOnlyList<FailureGroup> Failures,
     IReadOnlyList<DiagnosticGroup> Diagnostics,
-    AcceptancePolicy Policy)
+    AcceptancePolicy Policy,
+    DiagramRenderReport? Renders = null)
 {
     /// <summary>How many pages the run converted.</summary>
     public int PageCount => Pages.Count;
+
+    /// <summary>
+    /// Every <c>```mermaid</c> fence in the corpus with the page holding it, ordered by page path
+    /// then render order. Collected during conversion, so <see cref="MermaidAcceptance"/> needs no
+    /// second parse of the markdown.
+    /// </summary>
+    public IReadOnlyList<DiagramOccurrence> Diagrams =>
+    [
+        .. Pages.SelectMany(page => page.Diagrams.Select(source => new DiagramOccurrence(page.Path, source))),
+    ];
 
     /// <summary>How many of them failed loud.</summary>
     public int FailedPageCount => Pages.Count(page => !page.Succeeded);
@@ -132,10 +155,21 @@ public sealed record AcceptanceReport(
         Diagnostics.Where(group => group.Severity == DiagnosticSeverity.Warning).Sum(group => group.Count);
 
     /// <summary>
-    /// PLAN.md §4.4: every page converted with zero errors and zero unaccepted degradations.
-    /// A run over an empty corpus does not clear the bar — there is nothing to accept.
+    /// PLAN.md §4.4: every page converted with zero errors and zero unaccepted degradations, and —
+    /// when the render pass ran — every diagram rendered.
     /// </summary>
-    public bool MeetsAcceptanceBar => PageCount > 0 && FailedPageCount == 0 && WarningCount == 0;
+    /// <remarks>
+    /// A run over an empty corpus does not clear the bar; there is nothing to accept. A run that
+    /// skipped the render pass <em>can</em> clear it while holding diagrams nobody rendered, because
+    /// conversion cannot detect an unrenderable diagram at all (<see cref="DiagramRenderReport"/>).
+    /// That is why a report is presented with the unchecked diagram count beside the verdict rather
+    /// than as a bare pass.
+    /// </remarks>
+    public bool MeetsAcceptanceBar =>
+        PageCount > 0
+        && FailedPageCount == 0
+        && WarningCount == 0
+        && (Renders?.AllRendered ?? true);
 
     /// <summary>Groups <paramref name="pages"/> into the report's two views.</summary>
     public static AcceptanceReport From(IReadOnlyList<PageConversionResult> pages, AcceptancePolicy policy)

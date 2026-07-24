@@ -36,6 +36,29 @@ public sealed record MermaidDiagram(
     string? SvgWidth,
     string? SvgHeight);
 
+/// <summary>Who is at fault when a diagram does not render.</summary>
+/// <remarks>
+/// A bulk run needs this distinction to stay honest. A rejected diagram is one finding among many
+/// and the run should keep going and count it; a broken setup rejects <em>every</em> diagram
+/// identically, so tallying those as findings would report a broken machine as a broken corpus
+/// (<see cref="Acceptance.MermaidAcceptance"/>).
+/// </remarks>
+public enum MermaidRenderFault
+{
+    /// <summary>
+    /// This diagram was refused. Another diagram may still render, so a bulk run counts it and
+    /// carries on. A render that timed out is classified here too: it is one diagram's pathology,
+    /// and a genuinely stuck Node shows up as every diagram timing out.
+    /// </summary>
+    Diagram,
+
+    /// <summary>
+    /// Nothing could have rendered: Node missing, the script missing, <c>beautiful-mermaid</c> not
+    /// installed, or a script that returned something other than an SVG.
+    /// </summary>
+    Setup,
+}
+
 /// <summary>
 /// Thrown when a mermaid diagram cannot be rendered. Always loud, never a fallback: a diagram
 /// that silently failed would publish a page with a broken image, and PLAN.md §7 makes an
@@ -43,15 +66,18 @@ public sealed record MermaidDiagram(
 /// </summary>
 public sealed class MermaidRenderException : Exception
 {
-    public MermaidRenderException(string message)
-        : base(message)
-    {
-    }
+    public MermaidRenderException(string message, MermaidRenderFault fault)
+        : base(message) => Fault = fault;
 
-    public MermaidRenderException(string message, Exception innerException)
-        : base(message, innerException)
-    {
-    }
+    public MermaidRenderException(string message, MermaidRenderFault fault, Exception innerException)
+        : base(message, innerException) => Fault = fault;
+
+    /// <summary>Whether the diagram was refused or the setup made rendering impossible.</summary>
+    /// <remarks>
+    /// A constructor parameter rather than a defaulted property on purpose: a future throw site
+    /// that forgot to classify itself would silently become a row in an acceptance report.
+    /// </remarks>
+    public MermaidRenderFault Fault { get; }
 }
 
 /// <summary>
@@ -122,7 +148,8 @@ public sealed partial class MermaidRenderer
             throw new MermaidRenderException(
                 $"The mermaid render script was not found at '{_scriptPath}'. It ships with "
                 + "DocuMe and is scaffolded by `docume init` as tools/render-mermaid.mjs; point "
-                + "docume.json -> mermaid.renderer at it (PLAN.md §4, §5.1).");
+                + "docume.json -> mermaid.renderer at it (PLAN.md §4, §5.1).",
+                MermaidRenderFault.Setup);
         }
 
         var result = await RunScriptAsync(mermaidSource, cancellationToken).ConfigureAwait(false);
@@ -133,14 +160,16 @@ public sealed partial class MermaidRenderer
             throw new MermaidRenderException(
                 "The mermaid render script could not load beautiful-mermaid. Install it where "
                 + $"Node resolves it from '{_scriptPath}' (usually the repo root): "
-                + $"npm install beautiful-mermaid. Script said: {Describe(result.StandardError)}");
+                + $"npm install beautiful-mermaid. Script said: {Describe(result.StandardError)}",
+                MermaidRenderFault.Setup);
         }
 
         if (result.ExitCode != 0)
         {
             throw new MermaidRenderException(
                 $"The mermaid render script failed (exit {result.ExitCode}) on this diagram: "
-                + $"{Describe(result.StandardError)}");
+                + $"{Describe(result.StandardError)}",
+                MermaidRenderFault.Diagram);
         }
 
         // A script that printed a warning, a banner or nothing at all would otherwise be
@@ -149,7 +178,8 @@ public sealed partial class MermaidRenderer
         {
             throw new MermaidRenderException(
                 "The mermaid render script exited successfully but did not return an SVG "
-                + $"document. It wrote: {Describe(svg)}");
+                + $"document. It wrote: {Describe(svg)}",
+                MermaidRenderFault.Setup);
         }
 
         var (width, height) = ReadRootSize(svg);
@@ -181,6 +211,7 @@ public sealed partial class MermaidRenderer
                 $"Could not start Node ('{_nodeExecutable}') to render a mermaid diagram. "
                 + "DocuMe renders diagrams by shelling out to Node (≥ 20 required, PLAN.md §4); "
                 + "install it, or remove the ```mermaid fences from the page.",
+                MermaidRenderFault.Setup,
                 ex);
         }
 
@@ -206,7 +237,8 @@ public sealed partial class MermaidRenderer
             var seconds = _timeout.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
             throw new MermaidRenderException(
                 $"The mermaid render script did not finish within {seconds}s and was killed. "
-                + "The diagram may be pathologically large, or Node may be stuck.");
+                + "The diagram may be pathologically large, or Node may be stuck.",
+                MermaidRenderFault.Diagram);
         }
         catch (OperationCanceledException)
         {
