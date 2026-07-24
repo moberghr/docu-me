@@ -8,6 +8,9 @@
   <ItemGroup>
     <!-- Markdown parsing + custom storage-format renderer (PLAN.md §4, §7). -->
     <PackageReference Include="Markdig" />
+    <!-- wiki.exclude glob matching for the tree walk (PLAN.md §5.1), and later the
+         sources globs of drift detection (§6.4). Microsoft-owned, no transitive deps. -->
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" />
     <!-- YAML frontmatter deserialization (PLAN.md §5.2). -->
     <PackageReference Include="YamlDotNet" />
   </ItemGroup>
