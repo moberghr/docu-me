@@ -1,5 +1,4 @@
 using System.CommandLine;
-using System.Globalization;
 using System.Text.Json;
 using DocuMe.Core.Config;
 using DocuMe.Core.Confluence;
@@ -37,12 +36,6 @@ internal static class SyncCommand
 {
     /// <summary>Where <c>docume init</c> scaffolds the state file, relative to the wiki root (§5.3).</summary>
     private const string DefaultStateFile = "_meta/state.json";
-
-    /// <summary>
-    /// The <c>approvedAt</c> shape: ISO-8601 UTC to the second. No fractional part, because this string
-    /// lands in a committed file that humans read in PR diffs.
-    /// </summary>
-    private const string TimestampFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'";
 
     public static Command Build()
     {
@@ -212,30 +205,18 @@ internal static class SyncCommand
         bool dryRun,
         CancellationToken cancellationToken)
     {
-        var approved = await client
-            .SearchPagesByLabelAsync(spaceKey, config.Labels.Approved, cancellationToken)
+        var read = await LabelReader
+            .ReadAsync(client, config, state, spaceKey, DateTimeOffset.UtcNow, cancellationToken)
             .ConfigureAwait(false);
 
-        var stale = await client
-            .SearchPagesByLabelAsync(spaceKey, config.Labels.Stale, cancellationToken)
-            .ConfigureAwait(false);
-
-        var titles = Titles(approved, stale);
-        var versions = await VersionsAsync(client, approved, state, cancellationToken).ConfigureAwait(false);
-
-        var observation = new LabelObservation(
-            approved.Select(page => page.Id).ToArray(),
-            stale.Select(page => page.Id).ToArray(),
-            versions,
-            DateTimeOffset.UtcNow.ToString(TimestampFormat, CultureInfo.InvariantCulture));
-
-        var plan = LabelSyncPlanner.Plan(state, observation);
+        var plan = LabelSyncPlanner.Plan(state, read.Observation);
 
         AnsiConsole.MarkupLine(
-            $"[green]{approved.Count}[/] page(s) labelled [blue]{config.Labels.Approved.EscapeMarkup()}[/], "
-            + $"[green]{stale.Count}[/] labelled [blue]{config.Labels.Stale.EscapeMarkup()}[/].");
+            $"[green]{read.ApprovedCount}[/] page(s) labelled "
+            + $"[blue]{config.Labels.Approved.EscapeMarkup()}[/], "
+            + $"[green]{read.StaleCount}[/] labelled [blue]{config.Labels.Stale.EscapeMarkup()}[/].");
 
-        Render(plan, titles);
+        Render(plan, read.TitlesByPageId);
 
         if (!plan.HasChanges)
         {
@@ -260,76 +241,6 @@ internal static class SyncCommand
             + "a docs/sync branch and opens a PR.[/]");
 
         return 0;
-    }
-
-    /// <summary>
-    /// Page id → the version current at observation time (§8), for the pages an approval may be recorded
-    /// against.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The search is asked for <c>expand=version</c>, which is where nearly every version should come
-    /// from: one request per label rather than one per page. A hit that answered no version is read by
-    /// id, and only if state manages it — a labelled page DocuMe does not publish is reported and
-    /// skipped, so paying a request to learn its version would be paying for nothing.
-    /// </para>
-    /// <para>
-    /// <strong>Not <c>state.publishedVersion</c> as a fallback.</strong> The two differ exactly when a
-    /// human edited the page in a browser, which is the case §8's "version current at observation time"
-    /// exists for; a page whose version cannot be established is left out of the map, and the reconciler
-    /// then declines to restamp rather than recording a version nobody observed.
-    /// </para>
-    /// </remarks>
-    private static async Task<IReadOnlyDictionary<string, int>> VersionsAsync(
-        ConfluenceClient client,
-        IReadOnlyList<ConfluenceLabelledPage> approved,
-        DocumeState state,
-        CancellationToken cancellationToken)
-    {
-        var managed = PageHierarchy.PathsByPageId(state);
-        var versions = new Dictionary<string, int>(StringComparer.Ordinal);
-
-        foreach (var page in approved)
-        {
-            if (page.Version is { } version)
-            {
-                versions[page.Id] = version;
-                continue;
-            }
-
-            if (!managed.ContainsKey(page.Id))
-            {
-                continue;
-            }
-
-            var read = await client.FindPageByIdAsync(page.Id, cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
-
-            if (read?.Version is { } current)
-            {
-                versions[page.Id] = current;
-            }
-        }
-
-        return versions;
-    }
-
-    /// <summary>
-    /// Page id → title, from the search results, so an unmanaged page can be named rather than only
-    /// numbered. The reconciler carries no titles by design (see <see cref="UnmanagedLabelledPage"/>).
-    /// </summary>
-    private static Dictionary<string, string> Titles(
-        IReadOnlyList<ConfluenceLabelledPage> approved,
-        IReadOnlyList<ConfluenceLabelledPage> stale)
-    {
-        var titles = new Dictionary<string, string>(StringComparer.Ordinal);
-
-        foreach (var page in approved.Concat(stale))
-        {
-            titles[page.Id] = page.Title;
-        }
-
-        return titles;
     }
 
     private static void Render(LabelSyncPlan plan, IReadOnlyDictionary<string, string> titles)

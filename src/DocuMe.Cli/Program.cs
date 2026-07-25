@@ -14,6 +14,7 @@ internal static class Program
             ConvertCommand.Build(),
             PublishCommand.Build(),
             SyncCommand.Build(),
+            DashboardCommand.Build(),
             StatusCommand.Build(),
         };
 
