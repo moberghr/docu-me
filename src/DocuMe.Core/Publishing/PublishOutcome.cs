@@ -84,6 +84,9 @@ public sealed record PublishOutcome(
     /// <summary>Pages whose attachments moved but whose body did not: no page version spent.</summary>
     public int AttachmentOnlyCount => Pages.Count(page => page.Action == PagePublishAction.UpdateAttachments);
 
+    /// <summary>Pages repositioned in the page tree without a body write (§6.2).</summary>
+    public int MovedCount => Pages.Count(page => page.Action == PagePublishAction.Move);
+
     /// <summary>Attachment uploads across the run.</summary>
     public int UploadedAttachmentCount => Pages.Sum(page => page.UploadedAttachments.Count);
 

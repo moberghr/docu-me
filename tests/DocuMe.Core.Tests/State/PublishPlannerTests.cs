@@ -189,6 +189,51 @@ public sealed class PublishPlannerTests
     }
 
     [Fact]
+    public void PlanPage_ParentMovedWithNothingElseChanged_Moves()
+    {
+        var plan = PublishPlanner.PlanPage(Path, Published(), OldHash, NoAttachments, parentMoved: true);
+
+        plan.Action.ShouldBe(PagePublishAction.Move);
+
+        // The one thing a move must never do: spend a page version. WritesBody gates that.
+        plan.WritesBody.ShouldBeFalse();
+        plan.ChangedAttachments.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void PlanPage_ParentMovedOnApprovedPage_KeepsApproval()
+    {
+        // The invariant the whole bodyless move exists for (§8, rule §9.2): contentHash is body-only,
+        // a move changes no body, so where a page hangs cannot revoke what a reviewer approved.
+        var plan = PublishPlanner.PlanPage(
+            Path, Published(approvalStatus: ApprovalStatus.Approved), OldHash, NoAttachments, parentMoved: true);
+
+        plan.Action.ShouldBe(PagePublishAction.Move);
+        plan.InvalidatesApproval.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void PlanPage_ParentMovedAndBodyChanged_UpdatesInsteadOfMoving()
+    {
+        // An update carries the new parent with it, so a page that changed AND moved is one write.
+        var plan = PublishPlanner.PlanPage(Path, Published(), NewHash, NoAttachments, parentMoved: true);
+
+        plan.Action.ShouldBe(PagePublishAction.Update);
+    }
+
+    [Fact]
+    public void PlanPage_ParentMovedAndAttachmentBytesChanged_MovesAndStillUploads()
+    {
+        var current = Published(attachments: new Dictionary<string, string> { ["logo.png"] = "sha256:old" });
+        var now = new Dictionary<string, string> { ["logo.png"] = "sha256:new" };
+
+        var plan = PublishPlanner.PlanPage(Path, current, OldHash, now, parentMoved: true);
+
+        plan.Action.ShouldBe(PagePublishAction.Move);
+        plan.ChangedAttachments.ShouldBe(["logo.png"]);
+    }
+
+    [Fact]
     public void PlanPage_EmptyPath_Throws()
     {
         Should.Throw<ArgumentException>(() => PublishPlanner.PlanPage(string.Empty, null, NewHash, NoAttachments));

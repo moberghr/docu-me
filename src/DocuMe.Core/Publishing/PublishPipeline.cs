@@ -108,12 +108,21 @@ public static class PublishPipeline
         // is a fact about the tree, not about the page (§6.2, PageHierarchy).
         var parents = PageHierarchy.Resolve(tree.Pages.Select(page => page.Path), config.Wiki.HomePage);
 
+        // Once for the run, for the same reason: reading a recorded parent id back as a path is a fact
+        // about state as a whole (PageHierarchy.ParentMoved).
+        var pathsByPageId = PageHierarchy.PathsByPageId(state);
+
         var pages = new List<PlannedPage>();
         var failures = new List<PageConversionFailure>();
 
         foreach (var page in tree.Pages)
         {
-            var planned = PlanOne(tree, state, page, parents[page.Path], banner, options, failures);
+            state.Pages.TryGetValue(page.Path, out var current);
+            var parentPath = parents[page.Path];
+            var parentMoved = PageHierarchy.ParentMoved(
+                current, parentPath, pathsByPageId, config.Confluence.RootPageId);
+
+            var planned = PlanOne(tree, current, page, parentPath, parentMoved, banner, options, failures);
             if (planned is not null)
             {
                 pages.Add(planned);
@@ -138,15 +147,15 @@ public static class PublishPipeline
     /// </summary>
     private static PlannedPage? PlanOne(
         WikiTree tree,
-        DocumeState state,
+        PageState? current,
         WikiPage page,
         string? parentPath,
+        bool parentMoved,
         PageBanner banner,
         PublishOptions options,
         List<PageConversionFailure> failures)
     {
         var resolvers = tree.ResolversFor(page.Path);
-        state.Pages.TryGetValue(page.Path, out var current);
 
         // Wrapping the two attachment resolvers is how the pipeline learns its upload set: the
         // converter already visits every image and every mermaid fence, so there is no second parse
@@ -216,12 +225,12 @@ public static class PublishPipeline
 
         var contentHash = ContentHash.OfBody(body);
         var plan = PublishPlanner.PlanPage(
-            page.Path, current, contentHash, PlanningHashes(attachments), options.Force);
+            page.Path, current, contentHash, PlanningHashes(attachments), options.Force, parentMoved);
 
         // The scope is applied here, to the DECISION, and nowhere earlier: the page has already been
         // converted, hashed and planned, so everything a full run knows about it is known. What changes is
-        // that a page outside the scope is skipped rather than written — no body, no uploads, and no
-        // approval revoked, because a run that writes nothing to a page cannot have invalidated it (§8).
+        // that a page outside the scope is skipped rather than written — no body, no uploads, no move, and
+        // no approval revoked, because a run that writes nothing to a page cannot have invalidated it (§8).
         var excluded = options.Scope is { } scope
             && plan.Action != PagePublishAction.Skip
             && !scope.Includes(page.Path, attachments.Values);

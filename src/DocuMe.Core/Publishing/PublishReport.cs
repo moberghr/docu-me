@@ -58,8 +58,9 @@ public sealed record PlannedAttachment(
 /// <param name="Plan">The decision, from <see cref="PublishPlanner.PlanPage"/>.</param>
 /// <param name="UploadBody">
 /// The storage format a real run would upload: the converter's output with the §8 banner injected
-/// above it. <c>null</c> when the run writes no body (<see cref="PagePublishAction.Skip"/> and
-/// <see cref="PagePublishAction.UpdateAttachments"/>). Deliberately <em>not</em> the hash preimage —
+/// above it. <c>null</c> when the run writes no body (<see cref="PagePublishAction.Skip"/>,
+/// <see cref="PagePublishAction.UpdateAttachments"/> and <see cref="PagePublishAction.Move"/>).
+/// Deliberately <em>not</em> the hash preimage —
 /// <see cref="PagePublishPlan.ContentHash"/> was taken before injection (§8, rule §9.2).
 /// </param>
 /// <param name="Attachments">
@@ -148,6 +149,12 @@ public sealed record PublishReport(
 
     /// <summary>Pages whose body is unchanged but an attachment's bytes moved: no page version spent.</summary>
     public int AttachmentOnlyCount => Count(PagePublishAction.UpdateAttachments);
+
+    /// <summary>
+    /// Pages the tree reparents whose body is unchanged: a bodyless move, so no page version is spent
+    /// and no approval falls (§9.2).
+    /// </summary>
+    public int MoveCount => Count(PagePublishAction.Move);
 
     /// <summary>
     /// Pages this run writes nothing to: nothing moved, or <see cref="Scope"/> held the page back.

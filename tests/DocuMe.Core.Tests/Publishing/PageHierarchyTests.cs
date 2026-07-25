@@ -1,4 +1,5 @@
 using DocuMe.Core.Publishing;
+using DocuMe.Core.State;
 using Shouldly;
 
 namespace DocuMe.Core.Tests.Publishing;
@@ -10,6 +11,9 @@ namespace DocuMe.Core.Tests.Publishing;
 /// </summary>
 public sealed class PageHierarchyTests
 {
+    /// <summary><c>confluence.rootPageId</c> (§5.1): the page a top-of-tree page is recorded against.</summary>
+    private const string RootId = "1";
+
     private static readonly string[] FullTree =
     [
         "README.md",
@@ -83,5 +87,109 @@ public sealed class PageHierarchyTests
         var paths = FullTree.ToHashSet(StringComparer.Ordinal);
 
         PageHierarchy.ParentOf("10-domains/loans/pricing.md", paths).ShouldBe("10-domains/loans/README.md");
+    }
+
+    [Fact]
+    public void Reads_a_recorded_parent_id_back_as_the_path_that_owns_it()
+    {
+        var state = State(
+            ("README.md", "10", null), ("guides/setup.md", "20", "10"), ("guides/adopted.md", null, null));
+
+        var paths = PageHierarchy.PathsByPageId(state);
+
+        paths["10"].ShouldBe("README.md");
+        paths["20"].ShouldBe("guides/setup.md");
+
+        // An adopted skeleton has no page yet (§6.1), so it owns no id to read back.
+        paths.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void A_page_still_under_the_parent_the_tree_names_has_not_moved()
+    {
+        var state = State(("README.md", "10", null), ("guides/setup.md", "20", "10"));
+
+        PageHierarchy
+            .ParentMoved(state.Pages["guides/setup.md"], "README.md", PageHierarchy.PathsByPageId(state), RootId)
+            .ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The reparent §6.2 has to catch: an index page added above a page whose markdown did not change,
+    /// so the only evidence is that its recorded parent is a different <em>path</em> than the tree says.
+    /// </summary>
+    [Fact]
+    public void A_page_the_tree_hangs_somewhere_else_has_moved()
+    {
+        var state = State(
+            ("README.md", "10", null), ("guides/README.md", "30", "10"), ("guides/setup.md", "20", "10"));
+
+        PageHierarchy
+            .ParentMoved(
+                state.Pages["guides/setup.md"], "guides/README.md", PageHierarchy.PathsByPageId(state), RootId)
+            .ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// The case that has no id to compare against at all: the new parent is created by the same run, so
+    /// nothing in state names it yet. Deciding in paths is what makes this visible to <c>--dry-run</c>.
+    /// </summary>
+    [Fact]
+    public void A_parent_this_run_has_not_created_yet_still_counts_as_moved()
+    {
+        var state = State(("README.md", "10", null), ("guides/setup.md", "20", "10"));
+
+        PageHierarchy
+            .ParentMoved(
+                state.Pages["guides/setup.md"], "guides/README.md", PageHierarchy.PathsByPageId(state), RootId)
+            .ShouldBeTrue();
+    }
+
+    [Theory]
+
+    // Recorded against confluence.rootPageId and the tree still puts it at the root.
+    [InlineData(RootId, null, false)]
+
+    // No parent id at all — a space with no rootPageId configured files a top page that way.
+    [InlineData(null, null, false)]
+
+    // At the root in Confluence, under a page in the tree, and the other way round.
+    [InlineData(RootId, "README.md", true)]
+    [InlineData("10", null, true)]
+
+    // An id no page in state owns: filed outside the tree DocuMe knows, so reconcile it (rule §9.1).
+    [InlineData("99999", "README.md", true)]
+    public void Decides_the_root_and_the_unknown_parent_cases(string? recorded, string? planned, bool moved)
+    {
+        var state = State(("README.md", "10", null), ("guides/setup.md", "20", recorded));
+
+        PageHierarchy
+            .ParentMoved(state.Pages["guides/setup.md"], planned, PageHierarchy.PathsByPageId(state), RootId)
+            .ShouldBe(moved);
+    }
+
+    [Fact]
+    public void A_page_that_has_never_been_published_has_not_moved()
+    {
+        // `init --adopt` leaves titles and paths with no page id (§6.1): the create files it correctly.
+        var adopted = new PageState { Title = "Setup" };
+
+        PageHierarchy.ParentMoved(adopted, "README.md", new Dictionary<string, string>(), RootId).ShouldBeFalse();
+        PageHierarchy.ParentMoved(null, "README.md", new Dictionary<string, string>(), RootId).ShouldBeFalse();
+    }
+
+    private static DocumeState State(params (string Path, string? PageId, string? ParentPageId)[] pages)
+    {
+        var entries = pages.ToDictionary(
+            page => page.Path,
+            page => new PageState
+            {
+                Title = page.Path,
+                PageId = page.PageId,
+                ParentPageId = page.ParentPageId,
+            },
+            StringComparer.Ordinal);
+
+        return new DocumeState { Pages = entries };
     }
 }

@@ -449,6 +449,49 @@ public sealed class PublishPipelineTests : IDisposable
         report.ExcludedByScope.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// The reparent §6.2 names, seen from the plan: an index page added above a page whose markdown did
+    /// not change a byte. The new index does not exist in Confluence yet, so the drift is only decidable
+    /// in paths — and it has to be decided here, or <c>--dry-run</c> would report a skip and a real run
+    /// would move the page.
+    /// </summary>
+    [Fact]
+    public void An_index_page_added_above_a_page_plans_it_as_a_move()
+    {
+        var state = Published(Plan(new DocumeState()));
+        Write("guides/README.md", "# Guides\n\nIndex page added after the fact.");
+
+        var report = Plan(state);
+
+        report.MoveCount.ShouldBe(1);
+        Page(report, "guides/README.md").Action.ShouldBe(PagePublishAction.Create);
+
+        var setup = Page(report, "guides/setup.md");
+        setup.Action.ShouldBe(PagePublishAction.Move);
+        setup.ParentPath.ShouldBe("guides/README.md");
+
+        // A move writes no body, spends no version and revokes nothing (§8, rule §9.2).
+        setup.Plan.WritesBody.ShouldBeFalse();
+        setup.UploadBody.ShouldBeNull();
+        setup.Plan.InvalidatesApproval.ShouldBeFalse();
+        report.InvalidatedApprovals.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_scope_holds_back_a_move_the_same_way_it_holds_back_a_write()
+    {
+        var state = Published(Plan(new DocumeState()));
+        Write("guides/README.md", "# Guides\n\nIndex page added after the fact.");
+
+        var report = Plan(state, scope: PublishScope.ForPages(["guides/README.md"]));
+
+        report.MoveCount.ShouldBe(0);
+
+        var setup = Page(report, "guides/setup.md");
+        setup.Action.ShouldBe(PagePublishAction.Skip);
+        setup.ExcludedByScope.ShouldBeTrue();
+    }
+
     [Fact]
     public void Planning_touches_no_file()
     {
@@ -490,6 +533,9 @@ public sealed class PublishPipelineTests : IDisposable
     private static PlannedPage Page(PublishReport report, string path) =>
         report.Pages.Single(page => string.Equals(page.Path, path, StringComparison.Ordinal));
 
+    /// <summary>The page id <see cref="Published"/> gives a path — stable across runs, as a real id is.</summary>
+    private static string PageIdFor(string path) => $"page-{path}";
+
     /// <summary>
     /// Stands in for the SVG bytes a real run would render and hash, so a second plan sees the
     /// diagram attachment the way state would actually hold it.
@@ -526,6 +572,11 @@ public sealed class PublishPipelineTests : IDisposable
     /// The state a real run would have written after <paramref name="report"/>, via the same
     /// <see cref="StateUpdates"/> transitions the write path uses.
     /// </summary>
+    /// <remarks>
+    /// The recorded parent id has to be the one the write path would resolve, not <c>null</c>: a state
+    /// file that files every page at the root claims a tree the fixture does not have, and every second
+    /// plan would then read as a reparent (<see cref="PageHierarchy.ParentMoved"/>).
+    /// </remarks>
     private DocumeState Published(PublishReport report)
     {
         var state = new DocumeState { BaselineSha = "abc1234" };
@@ -537,10 +588,15 @@ public sealed class PublishPipelineTests : IDisposable
                 attachment => attachment.ContentHash ?? RenderedHash(attachment.Name),
                 StringComparer.Ordinal);
 
+            // The fixture's config sets no rootPageId, so a page at the top of the tree is recorded
+            // with no parent — exactly what the executor writes for one.
+            var parentId = page.ParentPath is { } parentPath ? PageIdFor(parentPath) : null;
+
             state = StateUpdates.RecordPublish(
                 state,
                 page.Path,
-                new PublishedPage($"page-{page.Path}", page.Title, null, page.Plan.ContentHash, 1, attachments));
+                new PublishedPage(
+                    PageIdFor(page.Path), page.Title, parentId, page.Plan.ContentHash, 1, attachments));
         }
 
         return StateUpdates.RecordLastPublishedSha(state, "abc1234");

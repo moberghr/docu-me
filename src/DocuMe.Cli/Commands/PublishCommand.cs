@@ -520,6 +520,10 @@ internal static class PublishCommand
             "[blue]attachments[/]",
             report.AttachmentOnlyCount.ToString(),
             "changed attachment bytes only, no page version");
+        table.AddRow(
+            "[aqua]move[/]",
+            report.MoveCount.ToString(),
+            "reparented in the tree, no body write and no page version");
         table.AddRow("[grey]skip[/]", report.SkipCount.ToString(), "nothing moved");
         AnsiConsole.Write(table);
 
@@ -748,10 +752,12 @@ internal static class PublishCommand
             ? $" Scope {scope.Description} held back {report.ExcludedByScope.Count} page(s)."
             : string.Empty;
 
+        var moves = report.MoveCount > 0 ? $", {report.MoveCount} move(s)" : string.Empty;
+
         AnsiConsole.MarkupLine(
             $"[green]PLAN OK[/] — {report.Pages.Count} page(s) convert; "
-            + $"{report.CreateCount + report.UpdateCount} body write(s), {report.UploadCount} upload(s)."
-            + $"{scoped.EscapeMarkup()} Nothing was written.");
+            + $"{report.CreateCount + report.UpdateCount} body write(s), {report.UploadCount} upload(s)"
+            + $"{moves}.{scoped.EscapeMarkup()} Nothing was written.");
     }
 
     /// <summary>
@@ -790,6 +796,7 @@ internal static class PublishCommand
         table.AddRow("[green]created[/]", outcome.CreatedCount.ToString());
         table.AddRow("[yellow]updated[/]", outcome.UpdatedCount.ToString());
         table.AddRow("[blue]attachments only[/]", outcome.AttachmentOnlyCount.ToString());
+        table.AddRow("[aqua]moved[/]", outcome.MovedCount.ToString());
         AnsiConsole.Write(table);
 
         AnsiConsole.MarkupLine($"Attachments uploaded: {outcome.UploadedAttachmentCount}");

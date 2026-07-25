@@ -246,6 +246,6 @@ public static class PrunePlanner
         $"state still files {blocking.Count} page(s) under it that this run does not delete "
         + $"({string.Join(", ", blocking)}). Confluence re-parents the children of a deleted page rather "
         + "than deleting them, so trashing this one would move live pages somewhere the tree does not "
-        + "say. Publish the children under their new parent first (`--force` writes the move), then "
-        + "prune again.";
+        + "say. Publish the children under their new parent first (a plain `docume publish` moves a "
+        + "reparented page), then prune again.";
 }

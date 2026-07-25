@@ -51,7 +51,11 @@ public sealed class PrunePlannerTests
         var refused = plan.Refused.ShouldHaveSingleItem();
         refused.Path.ShouldBe("a/README.md");
         refused.Reason.ShouldContain("a/kept.md");
-        refused.Reason.ShouldContain("--force");
+
+        // The way out is a publish, which moves a reparented page on its own now — the advice must not
+        // still send a reader to --force, which was only ever a way to make a body write carry the move.
+        refused.Reason.ShouldContain("docume publish");
+        refused.Reason.ShouldNotContain("--force");
     }
 
     /// <summary>

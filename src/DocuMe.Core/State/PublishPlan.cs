@@ -15,6 +15,13 @@ public enum PagePublishAction
     /// </summary>
     UpdateAttachments,
 
+    /// <summary>
+    /// The page itself is unchanged but the tree now hangs it under a different parent: reposition it
+    /// with a bodyless move. Spends no page version and never touches approval — see
+    /// <see cref="PublishPlanner"/> for why a reparent cannot ride along on an update here.
+    /// </summary>
+    Move,
+
     /// <summary>Nothing changed: skip the page and log it (§6.2 step 5).</summary>
     Skip,
 }
@@ -42,7 +49,7 @@ public enum PagePublishAction
 /// <param name="InvalidatesApproval">
 /// True when this write must strip the <c>approved</c> label and move state to
 /// <see cref="ApprovalStatus.NeedsReview"/> (§6.2 step 7). Keyed strictly off a body-hash change on an
-/// approved page, so banner-only and machine edits never invalidate (§8, rule §9.2).
+/// approved page, so banner-only, machine and position-only edits never invalidate (§8, rule §9.2).
 /// </param>
 public sealed record PagePublishPlan(
     string Path,
@@ -81,12 +88,19 @@ public static class PublishPlanner
     /// remote no longer matches what state claims. It never invalidates approval on its own: an
     /// unchanged hash means unchanged content, and §8 invalidates on content change only.
     /// </param>
+    /// <param name="parentMoved">
+    /// True when Confluence files the page somewhere the source tree no longer says
+    /// (<see cref="Publishing.PageHierarchy.ParentMoved"/>). Decided by the caller and in <em>paths</em>,
+    /// for the same reason <paramref name="contentHash"/> is computed by the caller: the planner stays
+    /// pure, so a reparent is visible to <c>--dry-run</c> instead of being discovered in the write path.
+    /// </param>
     public static PagePublishPlan PlanPage(
         string path,
         PageState? current,
         string contentHash,
         IReadOnlyDictionary<string, string> attachmentHashes,
-        bool force = false)
+        bool force = false,
+        bool parentMoved = false)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         ArgumentException.ThrowIfNullOrEmpty(contentHash);
@@ -105,6 +119,8 @@ public static class PublishPlanner
 
         if (bodyChanged || force)
         {
+            // A body write carries the new parent with it (ConfluencePageRevision.ParentId), so a page
+            // that moved AND changed needs no separate move.
             var changed = force ? allNames : Changed(current, attachmentHashes);
             var invalidates = bodyChanged && IsApproved(current);
 
@@ -113,6 +129,17 @@ public static class PublishPlanner
         }
 
         var changedOnly = Changed(current, attachmentHashes);
+
+        if (parentMoved)
+        {
+            // Decided before the attachment check because the two are independent: a reparented page
+            // whose image also changed uploads that image AND moves, and neither is a body write, so
+            // neither spends a version. Approval stands: contentHash is body-only, this page's body
+            // did not move, and where a page hangs is not what a reviewer approved (§8, rule §9.2).
+            return new PagePublishPlan(
+                path, PagePublishAction.Move, contentHash, changedOnly, orphans, InvalidatesApproval: false);
+        }
+
         if (changedOnly.Length > 0)
         {
             // §6.2 step 5 reads "unchanged -> skip", but the hash it speaks of covers the body

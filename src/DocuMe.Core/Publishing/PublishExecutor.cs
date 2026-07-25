@@ -324,10 +324,10 @@ public sealed class PublishExecutor
 
         if (recreate && planned.UploadBody is null)
         {
-            // An attachment-only publish has no body to write, so there is nothing to re-create the
+            // An attachment upload or a move has no body to write, so there is nothing to re-create the
             // page from. Said plainly with the fix, rather than uploading into a 404.
-            var vanished = $"page {pageId} no longer exists in Confluence and this run had only attachment "
-                + "changes for it, so there was no body to publish. Re-run with --force to create it again.";
+            var vanished = $"page {pageId} no longer exists in Confluence and this run writes no body for "
+                + "it, so there was nothing to publish. Re-run with --force to create it again.";
 
             return new PageOutcome(state, null, vanished);
         }
@@ -376,6 +376,35 @@ public sealed class PublishExecutor
                 .ConfigureAwait(false);
 
             version = updated.Version;
+        }
+        else if (plan.Action == PagePublishAction.Move)
+        {
+            if (parentId is not { Length: > 0 } target)
+            {
+                // A move appends the page under a target page, and the target for a page at the top of
+                // the tree is confluence.rootPageId. With none configured there is no page to append
+                // under, so the move is impossible rather than optional — and a request with an empty
+                // id segment would be a 404 dressed up as a bug.
+                const string unmovable = "the tree moves this page to the top of the wiki, but no "
+                    + "confluence.rootPageId is set in docume.json, so there is no page to file it "
+                    + "under. Set confluence.rootPageId, or move the page in Confluence by hand.";
+
+                return new PageOutcome(state, null, unmovable);
+            }
+
+            await _client
+                .MovePageAsync(
+                    new ConfluencePageMove(pageId!, ConfluencePageMovePosition.Append, target),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            // Whether a move bumps the page version is undocumented and unverified against a real
+            // Confluence (ConfluenceClient.MovePageAsync), so it is re-read rather than assumed: §5.3
+            // wants state to record what Confluence holds, not what the run hoped it would hold.
+            var moved = await _client.FindPageByIdAsync(pageId!, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
+            version = moved?.Version ?? remoteVersion;
         }
         else
         {
@@ -501,14 +530,16 @@ public sealed class PublishExecutor
     }
 
     /// <summary>
-    /// Reports a page whose parent in Confluence is not the parent the tree now says, for the two
-    /// actions that write no body and therefore cannot move it.
+    /// Reports a page whose recorded parent id is not the id this run resolved its parent to, for the
+    /// actions that write no body.
     /// </summary>
     /// <remarks>
-    /// Adding <c>a/README.md</c> reparents its siblings without changing a byte of their markdown, so
-    /// their hashes match state and the plan skips them — leaving them filed under the old parent. A
-    /// move is a page update, and this run has no body to send for a page it is skipping, so the honest
-    /// answer is to name them: <c>--force</c> republishes the body and carries the new parent with it.
+    /// The ordinary reparent — adding <c>a/README.md</c> above pages whose markdown did not change — is
+    /// a <see cref="PagePublishAction.Move"/> now, decided in the plan (<see cref="PageHierarchy.ParentMoved"/>).
+    /// What is left for this warning is the disagreement a plan cannot see, because a plan compares paths
+    /// and this compares ids: a parent recreated under a new id earlier in this same run leaves its
+    /// children pointing at the id state still records. Naming it is enough — state records the new id
+    /// once the parent is written, so the next run reads the stale id as a move and performs it.
     /// </remarks>
     private static void WarnOnParentDrift(
         PlannedPage planned,
@@ -537,9 +568,10 @@ public sealed class PublishExecutor
         }
 
         warnings.Add(
-            $"{planned.Path} is filed under page {Describe(recordedParentId)} in Confluence but the tree "
-            + $"now puts it under {Describe(plannedParentId)}. This run writes no body for it, so it was "
-            + "left where it is; re-run with --force to move it.");
+            $"{planned.Path} is filed under page {Describe(recordedParentId)} in Confluence but this run "
+            + $"resolved its parent as {Describe(plannedParentId)} — state's parent id is stale, most "
+            + "often because the parent page was recreated. This run writes no body for it, so it was "
+            + "left where it is; the next run moves it.");
     }
 
     private static string Describe(string? pageId) => pageId is { Length: > 0 } id ? id : "the space root";

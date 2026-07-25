@@ -1,3 +1,5 @@
+using DocuMe.Core.State;
+
 namespace DocuMe.Core.Publishing;
 
 /// <summary>
@@ -72,6 +74,87 @@ public static class PageHierarchy
         ArgumentNullException.ThrowIfNull(pagePaths);
 
         return NearestIndexAbove(pagePath, pagePaths, IndexName(homePage));
+    }
+
+    /// <summary>
+    /// Page id → wiki path for every page state has published: the reverse of what
+    /// <see cref="DocumeState.Pages"/> stores, and what lets a recorded <c>parentPageId</c> be read
+    /// back as a path.
+    /// </summary>
+    /// <param name="state">The loaded <c>_meta/state.json</c> (§5.3).</param>
+    public static IReadOnlyDictionary<string, string> PathsByPageId(DocumeState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        var paths = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        // Ordered so that a state file where two paths claim one id — corruption, not a tree — still
+        // plans the same way twice. Reported nowhere and thrown for nowhere: a publish that cannot
+        // even say what it would do is worse than one that picks the first path deterministically.
+        foreach (var (path, page) in state.Pages.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            if (page.PageId is { Length: > 0 } id)
+            {
+                paths.TryAdd(id, path);
+            }
+        }
+
+        return paths;
+    }
+
+    /// <summary>
+    /// True when Confluence files a page somewhere the source tree no longer says — the reparent §6.2
+    /// performs with a bodyless move.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Decided in paths, not page ids,</strong> which is what makes it a plan-time decision at
+    /// all: the id of a parent page this same run creates does not exist until the run creates it
+    /// (<c>a/README.md</c> added above pages that already exist), so an id comparison could only happen
+    /// in the write path and <c>--dry-run</c> would have to guess. The executor still resolves the
+    /// <em>target</em> id, exactly as it does for a create's parent.
+    /// </para>
+    /// <para>
+    /// A recorded parent id no page in state owns counts as moved: the page is filed outside the tree
+    /// DocuMe knows about — a hand reorganization, a re-pointed <c>confluence.rootPageId</c>, a parent
+    /// recreated under a new id — and the repo is the source of truth (rule §9.1).
+    /// </para>
+    /// </remarks>
+    /// <param name="current">
+    /// The page's entry in state, or <c>null</c>. A page state has no id for is a create, which files
+    /// itself under the right parent to begin with.
+    /// </param>
+    /// <param name="plannedParentPath">Where the tree puts it now (<see cref="Resolve"/>); <c>null</c> at the root.</param>
+    /// <param name="pathsByPageId">From <see cref="PathsByPageId"/>.</param>
+    /// <param name="rootPageId">
+    /// <c>confluence.rootPageId</c> (§5.1) — the page the tree root hangs under, and therefore the id a
+    /// page with no parent path is recorded against.
+    /// </param>
+    public static bool ParentMoved(
+        PageState? current,
+        string? plannedParentPath,
+        IReadOnlyDictionary<string, string> pathsByPageId,
+        string? rootPageId)
+    {
+        ArgumentNullException.ThrowIfNull(pathsByPageId);
+
+        if (current?.PageId is not { Length: > 0 })
+        {
+            return false;
+        }
+
+        if (current.ParentPageId is not { Length: > 0 } recorded
+            || string.Equals(recorded, rootPageId, StringComparison.Ordinal))
+        {
+            return plannedParentPath is not null;
+        }
+
+        if (!pathsByPageId.TryGetValue(recorded, out var recordedPath))
+        {
+            return true;
+        }
+
+        return !string.Equals(recordedPath, plannedParentPath, StringComparison.Ordinal);
     }
 
     private static string? NearestIndexAbove(string pagePath, IReadOnlySet<string> pagePaths, string indexName)

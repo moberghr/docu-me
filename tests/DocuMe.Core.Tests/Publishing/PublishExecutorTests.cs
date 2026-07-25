@@ -377,8 +377,54 @@ public sealed class PublishExecutorTests : IDisposable
     /// they plan as skips and cannot be moved by a run that writes no body for them. Named, not
     /// silently left behind.
     /// </summary>
+    /// <summary>
+    /// The reparent §6.2 names: an index page added above pages whose markdown did not change a byte.
+    /// Their hashes still match state, so nothing writes a body that could carry the new parent — the
+    /// run has to move them, and the target is a page it created seconds earlier in the same run.
+    /// </summary>
     [Fact]
-    public async Task Warns_about_a_page_the_tree_now_puts_under_a_different_parent()
+    public async Task Moves_a_page_the_tree_reparents_without_writing_its_body()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        var setupId = PageId(first, "guides/setup.md");
+
+        Write("guides/README.md", "# Guides\n\nIndex page added after the fact.\n");
+        server.ResetLogEntries();
+        StubMove(server);
+        StubRead(server, version: 3);
+
+        var second = await ExecuteAsync(server, first.State);
+
+        second.Succeeded.ShouldBeTrue();
+        second.MovedCount.ShouldBe(1);
+        second.CreatedCount.ShouldBe(1);
+        second.UpdatedCount.ShouldBe(0);
+        second.Warnings.ShouldBeEmpty();
+
+        // Appended under the index this same run created, not under an id state knew in advance.
+        var indexId = PageId(second, "guides/README.md");
+        var move = Requests(server, "PUT", "/wiki/rest/api/content/").ShouldHaveSingleItem();
+        move.Path.ShouldBe($"/wiki/rest/api/content/{setupId}/move/append/{indexId}");
+
+        // A move is not a body write: no page version spent, and the page id survives.
+        Requests(server, "PUT", "/wiki/api/v2/pages/").ShouldBeEmpty();
+        var moved = second.State.Pages["guides/setup.md"];
+        moved.PageId.ShouldBe(setupId);
+        moved.ParentPageId.ShouldBe(indexId);
+        moved.ContentHash.ShouldBe(first.State.Pages["guides/setup.md"].ContentHash);
+    }
+
+    /// <summary>
+    /// Whether a move bumps the page version is undocumented, so the executor re-reads rather than
+    /// assuming — state records what Confluence holds (§5.3). Pinned with a server that bumps it.
+    /// </summary>
+    [Fact]
+    public async Task Records_the_version_confluence_holds_after_a_move_rather_than_the_one_it_read_before()
     {
         using var server = WireMockServer.Start();
         StubSpace(server);
@@ -389,13 +435,91 @@ public sealed class PublishExecutorTests : IDisposable
 
         Write("guides/README.md", "# Guides\n\nIndex page added after the fact.\n");
         server.ResetLogEntries();
+        StubMove(server);
+
+        // 4 for the read before the move, 5 for the read after it.
+        var version = 3;
+        server
+            .Given(Request.Create().WithPath(new WildcardMatcher("/wiki/api/v2/pages/*")).UsingGet())
+            .RespondWith(Json(request => Page(
+                LastSegment(request.Path), "whatever Confluence holds", Interlocked.Increment(ref version))));
 
         var second = await ExecuteAsync(server, first.State);
 
         second.Succeeded.ShouldBeTrue();
-        second.Warnings.ShouldContain(warning =>
-            warning.Contains("guides/setup.md", StringComparison.Ordinal)
-            && warning.Contains("--force", StringComparison.Ordinal));
+        second.State.Pages["guides/setup.md"].PublishedVersion.ShouldBe(5);
+    }
+
+    /// <summary>
+    /// The invariant the whole move exists to protect (§8, rule §9.2): <c>contentHash</c> is body-only,
+    /// a move writes no body, so an approved page that merely changed position stays approved.
+    /// </summary>
+    [Fact]
+    public async Task A_move_leaves_an_approval_standing()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        StubLabelRemoval(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        var approved = Approve(first.State, "guides/setup.md");
+
+        Write("guides/README.md", "# Guides\n\nIndex page added after the fact.\n");
+        server.ResetLogEntries();
+        StubMove(server);
+        StubRead(server, version: 3);
+
+        var second = await ExecuteAsync(server, approved);
+
+        second.Succeeded.ShouldBeTrue();
+        second.MovedCount.ShouldBe(1);
+        second.ApprovalsRevokedCount.ShouldBe(0);
+
+        // §8 revokes by removing the label; a move must not send that request at all.
+        Requests(server, "DELETE", "/wiki/rest/api/content/").ShouldBeEmpty();
+        second.State.Pages["guides/setup.md"].Approval!.Status.ShouldBe(ApprovalStatus.Approved);
+    }
+
+    /// <summary>
+    /// A page the tree puts at the top hangs under <c>confluence.rootPageId</c>, and a move needs a
+    /// target page. With none configured there is nothing to append under, so the page fails loud
+    /// rather than the run sending a request with an empty id in it.
+    /// </summary>
+    [Fact]
+    public async Task Fails_a_move_to_the_top_of_the_tree_when_no_root_page_is_configured()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        StubRead(server, version: 2);
+
+        var rootless = new DocumeConfig
+        {
+            Confluence = new ConfluenceConfig
+            {
+                BaseUrl = "https://example.atlassian.net/wiki",
+                SpaceKey = SpaceKey,
+            },
+        };
+
+        var first = await ExecuteAsync(server, new DocumeState(), rootless);
+
+        // As if the home page had been filed under some other page by hand: the tree still puts it at
+        // the top, so the run wants to move it back and has nowhere to move it to.
+        var state = Reparent(first.State, "README.md", "777");
+        server.ResetLogEntries();
+
+        var second = await ExecuteAsync(server, state, rootless);
+
+        second.Succeeded.ShouldBeFalse();
+
+        var failure = second.Failures.ShouldHaveSingleItem();
+        failure.Path.ShouldBe("README.md");
+        failure.Message.ShouldContain("confluence.rootPageId");
+        Requests(server, "PUT", "/wiki/rest/api/content/").ShouldBeEmpty();
     }
 
     /// <summary>
@@ -427,9 +551,9 @@ public sealed class PublishExecutorTests : IDisposable
     }
 
     /// <summary>
-    /// The parent-drift warning tells a reader to re-run with <c>--force</c>. For a page the scope
-    /// deliberately held back that advice is wrong — the scope, not the missing body, is why the page
-    /// stayed put, and the report already names it as excluded.
+    /// A page the scope deliberately held back is named by the report as excluded, and the scope — not a
+    /// missing body and not a stale parent id — is why it stayed put. Warning about its parent on top of
+    /// that would be a second voice saying the same thing in words that do not fit.
     /// </summary>
     [Fact]
     public async Task Does_not_nag_about_a_reparented_page_the_scope_excluded()
@@ -497,6 +621,15 @@ public sealed class PublishExecutorTests : IDisposable
             },
         };
 
+        var pages = new Dictionary<string, PageState>(state.Pages, StringComparer.Ordinal) { [path] = page };
+
+        return state with { Pages = pages };
+    }
+
+    /// <summary>Files a page under a different parent in state, as a hand move in Confluence would.</summary>
+    private static DocumeState Reparent(DocumeState state, string path, string parentPageId)
+    {
+        var page = state.Pages[path] with { ParentPageId = parentPageId };
         var pages = new Dictionary<string, PageState>(state.Pages, StringComparer.Ordinal) { [path] = page };
 
         return state with { Pages = pages };
@@ -573,6 +706,18 @@ public sealed class PublishExecutorTests : IDisposable
                     payload.GetProperty("title").GetString()!,
                     payload.GetProperty("version").GetProperty("number").GetInt32());
             }));
+
+    /// <summary>
+    /// Answers the v1 bodyless move with the id the endpoint echoes, read back out of the request path
+    /// so a run that moved the wrong page cannot pass.
+    /// </summary>
+    private static void StubMove(WireMockServer server) =>
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/rest/api/content/*/move/*/*"))
+                .UsingPut())
+            .RespondWith(Json(request =>
+                $$"""{ "pageId": {{JsonSerializer.Serialize(request.Path.Split('/')[5])}} }"""));
 
     private static void StubAttachmentUpload(WireMockServer server) =>
         server
