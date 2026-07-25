@@ -1,10 +1,19 @@
 namespace DocuMe.Core.Scaffolding;
 
-/// <summary>Whether the scaffolder wrote a file or left an existing one untouched.</summary>
+/// <summary>Whether the scaffolder wrote a file, added to one, or left an existing one untouched.</summary>
 public enum ScaffoldAction
 {
     Created,
     Skipped,
+
+    /// <summary>
+    /// An existing consumer file gained the entries DocuMe needs, and nothing else changed. Rule §9.4
+    /// forbids overwriting a consumer file, but two of <c>init</c>'s targets are shared rather than
+    /// owned — a repo's <c>.gitignore</c> and its <c>.config/dotnet-tools.json</c> both hold the
+    /// consumer's own entries alongside ours — and for those, skipping outright would leave the
+    /// scaffold incomplete in a way only a failing CI run would reveal.
+    /// </summary>
+    Updated,
 }
 
 /// <summary>Outcome for a single scaffolded file, relative to the target directory.</summary>

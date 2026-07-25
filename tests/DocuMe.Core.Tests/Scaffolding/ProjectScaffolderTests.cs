@@ -1,5 +1,9 @@
+using System.Reflection;
+using System.Text.Json.Nodes;
+using System.Xml.Linq;
 using DocuMe.Core.Config;
 using DocuMe.Core.Scaffolding;
+using DocuMe.Core.State;
 using Shouldly;
 
 namespace DocuMe.Core.Tests.Scaffolding;
@@ -27,7 +31,9 @@ public sealed class ProjectScaffolderTests : IDisposable
         ".github/workflows/docs-publish.yml",
         ".github/workflows/docs-refresh.yml",
         ".github/workflows/docs-sync.yml",
+        ".config/dotnet-tools.json",
         "tools/render-mermaid.mjs",
+        ".gitignore",
     ];
 
     [Fact]
@@ -220,11 +226,290 @@ public sealed class ProjectScaffolderTests : IDisposable
     }
 
     /// <summary>
+    /// The failure this whole file exists one layer above: every scaffolded workflow runs
+    /// <c>dotnet tool restore</c> before <c>dotnet tool run docume</c>, and restore in a repo with no
+    /// manifest fails — so a consumer would <c>init</c>, push, and get a red check on their first
+    /// docs job. The entry shape is the one the SDK itself writes, verified against
+    /// <c>dotnet tool install DocuMe.Cli --local</c>.
+    /// </summary>
+    [Fact]
+    public void Scaffold_pins_the_tool_the_workflows_restore()
+    {
+        var result = Manifest(ProjectScaffolder.Scaffold(_dir));
+
+        result.Action.ShouldBe(ScaffoldAction.Created);
+        result.Note.ShouldBeNull();
+
+        var manifest = ReadManifest();
+        manifest["version"]!.GetValue<int>().ShouldBe(1);
+        manifest["isRoot"]!.GetValue<bool>().ShouldBeTrue();
+
+        var tool = manifest["tools"]!["docume.cli"].ShouldNotBeNull();
+        tool["commands"]!.AsArray().Select(c => c!.GetValue<string>()).ShouldBe(["docume"]);
+        tool["rollForward"]!.GetValue<bool>().ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The pinned version has to be the one this build publishes, checked against
+    /// <c>Directory.Build.props</c> rather than against the code's own way of finding it — §12 keeps a
+    /// single <c>&lt;Version&gt;</c> there for CLI, Core, plugin and action, so that file is the
+    /// independent answer. It also catches the one way reading it off the assembly goes wrong: the SDK
+    /// stamps <c>InformationalVersion</c> as <c>0.1.0+&lt;commit sha&gt;</c> (SourceLink is on by
+    /// default since .NET 8), and NuGet publishes <c>0.1.0</c>, so a pin keeping the metadata restores
+    /// nothing.
+    /// </summary>
+    [Fact]
+    public void Scaffold_pins_the_version_this_build_declares()
+    {
+        ProjectScaffolder.Scaffold(_dir);
+
+        var pinned = ReadManifest()["tools"]!["docume.cli"]!["version"]!.GetValue<string>();
+
+        pinned.ShouldBe(DeclaredVersion());
+        pinned.ShouldNotContain("+", Case.Sensitive);
+
+        // And it really is the running assembly's version, not a copy of the props file that drifted.
+        var informational = typeof(DocumeState).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
+            .InformationalVersion;
+        informational.ShouldStartWith(pinned);
+    }
+
+    /// <summary>
+    /// A manifest is shared ground: the consumer keeps their own tools in it, so this is an add, not
+    /// an overwrite. Skipping it instead — the create-or-skip rule every other target follows — would
+    /// leave <c>docume</c> unpinned in exactly the repos most likely to already have a manifest.
+    /// </summary>
+    [Fact]
+    public void Scaffold_adds_the_pin_to_an_existing_manifest_and_keeps_its_other_tools()
+    {
+        WriteManifest("""
+            {
+              "version": 1,
+              "isRoot": true,
+              "tools": {
+                "dotnet-ef": {
+                  "version": "9.0.0",
+                  "commands": [ "dotnet-ef" ]
+                }
+              }
+            }
+            """);
+
+        var result = Manifest(ProjectScaffolder.Scaffold(_dir));
+
+        result.Action.ShouldBe(ScaffoldAction.Updated);
+        result.Note.ShouldNotBeNull().ShouldContain("docume.cli");
+
+        var tools = ReadManifest()["tools"]!;
+        tools["docume.cli"]!["version"]!.GetValue<string>().ShouldBe(DeclaredVersion());
+        tools["dotnet-ef"]!["version"]!.GetValue<string>().ShouldBe("9.0.0");
+    }
+
+    /// <summary>
+    /// A consumer who deliberately held the tool at an older version did not ask <c>init</c> to undo
+    /// that (rule §9.4), but they do have a reason to know the templates they just scaffolded came
+    /// from a newer one.
+    /// </summary>
+    [Fact]
+    public void Scaffold_leaves_an_existing_docume_pin_alone_and_says_so()
+    {
+        WriteManifest("""
+            {
+              "version": 1,
+              "isRoot": true,
+              "tools": { "docume.cli": { "version": "0.0.1", "commands": [ "docume" ] } }
+            }
+            """);
+
+        var result = Manifest(ProjectScaffolder.Scaffold(_dir));
+
+        result.Action.ShouldBe(ScaffoldAction.Skipped);
+        result.Note.ShouldNotBeNull().ShouldContain("0.0.1");
+        ReadManifest()["tools"]!["docume.cli"]!["version"]!.GetValue<string>().ShouldBe("0.0.1");
+    }
+
+    /// <summary>
+    /// Same reasoning as the unreadable <c>docume.json</c>: <c>init</c> is the command a consumer runs
+    /// to get out of a broken setup, so it cannot throw on one — and cannot fall back in silence.
+    /// </summary>
+    [Fact]
+    public void Scaffold_notes_an_unreadable_manifest_instead_of_failing()
+    {
+        WriteManifest("""{ "version": 1, "tools": { """);
+
+        var result = Manifest(ProjectScaffolder.Scaffold(_dir));
+
+        result.Action.ShouldBe(ScaffoldAction.Skipped);
+        result.Note.ShouldNotBeNull().ShouldContain("could not be read");
+        result.Note.ShouldContain("dotnet tool restore");
+        result.Note.ShouldNotContain("\n"); // printed under a table; JSON messages carry newlines
+    }
+
+    /// <summary>
+    /// A pin whose <c>version</c> is not a string. Malformed, but still a file <c>init</c> has to
+    /// survive reading — and the note has to say which pin it could not make sense of.
+    /// </summary>
+    [Fact]
+    public void Scaffold_survives_a_pin_with_an_unreadable_version()
+    {
+        WriteManifest("""
+            {
+              "version": 1,
+              "isRoot": true,
+              "tools": { "docume.cli": { "version": 1, "commands": [ "docume" ] } }
+            }
+            """);
+
+        var result = Manifest(ProjectScaffolder.Scaffold(_dir));
+
+        result.Action.ShouldBe(ScaffoldAction.Skipped);
+        result.Note.ShouldNotBeNull().ShouldContain("unreadable version");
+    }
+
+    /// <summary>
+    /// The comment tolerance DocuMe's own JSON files get is deliberately withheld here: the SDK reads
+    /// this file too and rejects comments, and a lenient read followed by a rewrite would delete them.
+    /// </summary>
+    [Fact]
+    public void Scaffold_refuses_to_rewrite_a_manifest_it_cannot_round_trip()
+    {
+        const string commented = """
+            {
+              // held back on purpose, see ADR-7
+              "version": 1,
+              "isRoot": true,
+              "tools": {}
+            }
+            """;
+        WriteManifest(commented);
+
+        Manifest(ProjectScaffolder.Scaffold(_dir)).Action.ShouldBe(ScaffoldAction.Skipped);
+        File.ReadAllText(Full(".config/dotnet-tools.json")).ShouldBe(commented);
+    }
+
+    [Fact]
+    public void Scaffold_creates_a_gitignore_when_the_repo_has_none()
+    {
+        var result = Gitignore(ProjectScaffolder.Scaffold(_dir));
+
+        result.Action.ShouldBe(ScaffoldAction.Created);
+        var lines = File.ReadAllLines(Full(".gitignore"));
+        lines.ShouldContain("node_modules/");
+        lines.ShouldContain(line => line.StartsWith('#'), "the entry should say why it is there");
+    }
+
+    /// <summary>
+    /// The one target that is not create-or-skip on the consumer side either: a real repo already has
+    /// a <c>.gitignore</c> full of its own rules, and skipping would leave the render script's
+    /// <c>node_modules</c> tree committable.
+    /// </summary>
+    [Fact]
+    public void Scaffold_appends_to_an_existing_gitignore_without_touching_its_rules()
+    {
+        const string theirs = "bin/\nobj/\n";
+        File.WriteAllText(Full(".gitignore"), theirs);
+
+        var result = Gitignore(ProjectScaffolder.Scaffold(_dir));
+
+        result.Action.ShouldBe(ScaffoldAction.Updated);
+        result.Note.ShouldNotBeNull().ShouldContain("node_modules/");
+
+        File.ReadAllText(Full(".gitignore")).ShouldStartWith(theirs);
+        AppendedBlock(File.ReadAllLines(Full(".gitignore")), after: 2);
+    }
+
+    /// <summary>
+    /// A last rule with no line terminator after it. Appending straight onto that would glue the
+    /// comment onto the end of their rule and silently change what it matches, so the terminator has
+    /// to be supplied before the block — and the blank line separating the sections still has to be
+    /// there, which is what tells this case apart from the terminated one.
+    /// </summary>
+    [Fact]
+    public void Scaffold_terminates_an_unterminated_gitignore_before_appending()
+    {
+        File.WriteAllText(Full(".gitignore"), "*.user");
+
+        Gitignore(ProjectScaffolder.Scaffold(_dir)).Action.ShouldBe(ScaffoldAction.Updated);
+
+        var lines = File.ReadAllLines(Full(".gitignore"));
+        lines[0].ShouldBe("*.user");
+        AppendedBlock(lines, after: 1);
+    }
+
+    /// <summary>
+    /// The three lines DocuMe appends, starting at <paramref name="after"/>: a blank separator, the
+    /// comment saying why, then the entry. Asserted positionally because the separator is the part a
+    /// mistake loses silently — the entry itself is still present either way.
+    /// </summary>
+    private static void AppendedBlock(string[] lines, int after)
+    {
+        lines.Length.ShouldBe(after + 3);
+        lines[after].ShouldBeEmpty("the appended section should be set off by a blank line");
+        lines[after + 1].ShouldStartWith("#");
+        lines[after + 2].ShouldBe("node_modules/");
+    }
+
+    /// <summary>
+    /// Every spelling that already ignores the same tree. Appending a seventh redundant line on each
+    /// <c>init</c> is the failure this guards, and it only shows up in repos that wrote it their way.
+    /// </summary>
+    [Theory]
+    [InlineData("node_modules")]
+    [InlineData("node_modules/")]
+    [InlineData("/node_modules")]
+    [InlineData("/node_modules/")]
+    [InlineData("**/node_modules")]
+    [InlineData("**/node_modules/")]
+    public void Scaffold_leaves_a_gitignore_that_already_covers_node_modules(string spelling)
+    {
+        var theirs = $"bin/\n  {spelling}  \nobj/\n";
+        File.WriteAllText(Full(".gitignore"), theirs);
+
+        Gitignore(ProjectScaffolder.Scaffold(_dir)).Action.ShouldBe(ScaffoldAction.Skipped);
+        File.ReadAllText(Full(".gitignore")).ShouldBe(theirs);
+    }
+
+    /// <summary>
     /// The render script's result, found by extension rather than by position: which path it lands
     /// on is the point of three of these tests, so the lookup must not assume one.
     /// </summary>
     private static ScaffoldResult RenderScript(IReadOnlyList<ScaffoldResult> results)
         => results.Single(r => r.RelativePath.EndsWith(".mjs", StringComparison.Ordinal));
+
+    private static ScaffoldResult Manifest(IReadOnlyList<ScaffoldResult> results)
+        => results.Single(r => string.Equals(
+            r.RelativePath,
+            ".config/dotnet-tools.json",
+            StringComparison.Ordinal));
+
+    private static ScaffoldResult Gitignore(IReadOnlyList<ScaffoldResult> results)
+        => results.Single(r => string.Equals(r.RelativePath, ".gitignore", StringComparison.Ordinal));
+
+    private void WriteManifest(string json)
+    {
+        var path = Full(".config/dotnet-tools.json");
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, json);
+    }
+
+    private JsonObject ReadManifest()
+        => JsonNode.Parse(File.ReadAllText(Full(".config/dotnet-tools.json")))!.AsObject();
+
+    /// <summary>
+    /// The single version of §12, read from the tree rather than from the code under test.
+    /// </summary>
+    private static string DeclaredVersion()
+    {
+        var props = System.IO.Path.Combine(RepoRoot(), "Directory.Build.props");
+        var element = XDocument
+            .Load(props)
+            .Descendants("Version")
+            .SingleOrDefault()
+            ?? throw new InvalidOperationException($"No single <Version> element in {props}.");
+
+        return element.Value;
+    }
 
     private void WriteConfig(string json)
         => File.WriteAllText(System.IO.Path.Combine(_dir, "docume.json"), json);
@@ -237,6 +522,9 @@ public sealed class ProjectScaffolderTests : IDisposable
     /// whole point of these assertions is that the reviewed file and the scaffolded one are one file.
     /// </summary>
     private static string TemplateDirectory(string kind)
+        => System.IO.Path.Combine(RepoRoot(), "templates", kind);
+
+    private static string RepoRoot()
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
              directory is not null;
@@ -244,11 +532,11 @@ public sealed class ProjectScaffolderTests : IDisposable
         {
             if (File.Exists(System.IO.Path.Combine(directory.FullName, "DocuMe.slnx")))
             {
-                return System.IO.Path.Combine(directory.FullName, "templates", kind);
+                return directory.FullName;
             }
         }
 
         throw new InvalidOperationException(
-            $"No DocuMe.slnx above {AppContext.BaseDirectory}, so templates/{kind} cannot be found.");
+            $"No DocuMe.slnx above {AppContext.BaseDirectory}, so the repo root cannot be found.");
     }
 }

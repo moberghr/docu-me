@@ -49,10 +49,7 @@ internal static class InitCommand
 
         foreach (var result in results)
         {
-            var status = result.Action == ScaffoldAction.Created
-                ? "[green]created[/]"
-                : "[yellow]skipped[/]";
-            table.AddRow(result.RelativePath.EscapeMarkup(), status);
+            table.AddRow(result.RelativePath.EscapeMarkup(), Describe(result.Action));
         }
 
         AnsiConsole.Write(table);
@@ -65,4 +62,20 @@ internal static class InitCommand
                 $"[yellow]note[/] {note.RelativePath.EscapeMarkup()}: {note.Note!.EscapeMarkup()}");
         }
     }
+
+    /// <summary>
+    /// Throws on an unhandled action rather than defaulting to "skipped": a new
+    /// <see cref="ScaffoldAction"/> reported as a no-op would be the most misleading thing this table
+    /// could say.
+    /// </summary>
+    private static string Describe(ScaffoldAction action) => action switch
+    {
+        ScaffoldAction.Created => "[green]created[/]",
+        ScaffoldAction.Updated => "[blue]updated[/]",
+        ScaffoldAction.Skipped => "[yellow]skipped[/]",
+        _ => throw new ArgumentOutOfRangeException(
+            nameof(action),
+            action,
+            "Unhandled scaffold action."),
+    };
 }

@@ -1,5 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using DocuMe.Core.Config;
 using DocuMe.Core.Json;
 using DocuMe.Core.State;
@@ -8,18 +10,27 @@ namespace DocuMe.Core.Scaffolding;
 
 /// <summary>
 /// Scaffolds a consumer repo for DocuMe (PLAN.md §6.1): a minimal <c>docume.json</c>, a
-/// <c>docs/wiki</c> skeleton, the <c>.github/workflows/docs-*.yml</c> lifecycle jobs of §10 and
-/// the mermaid render script of §4. Idempotent — an existing file is never overwritten; every
-/// target is reported as <see cref="ScaffoldAction.Created"/> or
-/// <see cref="ScaffoldAction.Skipped"/> (rule §9.4). <c>--adopt</c> mode and the
-/// <c>.gitignore</c> entries of §6.1 are still outstanding.
+/// <c>docs/wiki</c> skeleton, the <c>.github/workflows/docs-*.yml</c> lifecycle jobs of §10, the
+/// mermaid render script of §4, the <c>.config/dotnet-tools.json</c> pin of §12 and the
+/// <c>.gitignore</c> entry the render script needs. Idempotent — a file DocuMe owns is never
+/// overwritten, and a file it only contributes to is added to rather than replaced; every target is
+/// reported as <see cref="ScaffoldAction.Created"/>, <see cref="ScaffoldAction.Updated"/> or
+/// <see cref="ScaffoldAction.Skipped"/> (rule §9.4). <c>--adopt</c> mode is still outstanding.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The workflows and the render script are shipped from <see cref="BundledTemplates"/> byte for
 /// byte, so a consumer gets the reviewed file rather than a paraphrase of it. Idempotency matters
 /// most here: every workflow template carries an "EDIT BEFORE USE" header telling the consumer to
 /// change <c>branches:</c> and <c>paths:</c>, so a re-run that overwrote them would silently undo
 /// the one edit the file asks for.
+/// </para>
+/// <para>
+/// The tool manifest is not decoration. Every one of those six workflows runs
+/// <c>dotnet tool restore</c> before <c>dotnet tool run docume</c>, and <c>dotnet tool restore</c>
+/// in a repo with no manifest fails — so without this a fresh consumer would run <c>init</c>, push,
+/// and get a red check on its first docs job.
+/// </para>
 /// </remarks>
 public static class ProjectScaffolder
 {
@@ -40,6 +51,49 @@ public static class ProjectScaffolder
 
     /// <summary>Where GitHub Actions looks; not configurable, so neither is this (PLAN.md §10).</summary>
     private const string WorkflowDirectory = ".github/workflows";
+
+    /// <summary>Where <c>dotnet tool restore</c> looks; likewise fixed by the SDK, not by us.</summary>
+    private const string ToolManifestPath = ".config/dotnet-tools.json";
+
+    private const string ToolPackageId = "DocuMe.Cli";
+    private const string ToolCommandName = "docume";
+
+    /// <summary>
+    /// The package id as the .NET SDK spells it inside a manifest: lowercased. Pinned as a literal
+    /// rather than lowercased from <see cref="ToolPackageId"/> because the SDK's normalization is the
+    /// contract here, not ours — verified against what <c>dotnet tool install DocuMe.Cli --local</c>
+    /// actually writes.
+    /// </summary>
+    private const string ToolManifestKey = "docume.cli";
+
+    private const string GitignoreEntry = "node_modules/";
+
+    private const string GitignoreComment =
+        "# Node packages for the DocuMe mermaid renderer (`npm install beautiful-mermaid`).";
+
+    /// <summary>
+    /// Spellings of <see cref="GitignoreEntry"/> that already ignore the same thing. A consumer repo
+    /// that writes <c>node_modules</c> without the slash needs nothing appended, and appending anyway
+    /// would grow their file by one redundant line on every <c>init</c>.
+    /// </summary>
+    private static readonly string[] GitignoreEquivalents =
+    [
+        "node_modules",
+        "node_modules/",
+        "/node_modules",
+        "/node_modules/",
+        "**/node_modules",
+        "**/node_modules/",
+    ];
+
+    /// <summary>
+    /// The version the scaffolded manifest pins: the version of the assembly doing the scaffolding.
+    /// That is the version of the tool the consumer just installed, and by §12's single-version rule
+    /// (one <c>&lt;Version&gt;</c> in <c>Directory.Build.props</c> covers CLI, Core, plugin and
+    /// action) it is the <c>DocuMe.Cli</c> package's version too. Read rather than hardcoded so a
+    /// release cannot ship an <c>init</c> that pins the previous version.
+    /// </summary>
+    private static readonly string ToolVersion = ResolveToolVersion();
 
     /// <summary>
     /// Writes the skeleton into <paramref name="targetDir"/>, filling
@@ -65,6 +119,9 @@ public static class ProjectScaffolder
             $"{WorkflowDirectory}/{name}",
             () => BundledTemplates.ReadWorkflow(name))));
 
+        // Directly after the workflows, because it is what makes them run at all.
+        results.Add(MergeToolManifest(targetDir));
+
         // After the config write, so a fresh repo reads the file it just got rather than a
         // duplicate of the defaults that built it.
         var renderer = ResolveRendererPath(targetDir);
@@ -74,8 +131,196 @@ public static class ProjectScaffolder
             BundledTemplates.ReadRenderScript,
             renderer.Note));
 
+        // Last, and after the render script, since the entry exists for that script's dependencies.
+        results.Add(MergeGitignore(targetDir));
+
         return results;
     }
+
+    /// <summary>
+    /// Pins <c>DocuMe.Cli</c> in the repo-local tool manifest (PLAN.md §12) so the scaffolded
+    /// workflows' <c>dotnet tool restore</c> has something to restore. A manifest is shared ground —
+    /// the consumer keeps their own tools in it — so an existing one is added to rather than replaced,
+    /// and an existing <c>docume</c> pin is left exactly as it is: a consumer who deliberately held
+    /// the tool at an older version did not ask <c>init</c> to undo that.
+    /// </summary>
+    private static ScaffoldResult MergeToolManifest(string targetDir)
+    {
+        var fullPath = Combine(targetDir, ToolManifestPath);
+
+        if (!File.Exists(fullPath))
+        {
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath)!);
+            File.WriteAllText(fullPath, SerializeManifest(NewManifest()));
+            return new ScaffoldResult(ToolManifestPath, ScaffoldAction.Created);
+        }
+
+        JsonObject manifest;
+        try
+        {
+            // Parsed strictly, without the comment tolerance DocuMe's own files get: the SDK reads
+            // this file too and does not accept comments, and a lenient read followed by a rewrite
+            // would silently delete any a consumer had put there.
+            manifest = JsonNode.Parse(File.ReadAllText(fullPath)) as JsonObject
+                ?? throw new JsonException("the manifest's root is not a JSON object");
+        }
+        catch (JsonException exception)
+        {
+            var note = $"could not be read ({exception.Message.ReplaceLineEndings(" ")}), so "
+                + $"{ToolCommandName} was not pinned. Fix the file and run `dotnet tool install "
+                + $"{ToolPackageId}`, or the scaffolded workflows will fail at `dotnet tool restore`.";
+
+            return new ScaffoldResult(ToolManifestPath, ScaffoldAction.Skipped, note);
+        }
+
+        var tools = manifest["tools"] as JsonObject;
+        if (tools is null && manifest.ContainsKey("tools"))
+        {
+            const string note =
+                $"has a 'tools' member that is not a JSON object, so {ToolCommandName} was not "
+                + $"pinned. Fix the file and run `dotnet tool install {ToolPackageId}`.";
+
+            return new ScaffoldResult(ToolManifestPath, ScaffoldAction.Skipped, note);
+        }
+
+        if (tools is null)
+        {
+            tools = [];
+            manifest["tools"] = tools;
+        }
+
+        if (tools[ToolManifestKey] is JsonObject pinned)
+        {
+            return new ScaffoldResult(ToolManifestPath, ScaffoldAction.Skipped, DescribePin(pinned));
+        }
+
+        tools[ToolManifestKey] = NewToolEntry();
+        File.WriteAllText(fullPath, SerializeManifest(manifest));
+
+        var added = $"pinned {ToolManifestKey} {ToolVersion} in the existing manifest; its other tools "
+            + "were left alone.";
+
+        return new ScaffoldResult(ToolManifestPath, ScaffoldAction.Updated, added);
+    }
+
+    /// <summary>
+    /// What to say about a pin that is already there: nothing when it matches this build, and the
+    /// mismatch when it does not. A consumer whose workflows run an older <c>docume</c> than the one
+    /// they just scaffolded templates from has a reason to know which.
+    /// </summary>
+    private static string? DescribePin(JsonObject pinned)
+    {
+        // Read through TryGetValue rather than GetValue: a manifest with a numeric "version" is
+        // malformed, and GetValue would throw out of the command a consumer runs to fix such things.
+        var version = pinned["version"] is JsonValue value && value.TryGetValue<string>(out var text)
+            ? text
+            : null;
+
+        if (string.Equals(version, ToolVersion, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return $"already pins {ToolManifestKey} {version ?? "an unreadable version"} while this is "
+            + $"{ToolVersion}; left as it is. Run `dotnet tool update {ToolPackageId}` to move it.";
+    }
+
+    private static JsonObject NewManifest() => new()
+    {
+        ["version"] = 1,
+        ["isRoot"] = true,
+        ["tools"] = new JsonObject { [ToolManifestKey] = NewToolEntry() },
+    };
+
+    /// <summary>
+    /// The entry shape the SDK itself writes, field for field (verified against
+    /// <c>dotnet tool install DocuMe.Cli --local</c>). <c>rollForward: false</c> included rather than
+    /// omitted: it is the SDK's own default spelling, and a pinned tool that quietly rolled onto a
+    /// newer runtime would defeat the point of pinning it.
+    /// </summary>
+    private static JsonObject NewToolEntry() => new()
+    {
+        ["version"] = ToolVersion,
+        ["commands"] = new JsonArray(ToolCommandName),
+        ["rollForward"] = false,
+    };
+
+    private static string SerializeManifest(JsonObject manifest)
+        => manifest.ToJsonString(DocumeJson.Options) + Environment.NewLine;
+
+    private static string ResolveToolVersion()
+    {
+        var assembly = typeof(ProjectScaffolder).Assembly;
+        var informational = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+
+        if (string.IsNullOrWhiteSpace(informational))
+        {
+            // No SDK-generated attribute at all. The four-part assembly version still names the
+            // release; it just cannot carry a prerelease suffix.
+            return assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+        }
+
+        // The SDK appends "+<commit sha>" (SourceLink ships on by default since .NET 8). NuGet
+        // publishes 0.1.0, never 0.1.0+sha, so a manifest keeping the metadata restores nothing.
+        var metadata = informational.IndexOf('+', StringComparison.Ordinal);
+        return metadata < 0 ? informational : informational[..metadata];
+    }
+
+    /// <summary>
+    /// Adds the one entry <c>init</c> earns the right to add: the Node dependency tree the mermaid
+    /// render script it just scaffolded needs (<c>npm install beautiful-mermaid</c>). Deliberately one
+    /// line rather than a plausible-looking set — everything else DocuMe writes into a consumer repo
+    /// is meant to be committed (<c>_meta/state.json</c> and the feedback inbox both travel in the
+    /// docs PRs, PLAN.md §5.3, §5.4), and every scratch file the workflows make goes to
+    /// <c>$RUNNER_TEMP</c>.
+    /// </summary>
+    private static ScaffoldResult MergeGitignore(string targetDir)
+    {
+        const string relativePath = ".gitignore";
+        var fullPath = Combine(targetDir, relativePath);
+
+        if (!File.Exists(fullPath))
+        {
+            Directory.CreateDirectory(targetDir);
+            File.WriteAllText(
+                fullPath,
+                GitignoreComment + Environment.NewLine + GitignoreEntry + Environment.NewLine);
+            return new ScaffoldResult(relativePath, ScaffoldAction.Created);
+        }
+
+        var existing = File.ReadAllText(fullPath);
+        var covered = existing
+            .Split('\n')
+            .Any(line => GitignoreEquivalents.Contains(line.Trim(), StringComparer.Ordinal));
+
+        if (covered)
+        {
+            return new ScaffoldResult(relativePath, ScaffoldAction.Skipped);
+        }
+
+        var appended = existing + Separator(existing) + GitignoreComment + Environment.NewLine
+            + GitignoreEntry + Environment.NewLine;
+        File.WriteAllText(fullPath, appended);
+
+        return new ScaffoldResult(
+            relativePath,
+            ScaffoldAction.Updated,
+            $"appended {GitignoreEntry} to the existing .gitignore.");
+    }
+
+    /// <summary>
+    /// What has to go between a consumer's <c>.gitignore</c> and the appended entry: a blank line to
+    /// separate the sections, plus a line terminator first if their file did not end with one (which
+    /// would otherwise glue our comment onto the end of their last rule).
+    /// </summary>
+    private static string Separator(string existing) => existing.Length switch
+    {
+        0 => string.Empty,
+        _ when existing.EndsWith('\n') => Environment.NewLine,
+        _ => Environment.NewLine + Environment.NewLine,
+    };
 
     /// <summary>
     /// Where the mermaid render script goes: wherever the target repo's <c>docume.json</c> points
