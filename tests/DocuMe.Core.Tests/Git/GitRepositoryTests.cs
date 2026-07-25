@@ -118,6 +118,41 @@ public sealed class GitRepositoryTests : IDisposable
         thrown.Message.ShouldContain("d00dfeed");
     }
 
+    /// <summary>
+    /// §6.4's question is between two commits, not against the working tree: a PR check compares the
+    /// merge base with the branch tip, and an uncommitted edit on the CI runner is not part of the PR.
+    /// </summary>
+    [Fact]
+    public async Task Compares_two_commits_and_ignores_the_working_tree()
+    {
+        Write("src/a.cs", "// a\n");
+        var first = Commit("first");
+
+        Write("src/b.cs", "// b\n");
+        var second = Commit("second");
+
+        Write("src/c.cs", "// uncommitted\n");
+
+        var changed = await GitRepository.ChangedFilesBetweenAsync(
+            _dir, first, second, TestContext.Current.CancellationToken);
+
+        changed.ShouldBe(["src/b.cs"]);
+    }
+
+    [Fact]
+    public async Task Refuses_a_range_this_repository_cannot_resolve()
+    {
+        Write("src/a.cs", "// a\n");
+        var sha = Commit("first");
+
+        var thrown = await Should.ThrowAsync<GitException>(async () => await GitRepository
+            .ChangedFilesBetweenAsync(_dir, "d00dfeed", sha, TestContext.Current.CancellationToken));
+
+        // The sha has to be in the message: a shallow CI clone hits this, and "drift check failed" with
+        // no revision named sends the reader to the wrong place.
+        thrown.Message.ShouldContain("d00dfeed");
+    }
+
     [Fact]
     public async Task Treats_a_directory_that_is_not_a_checkout_as_no_sha_but_refuses_to_diff_it()
     {

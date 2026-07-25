@@ -1,0 +1,130 @@
+using System.Text;
+
+namespace DocuMe.Core.Drift;
+
+/// <summary>
+/// Renders a <see cref="DriftReport"/> as the markdown block <c>--format github-comment</c> posts on a
+/// pull request (PLAN.md §6.4: "This PR touches sources for: …").
+/// </summary>
+/// <remarks>
+/// <para>
+/// Pure and clock-free, like <see cref="Dashboard.DashboardPage"/> and for the same reason: a CI job
+/// updates one comment in place, so two runs over an unchanged answer must produce byte-identical text.
+/// A timestamp in here would make every re-run an edit, and a reviewer would learn to ignore the
+/// notification.
+/// </para>
+/// <para>
+/// <strong>It always renders something</strong>, including "nothing drifted". The comment is a slot a
+/// bot overwrites, and leaving yesterday's drift warning standing after the PR fixed the docs would be
+/// worse than a line saying so.
+/// </para>
+/// </remarks>
+public static class DriftComment
+{
+    /// <summary>
+    /// The hidden marker a CI job finds its own previous comment by, so it edits rather than piles up.
+    /// First line of every render.
+    /// </summary>
+    public const string Marker = "<!-- docume:drift -->";
+
+    /// <summary>
+    /// How many matched files one pattern lists before the rest become a count. A PR comment is read at
+    /// a glance; the full list is what <c>--format json</c> is for, and the overflow is stated rather
+    /// than silently dropped.
+    /// </summary>
+    private const int MaxFilesPerPattern = 5;
+
+    /// <summary>The comment body for <paramref name="report"/>, ending in a newline.</summary>
+    public static string Render(DriftReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+
+        var text = new StringBuilder();
+        text.AppendLine(Marker);
+        text.AppendLine("### 📄 Documentation drift");
+        text.AppendLine();
+        WriteBody(text, report);
+        text.AppendLine();
+        text.AppendLine(Provenance(report));
+
+        return text.ToString();
+    }
+
+    private static void WriteBody(StringBuilder text, DriftReport report)
+    {
+        if (report.SourcesUndeclared)
+        {
+            text.AppendLine(
+                "No page in this wiki declares a `sources:` glob, so drift cannot be detected. Add "
+                + "`sources:` to a page's frontmatter to link it to the code it documents.");
+
+            return;
+        }
+
+        if (!report.HasDrift)
+        {
+            text.AppendLine("No documented sources were touched. Nothing to review here.");
+
+            return;
+        }
+
+        var pages = report.AffectedCount == 1 ? "page" : "pages";
+        text.AppendLine(
+            $"This PR touches sources for **{report.AffectedCount} wiki {pages}** of "
+            + $"{report.PagesWithSourcesCount} with declared sources:");
+        text.AppendLine();
+
+        foreach (var page in report.Pages)
+        {
+            text.AppendLine($"- **{Escape(page.Title)}** — `{page.Path}`");
+            foreach (var match in page.Matches)
+            {
+                text.AppendLine($"  - `{match.Pattern}` → {Files(match)}");
+            }
+        }
+
+        text.AppendLine();
+        text.AppendLine(
+            "Check whether these pages still describe the code. This is advisory: `docume drift` never "
+            + "edits a page.");
+    }
+
+    private static string Files(SourceMatch match)
+    {
+        var shown = match.Files.Take(MaxFilesPerPattern).Select(file => $"`{file}`");
+        var listed = string.Join(", ", shown);
+        var hidden = match.Files.Count - MaxFilesPerPattern;
+
+        return hidden > 0 ? $"{listed} and {hidden} more" : listed;
+    }
+
+    private static string Provenance(DriftReport report)
+    {
+        var files = report.ChangedFileCount == 1 ? "changed file" : "changed files";
+
+        return $"<sub>`docume drift` — baseline `{Escape(report.Baseline)}` → head "
+            + $"`{Escape(report.Head)}`, {report.ChangedFileCount} {files}.</sub>";
+    }
+
+    /// <summary>
+    /// Escapes the markdown that turns text into formatting. Titles come from a consumer's frontmatter
+    /// or an H1, so a title like <c>Rates_and_Fees</c> or <c>&lt;Draft&gt;</c> is ordinary; rendered raw
+    /// it would silently italicize or vanish. Paths and patterns are wrapped in code spans by the caller
+    /// instead, which is the stronger guarantee.
+    /// </summary>
+    private static string Escape(string text)
+    {
+        var escaped = new StringBuilder(text.Length);
+        foreach (var character in text)
+        {
+            if (character is '\\' or '`' or '*' or '_' or '[' or ']' or '<' or '>')
+            {
+                escaped.Append('\\');
+            }
+
+            escaped.Append(character);
+        }
+
+        return escaped.ToString();
+    }
+}

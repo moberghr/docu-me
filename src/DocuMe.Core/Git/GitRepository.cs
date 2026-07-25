@@ -91,19 +91,69 @@ public static class GitRepository
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         ArgumentException.ThrowIfNullOrWhiteSpace(sha);
 
+        return await DiffAsync(
+            directory,
+            sha,
+            $"compare '{sha}' against the working tree",
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The files under <paramref name="directory"/> that differ between two commits, as paths relative
+    /// to <paramref name="directory"/> with <c>/</c> separators — §6.4's <c>drift</c> input.
+    /// </summary>
+    /// <param name="directory">
+    /// The directory the answer is scoped and relative to. For <c>drift</c> that is the directory
+    /// holding <c>docume.json</c>, because a page's <c>sources</c> globs are written relative to it
+    /// (§5.1) and the two have to line up for a glob to match anything at all.
+    /// </param>
+    /// <param name="baseline">The commit to compare from.</param>
+    /// <param name="head">The commit to compare to.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="GitException">
+    /// git is absent, hung, or could not compare — including a revision this repository does not have,
+    /// which a shallow CI clone or a force-pushed branch produces routinely.
+    /// </exception>
+    /// <remarks>
+    /// <strong>It throws rather than answering empty, and that is the whole point.</strong> Zero drift
+    /// is what a green advisory check shows, so a zero that really means "git could not resolve the
+    /// baseline" is the one wrong answer here that a reviewer would believe.
+    /// </remarks>
+    public static async Task<IReadOnlyList<string>> ChangedFilesBetweenAsync(
+        string directory,
+        string baseline,
+        string head,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(baseline);
+        ArgumentException.ThrowIfNullOrWhiteSpace(head);
+
+        var range = $"{baseline}..{head}";
+
+        return await DiffAsync(directory, range, $"compare '{range}'", cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<IReadOnlyList<string>> DiffAsync(
+        string directory,
+        string revisions,
+        string attempt,
+        CancellationToken cancellationToken)
+    {
         // --relative answers in paths relative to `directory` rather than to the repository root; those
         // are the same thing only when the wiki root happens to sit at the top of the repo. --no-renames
         // makes the answer independent of the caller's diff.renames config: a renamed page then shows up
         // as both paths, and both are facts a scope wants to see.
-        string[] arguments = ["diff", "--name-only", "--relative", "--no-renames", sha, "--", "."];
+        string[] arguments = ["diff", "--name-only", "--relative", "--no-renames", revisions, "--", "."];
 
         var output = await RunAsync(directory, arguments, cancellationToken).ConfigureAwait(false);
 
         if (output.ExitCode != 0)
         {
             throw new GitException(
-                $"git could not compare '{sha}' against the working tree in {directory}. Check that the "
-                + $"sha exists here (`git -C {directory} rev-parse {sha}`) and that the directory is a git "
+                $"git could not {attempt} in {directory}. Check that the revisions exist here "
+                + $"(`git -C {directory} rev-parse {revisions}`) and that the directory is a git "
                 + $"checkout. git said: {Describe(output.StandardError)}");
         }
 
