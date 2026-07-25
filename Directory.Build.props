@@ -11,6 +11,17 @@
     <Version>0.1.0</Version>
   </PropertyGroup>
 
+  <!-- Package metadata shared by both packable projects (PLAN.md §12). RepositoryUrl is what makes
+       GitHub Packages attach the pushed package to this repository rather than leaving it floating
+       under the owner; without it the package publishes but its page links nowhere. -->
+  <PropertyGroup>
+    <Authors>Moberg</Authors>
+    <Company>Moberg</Company>
+    <PackageProjectUrl>https://github.com/moberghr/docu-me</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/moberghr/docu-me</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
   <!-- Maximum-strict analysis (Moberg house standard). Analyzer-rule severities, and the small
        set we intentionally relax, live in .editorconfig — root for global rules, per-project
        globs for tests. See .claude/references/dotnet/moberg-house-standards.md. -->

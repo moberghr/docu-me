@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using DocuMe.Core.Scaffolding;
 using Shouldly;
@@ -31,7 +32,7 @@ namespace DocuMe.Core.Tests.Plugin;
 /// <see cref="SkillContractTests"/> covers what is inside each SKILL.md.
 /// </para>
 /// </remarks>
-public sealed class PluginManifestTests
+public sealed partial class PluginManifestTests
 {
     /// <summary>
     /// The name users type: <c>/plugin install docume@docume</c>. Both halves are public-facing and both are
@@ -104,6 +105,24 @@ public sealed class PluginManifestTests
             + "rebuild, or the plugin ships pinned to a version that was never released.";
 
         declared.ShouldBe(AssemblyVersion, assemblyMessage);
+    }
+
+    [Fact]
+    public void The_marketplace_entry_in_the_README_is_pinned_to_the_version_being_released()
+    {
+        var readme = File.ReadAllText(Path.Combine(PluginDirectory, "README.md"));
+        var refs = ReleaseRef().Matches(readme).Select(match => match.Groups["tag"].Value).ToList();
+
+        // The third place §12's single version lives, and the only one no build step reads: the
+        // `git-subdir` entry a human copies into the Moberg marketplace, in another repository. A
+        // stale `ref` there installs a version-old plugin for everyone who takes the paste at face
+        // value, and nothing on either side would say so.
+        refs.Count.ShouldBe(1, "plugin/README.md should carry exactly one marketplace `ref` to keep current.");
+
+        var message = $"plugin/README.md pins {refs[0]} and the solution is at {SolutionVersion} — "
+            + "a release bumps Directory.Build.props, plugin.json and this snippet together (§12).";
+
+        refs[0].ShouldBe($"v{SolutionVersion}", message);
     }
 
     [Fact]
@@ -208,6 +227,13 @@ public sealed class PluginManifestTests
 
     /// <summary>The version of the built Core assembly, resolved the way <c>init</c> resolves its pin.</summary>
     private static string AssemblyVersion { get; } = ReadAssemblyVersion();
+
+    /// <summary>
+    /// The <c>ref</c> of the git-subdir marketplace entry in <c>plugin/README.md</c>. Linear, and it runs
+    /// over a file in this repository, but it carries a timeout anyway (MA0009).
+    /// </summary>
+    [GeneratedRegex("\"ref\":\\s*\"(?<tag>[^\"]+)\"", RegexOptions.ExplicitCapture, 1000)]
+    private static partial Regex ReleaseRef();
 
     private static JsonObject Manifest() => Read(ManifestPath);
 

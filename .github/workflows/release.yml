@@ -1,0 +1,162 @@
+# DocuMe — release (PLAN.md §12). One tag `vX.Y.Z` releases CLI, Core and the plugin off a single
+# version: tag → verify → build → test → pack → push NuGet → GitHub Release.
+#
+# HOW TO RELEASE. Three files carry the version and all three are bumped in one commit on `main`:
+#
+#   1. Directory.Build.props   <Version>X.Y.Z</Version>        — the packages
+#   2. plugin/.claude-plugin/plugin.json   "version": "X.Y.Z"  — the plugin Claude Code caches
+#   3. plugin/README.md        the git-subdir "ref": "vX.Y.Z"  — the Moberg marketplace entry
+#
+# then `git tag vX.Y.Z && git push origin vX.Y.Z`. The first step below refuses the release if the
+# tag and those three disagree, which is the whole point of having it: a plugin pinned to a version
+# that was never released is one Claude Code keeps its cached copy of forever, and it fails silently.
+# `PluginManifestTests` catches (1) vs (2) at desk time; only the tag can be checked here.
+#
+# WHAT THIS WORKFLOW CANNOT DO: update the Moberg marketplace. That marketplace is a different
+# repository, so §12's "plugin marketplace ref update" is a copy-paste — the release notes carry the
+# exact entry, with `ref` already set to this tag. See plugin/README.md.
+name: release
+
+on:
+  push:
+    # Tags only, and deliberately no `branches:` — a release workflow that also fired on push to main
+    # would publish a package from every commit. CI (ci.yml) is the one that runs on branches, and it
+    # does not run for tags, so the build and test below are not a duplicate of it.
+    tags:
+      - 'v*.*.*'
+
+# Two tags pushed close together would otherwise race for the same package version. Not
+# cancel-in-progress: a run that has already pushed to the feed must finish and cut its release.
+concurrency:
+  group: docume-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create the GitHub Release (and read the repo)
+  packages: write # push to GitHub Packages
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # GitHub Packages, per §12 ("nuget.org when opened up" — add a second push step then; the
+      # packages themselves need no change). No new secret: GITHUB_TOKEN is enough for the owner's
+      # own feed, which is why this is the default and not nuget.org.
+      FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+      PACKAGES: ${{ github.workspace }}/artifacts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # First, and before anything expensive: the failure this catches is a half-bumped release, and
+      # every later step would happily succeed on one.
+      - name: Verify the tag is the single version
+        id: version
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          version="${tag#v}"
+
+          props=$(sed -n 's|.*<Version>\([^<]*\)</Version>.*|\1|p' Directory.Build.props)
+          manifest=$(jq -r '.version' plugin/.claude-plugin/plugin.json)
+          # The `ref` of the git-subdir entry in plugin/README.md — the copy-pasteable Moberg
+          # marketplace entry. Nothing reads it at build time, so a stale one is invisible until
+          # somebody pastes it and installs a version-old plugin.
+          readme=$(sed -n 's|.*"ref": *"\([^"]*\)".*|\1|p' plugin/README.md)
+          readme=${readme%%$'\n'*} # first match only; piping to `head` would race pipefail
+
+          ok=1
+          [ "$props" = "$version" ] || { echo "::error::Directory.Build.props <Version> is $props, tag is $tag."; ok=0; }
+          [ "$manifest" = "$version" ] || { echo "::error::plugin.json version is $manifest, tag is $tag."; ok=0; }
+          [ "$readme" = "$tag" ] || { echo "::error::plugin/README.md marketplace ref is $readme, tag is $tag."; ok=0; }
+
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::Bump all three to $version, commit, delete and re-push the tag."
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore
+        run: dotnet restore DocuMe.slnx
+
+      - name: Build
+        run: dotnet build DocuMe.slnx --configuration Release --no-restore
+
+      # Before the pack, never after: a package that is already on the feed cannot be unpublished,
+      # so the tests are the last point at which a bad release is still cheap (rule §8.3 in CI form).
+      # xUnit v3 on the Microsoft Testing Platform (global.json test.runner): in MTP mode
+      # `dotnet test` takes the solution via --solution, not positionally.
+      - name: Test
+        run: dotnet test --solution DocuMe.slnx --configuration Release --no-build --verbosity normal
+
+      # Only DocuMe.Core and DocuMe.Cli are packable; both test projects set IsPackable=false, so the
+      # glob below cannot pick up a test assembly by accident.
+      - name: Pack
+        run: dotnet pack DocuMe.slnx --configuration Release --no-build --output "$PACKAGES"
+
+      # --skip-duplicate so a re-run after a failed release step is a no-op here rather than a 409.
+      - name: Push to GitHub Packages
+        run: dotnet nuget push "$PACKAGES/*.nupkg" --source "$FEED" --api-key "$GH_TOKEN" --skip-duplicate
+
+      - name: Cut the GitHub Release
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes.md"
+
+          # The install story of this exact version, written into the release rather than left in a
+          # README that describes whatever `main` currently is.
+          cat > "$notes" <<EOF
+          ## Install
+
+          \`\`\`
+          dotnet tool install --global DocuMe.Cli --version $VERSION --add-source $FEED
+          \`\`\`
+
+          GitHub Packages authenticates every read, including public ones: the feed needs a PAT with
+          \`read:packages\` in your NuGet config before that line works.
+
+          Or, pinned per repository (what \`docume init\` scaffolds): \`.config/dotnet-tools.json\` +
+          \`dotnet tool restore\`.
+
+          ## Claude Code plugin
+
+          \`\`\`
+          /plugin marketplace add ${GITHUB_REPOSITORY}
+          /plugin install docume@docume
+          \`\`\`
+
+          To publish this version through the Moberg marketplace, add or update this entry in that
+          repository's \`.claude-plugin/marketplace.json\` — \`ref\` is the only field a release changes:
+
+          \`\`\`json
+          {
+            "name": "docume",
+            "source": {
+              "source": "git-subdir",
+              "url": "https://github.com/${GITHUB_REPOSITORY}.git",
+              "path": "plugin",
+              "ref": "$TAG"
+            },
+            "category": "documentation"
+          }
+          \`\`\`
+          EOF
+
+          # --generate-notes appends the commit log below the notes above; --verify-tag refuses to
+          # invent a tag if this ever runs somewhere the tag does not exist.
+          gh release create "$TAG" "$PACKAGES"/*.nupkg \
+            --title "$TAG" \
+            --notes-file "$notes" \
+            --generate-notes \
+            --verify-tag
+
+          cat "$notes" >> "$GITHUB_STEP_SUMMARY"
