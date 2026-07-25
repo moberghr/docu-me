@@ -11,9 +11,19 @@ sources:
 Seven commands. Three of them can write to Confluence — `publish`, `dashboard`, and `sync --reply` —
 and `drift --mark` writes labels. Everything else is read-only.
 
+The root command carries nothing but `--help` and `--version`; every option below belongs to one
+command. A bare invocation prints the command list rather than exiting silently:
+
 ```bash
-dotnet tool run docume --help
+dotnet tool run docume                    # the whole command list
+dotnet tool run docume -- drift --help    # one command's options
 ```
+
+> [!NOTE]
+> `dotnet tool run` keeps `-?`, `-h` and `--help` for itself, so `dotnet tool run docume --help`
+> prints the SDK's help for `dotnet tool run` and never reaches DocuMe. Put `--` ahead of the
+> arguments to forward them through. `--version` is not one of the wrapper's options and needs no
+> `--`: it reports the package version and the commit it was built from.
 
 ## Which commands write
 
