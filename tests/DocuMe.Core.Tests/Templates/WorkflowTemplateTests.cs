@@ -1,4 +1,5 @@
 using DocuMe.Core.Drift;
+using DocuMe.Core.Feedback;
 using Shouldly;
 using YamlDotNet.RepresentationModel;
 
@@ -35,6 +36,7 @@ public sealed class WorkflowTemplateTests
         "docs-publish.yml",
         "docs-sync.yml",
         "docs-refresh.yml",
+        "docs-feedback.yml",
     ];
 
     /// <summary>The templates that talk to Confluence, and so need both credential variables.</summary>
@@ -44,6 +46,18 @@ public sealed class WorkflowTemplateTests
         "docs-publish.yml",
         "docs-sync.yml",
     ];
+
+    /// <summary>
+    /// The templates that run a model (§11's headless <c>claude -p</c>). Their output is a PR, so none of
+    /// them writes to Confluence and none of them holds a credential.
+    /// </summary>
+    private static readonly string[] ModelDriven = ["docs-refresh.yml", "docs-feedback.yml"];
+
+    /// <summary>
+    /// The templates whose only <c>docume</c> invocation happens inside the skill they run, so the literal
+    /// command line is not in the yaml.
+    /// </summary>
+    private static readonly string[] SkillDriven = ["docs-feedback.yml"];
 
     private const string CredentialPrefix = "DOCUME_CONFLUENCE_";
     private const string ToolRestore = "dotnet tool restore";
@@ -94,8 +108,17 @@ public sealed class WorkflowTemplateTests
             var restore = text.IndexOf(ToolRestore, StringComparison.Ordinal);
             var run = text.IndexOf(ToolRun, StringComparison.Ordinal);
 
+            // Asserted for every template including the skill-driven one, where it matters more rather
+            // than less: docs-feedback.yml never names the CLI, and this restore is the only thing making
+            // the `docume status --offline` the skill runs resolve to the version §12 pinned.
+            restore.ShouldBeGreaterThan(-1, $"{name} never restores the pinned manifest (§12).");
+
+            if (SkillDriven.Contains(name))
+            {
+                continue;
+            }
+
             run.ShouldBeGreaterThan(-1, $"{name} never invokes the tool.");
-            restore.ShouldBeGreaterThan(-1, $"{name} runs docume without `{ToolRestore}` (§12).");
             restore.ShouldBeLessThan(run, $"{name} runs docume before restoring the manifest (§12).");
         }
     }
@@ -194,53 +217,101 @@ public sealed class WorkflowTemplateTests
     }
 
     [Fact]
-    public void The_refresh_template_keeps_the_permission_gate_on_its_model_run()
+    public void Every_model_run_keeps_its_permission_gate()
     {
-        const string name = "docs-refresh.yml";
-        var runnable = Runnable(name).ToList();
+        foreach (var name in ModelDriven)
+        {
+            var runnable = Runnable(name).ToList();
 
-        // §11's headless invocation is `claude -p "/docs-refresh" --permission-mode acceptEdits`. The
-        // flag is the assertion, not the mode: this is the one template that hands an unattended model a
-        // token that can push branches and open PRs, and `--dangerously-skip-permissions` would remove
-        // the only thing standing between the two. A template is the worst place to lose that, because
-        // whoever copies it will not re-derive why it was there.
-        var text = string.Join('\n', runnable);
+            // §11's headless invocation is `claude -p "/docs-refresh" --permission-mode acceptEdits`. The
+            // flag is the assertion, not the mode: these are the templates that hand an unattended model a
+            // token that can push branches and open PRs, and `--dangerously-skip-permissions` would remove
+            // the only thing standing between the two. A template is the worst place to lose that, because
+            // whoever copies it will not re-derive why it was there. It matters most in docs-feedback.yml,
+            // whose input is text a reviewer wrote in Confluence (rule §1.3).
+            var text = string.Join('\n', runnable);
 
-        text.ShouldContain("--permission-mode", customMessage: $"{name} runs a model with no permission mode (§11).");
-        text.ShouldNotContain(
-            "--dangerously-skip-permissions",
-            customMessage: $"{name}: never in a template — this job can push branches and open PRs.");
+            text.ShouldContain("--permission-mode", customMessage: $"{name} runs a model with no permission mode (§11).");
+            text.ShouldNotContain(
+                "--dangerously-skip-permissions",
+                customMessage: $"{name}: never in a template — this job can push branches and open PRs.");
 
-        // Rule §1.1 again, for the key this template alone carries.
-        var apiKey = runnable
-            .Where(line => line.Contains("ANTHROPIC_API_KEY", StringComparison.Ordinal))
-            .Where(line => line.Contains(':', StringComparison.Ordinal))
-            .ToList();
+            // Rule §1.1 again, for the key only these templates carry.
+            var apiKey = runnable
+                .Where(line => line.Contains("ANTHROPIC_API_KEY", StringComparison.Ordinal))
+                .Where(line => line.Contains(':', StringComparison.Ordinal))
+                .ToList();
 
-        apiKey.ShouldNotBeEmpty($"{name} runs a model without an API key.");
-        apiKey.ShouldAllBe(
-            line => line.Contains("secrets.", StringComparison.Ordinal),
-            $"{name}: the API key must come from `${{{{ secrets.… }}}}`.");
+            apiKey.ShouldNotBeEmpty($"{name} runs a model without an API key.");
+            apiKey.ShouldAllBe(
+                line => line.Contains("secrets.", StringComparison.Ordinal),
+                $"{name}: the API key must come from `${{{{ secrets.… }}}}`.");
+        }
     }
 
     [Fact]
-    public void The_refresh_template_neither_publishes_nor_holds_a_Confluence_credential()
+    public void No_model_run_writes_to_Confluence_or_holds_a_credential()
     {
-        // Rule §0.4 as a file assertion. The refresh skill's output is a PR; publishing happens later,
-        // behind a human's merge, in docs-publish.yml. So the nightly unattended model run has no reason
-        // to hold the publishing token — and once it holds none, a run that tried to publish anyway
-        // fails on credentials rather than writing to Confluence.
-        var text = Text("docs-refresh.yml");
+        foreach (var name in ModelDriven)
+        {
+            // Rule §0.4 as a file assertion. A skill's output is a PR; every Confluence write happens
+            // later, behind a human's merge, in docs-publish.yml. So an unattended model run has no reason
+            // to hold the publishing token — and once it holds none, a run that tried to write anyway
+            // fails on credentials rather than reaching a space.
+            Text(name).ShouldNotContain(
+                CredentialPrefix,
+                customMessage: $"{name} writes nothing to Confluence — keep the token out of it.");
 
-        text.ShouldNotContain(
-            CredentialPrefix,
-            customMessage: "The refresh job publishes nothing — keep the Confluence token out of it.");
+            // `publish` and `sync --reply` are the two writes these jobs could plausibly reach for, and
+            // both would be wrong here for the same reason: the fix is still sitting in an unmerged branch.
+            // A reply saying "fixed in the latest version" before the merge tells a reviewer something
+            // untrue (§9 step 5).
+            var writes = Runnable(name)
+                .Where(line => line.Contains("docume publish", StringComparison.Ordinal)
+                    || line.Contains("docume sync", StringComparison.Ordinal))
+                .ToList();
 
-        var publishes = Runnable("docs-refresh.yml")
-            .Where(line => line.Contains("docume publish", StringComparison.Ordinal))
+            writes.ShouldBeEmpty(
+                $"{name} opens a PR; docs-publish.yml publishes it and answers the reviewers after the "
+                    + "merge (§9 step 5, §10).");
+        }
+    }
+
+    [Fact]
+    public void The_feedback_template_triggers_on_the_inbox_it_triages()
+    {
+        const string name = "docs-feedback.yml";
+        var text = Text(name);
+
+        // §9's work list is inbox items with `status: new`, and they arrive on the default branch when the
+        // docs/sync PR merges. That push is the trigger, which is what keeps the model run tied to there
+        // being feedback rather than to a clock — and a path filter pointing anywhere else would leave the
+        // job silently never firing, the failure mode a green check cannot show.
+        text.ShouldContain(
+            FeedbackInbox.RelativeDirectory,
+            customMessage: $"{name} must watch the inbox directory (§5.4).");
+
+        var paths = Mapping(Mapping(Root(name), "on"), "push").Children
+            .Any(child => IsKey(child.Key, "paths"));
+
+        paths.ShouldBeTrue($"{name} must filter its push trigger to the inbox path (§9).");
+
+        // The precheck is the reason this template is cheap enough to fire on every wiki push: `status`
+        // is the field §5.4 defines and FeedbackStatus.New is the one value ingestion writes, so a
+        // template counting anything else would run a model over an inbox with nothing new in it.
+        var counts = Runnable(name)
+            .Where(line => line.Contains(".status", StringComparison.Ordinal))
             .ToList();
 
-        publishes.ShouldBeEmpty("A refresh opens a PR; docs-publish.yml publishes it after merge (§10).");
+        counts.ShouldNotBeEmpty($"{name} must count untriaged items before running a model (§9 step 1).");
+
+        // The comparison itself, not the word anywhere in the file: the step that says "no inbox item has
+        // status 'new'" out loud would otherwise satisfy this while the gate above it counted something
+        // else entirely. Coupled to the shell spelling on purpose — it is the only place the template
+        // decides what untriaged means.
+        Runnable(name).ShouldContain(
+            line => line.Contains($"\"$status\" = '{FeedbackStatus.New}'", StringComparison.Ordinal),
+            $"{name} must gate on status '{FeedbackStatus.New}' — the one status ingestion writes (§5.4).");
     }
 
     [Fact]

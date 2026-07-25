@@ -1,0 +1,193 @@
+# DocuMe — triage the feedback inbox via headless Claude (PLAN.md §9, §11).
+#
+# What it does: when untriaged items are sitting in `_meta/feedback/inbox/`, runs the `/docs-feedback` skill
+# to verify each reviewer's claim against the code, fix the pages whose claims hold, and open a
+# `docs/feedback-<date>` PR carrying the fixes, the triage verdicts and the archive moves. Merging that PR
+# republishes the corrected pages through docs-publish.yml, which is also what answers the reviewers
+# (`docume sync --reply`, §9 step 5) — a reply is only true once the fix is live.
+#
+# The trigger is the inbox itself. docs-sync.yml ingests comments and opens the `docs/sync` PR; merging it
+# is what makes new items appear on the default branch, and that push lands here. So the model runs when
+# there is feedback and not on a clock. Two consequences worth knowing:
+#   * Merging this job's own PR fires it again (the archive moves are under the same path). The precheck
+#     below finds nothing untriaged and it costs no tokens, so the loop closes itself.
+#   * Nothing retries a run that ended without a PR. If you would rather have a safety net, add a
+#     `schedule:` block — the precheck makes an idle night free.
+#
+# Like docs-refresh.yml, this is a model run, so it costs money per run; and like it, it holds NO Confluence
+# credentials. Everything here is local: reading inbox items, reading code, `docume status --offline`, and a
+# PR. The unsupervised model run never has the publishing token in its environment (rule §0.4: skills output
+# PRs, only the CLI writes to Confluence), which is also why it cannot post the reply itself.
+#
+# EDIT BEFORE USE:
+#   * ANTHROPIC_API_KEY must exist as a repository secret.
+#   * `branches:` must name your default branch, and `paths:` your wiki root if it is not docs/wiki.
+#   * The plugin step must point at the DocuMe plugin your team installs — see the comment on it.
+name: docs-feedback
+
+on:
+  push:
+    branches: [main] # <- your default branch
+    paths:
+      - 'docs/wiki/_meta/feedback/inbox/**'
+  workflow_dispatch:
+
+# Its own group, not docume-state: this job writes no state file and pushes only to its own
+# `docs/feedback-<date>` branch. Not cancel-in-progress — a half-finished triage should finish and open its
+# PR rather than leave verified work in a runner nobody can read.
+concurrency:
+  group: docume-feedback
+  cancel-in-progress: false
+
+# The skill pushes a branch and opens a PR; it never pushes to the default branch (§9's CI posture,
+# rule §1.5).
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  feedback:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BRANCHES_BEFORE: ${{ runner.temp }}/docume-feedback-branches
+    steps:
+      # No fetch-depth: 0, unlike docs-refresh.yml. That job diffs from an arbitrary older baseline; this
+      # one verifies claims against the code as it is now, which the skill is explicitly told to read at
+      # HEAD rather than from a diff. A shallow clone is the whole of what it needs.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # §12: consumers pin the tool version in .config/dotnet-tools.json, so every workflow restores the
+      # manifest instead of installing a floating latest. The skill runs `docume status --offline` as its
+      # pre-PR check.
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Locate the feedback inbox
+        id: paths
+        run: |
+          set -euo pipefail
+          root=$(jq -r '.wiki.root // "docs/wiki"' docume.json)
+          echo "inbox=$root/_meta/feedback/inbox" >> "$GITHUB_OUTPUT"
+
+      # The cheap half, and the gate on the expensive one: `status: new` is what §9 step 1 defines as the
+      # work list, and counting it is a jq read per file.
+      #
+      # An item that will not parse counts as work rather than as nothing. It is a committed, hand-editable
+      # file (§5.4), so a typo in one is realistic — and the skill reports it in the PR body, which is how a
+      # human finds out. Treating it as "no feedback" would drop a reviewer's comment silently, which is the
+      # one outcome this whole lifecycle is built to avoid.
+      - name: Count untriaged feedback
+        id: inbox
+        run: |
+          set -euo pipefail
+          inbox='${{ steps.paths.outputs.inbox }}'
+          new=0
+          unreadable=0
+          # An inbox that does not exist yet leaves the glob unexpanded, which `-e` filters out; a repo
+          # whose pages have drawn no comments is the ordinary case, not an error.
+          for item in "$inbox"/*.json; do
+            [ -e "$item" ] || continue
+            if status=$(jq -r '.status // empty' "$item" 2>/dev/null); then
+              if [ "$status" = 'new' ]; then new=$((new + 1)); fi
+            else
+              unreadable=$((unreadable + 1))
+              echo "::warning title=DocuMe::$item is not readable JSON. /docs-feedback will report it in \
+              the PR body; fix it by hand or delete it."
+            fi
+          done
+          if [ $((new + unreadable)) -gt 0 ]; then work=true; else work=false; fi
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          echo "work=$work" >> "$GITHUB_OUTPUT"
+
+      - name: Nothing to triage
+        if: steps.inbox.outputs.work != 'true'
+        run: |
+          echo "::notice title=DocuMe::No inbox item has status 'new'. No model run, no PR."
+
+      # Node is here for the Claude Code CLI, not for DocuMe.
+      - name: Set up Node
+        if: steps.inbox.outputs.work == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Pin this to an exact version once you have picked one, for the reason docs-refresh.yml gives: a
+      # floating `latest` in an unattended job means the thing driving your repo's write token can change
+      # under you between runs.
+      - name: Install Claude Code
+        if: steps.inbox.outputs.work == 'true'
+        run: npm install -g @anthropic-ai/claude-code@latest
+
+      # Where the skill comes from. EDIT BEFORE USE: pin `ref:` to the DocuMe release your
+      # .config/dotnet-tools.json pins the CLI to. §12 ships CLI, library and plugin under one version, so a
+      # matching tag is the entire compatibility story between the skill and the commands it runs.
+      #
+      # A repo that would rather vendor the skill can delete this step and the --plugin-dir flag below, and
+      # keep a copy at .claude/skills/docs-feedback/SKILL.md instead: Claude Code finds project skills
+      # without being told.
+      #
+      # While docu-me is private, add `token: ${{ secrets.DOCUME_PLUGIN_TOKEN }}` here — the default
+      # GITHUB_TOKEN is scoped to this repository and cannot read another one.
+      - name: Fetch the DocuMe plugin
+        if: steps.inbox.outputs.work == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: moberg/docu-me
+          ref: main
+          path: .docume-plugin
+          sparse-checkout: plugin
+
+      - name: Prepare the workspace
+        if: steps.inbox.outputs.work == 'true'
+        run: |
+          set -euo pipefail
+          # The commit the skill makes needs an identity, and a runner has none by default.
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          # The plugin checkout lands inside the workspace, so keep it out of the skill's `git status` — and
+          # out of the `git mv` it runs against the inbox. info/exclude rather than .gitignore: it is this
+          # runner's business, not the repo's.
+          echo '/.docume-plugin/' >> .git/info/exclude
+          git ls-remote --heads origin 'refs/heads/docs/feedback-*' > "$BRANCHES_BEFORE"
+
+      # §11's headless invocation. The flags carry the same decisions docs-refresh.yml explains:
+      # --plugin-dir loads the plugin for this session only, --permission-mode acceptEdits lets the skill
+      # write the pages and item files it was asked to write, and --allowed-tools grants Bash because
+      # acceptEdits does not, and Bash is the skill's only path to `docume`, `git mv` and `gh`.
+      #
+      # `--dangerously-skip-permissions` is deliberately absent. This job holds a token that can push
+      # branches and open PRs, and its input is untrusted text a reviewer wrote in Confluence (rule §1.3).
+      # Of every job in this template set, this is the one where the permission gate matters most.
+      - name: Triage the feedback
+        if: steps.inbox.outputs.work == 'true'
+        run: |
+          set -euo pipefail
+          echo "::notice title=DocuMe::${{ steps.inbox.outputs.new }} untriaged inbox item(s) — running \
+          /docs-feedback."
+          claude -p '/docs-feedback' \
+            --plugin-dir "$GITHUB_WORKSPACE/.docume-plugin/plugin" \
+            --permission-mode acceptEdits \
+            --allowed-tools 'Bash,Read,Write,Edit,Glob,Grep'
+
+      # A model run that exits 0 having done nothing is the failure mode this job actually has, and it would
+      # otherwise read as a green check. Items were waiting, so a feedback branch is the expected outcome;
+      # its absence gets said out loud rather than passed over.
+      - name: Confirm a feedback branch appeared
+        if: steps.inbox.outputs.work == 'true'
+        run: |
+          set -euo pipefail
+          git ls-remote --heads origin 'refs/heads/docs/feedback-*' > "$RUNNER_TEMP/branches-after"
+          if diff -q "$BRANCHES_BEFORE" "$RUNNER_TEMP/branches-after" >/dev/null; then
+            echo "::warning title=DocuMe::${{ steps.inbox.outputs.new }} item(s) were waiting but no \
+            docs/feedback-* branch was pushed. Read the step log above: the skill stops without a PR when \
+            it cannot verify a claim, and it reports why."
+            exit 0
+          fi
+          echo "::notice title=DocuMe::Feedback branch(es) on origin:"
+          grep -o 'refs/heads/docs/feedback-.*' "$RUNNER_TEMP/branches-after" || true

@@ -1,3 +1,4 @@
+using DocuMe.Core.Feedback;
 using Shouldly;
 using YamlDotNet.RepresentationModel;
 
@@ -31,8 +32,19 @@ namespace DocuMe.Core.Tests.Plugin;
 /// </remarks>
 public sealed class SkillContractTests
 {
-    /// <summary>The skills §11 names. <c>docs-feedback</c> lands in M4, <c>docs-loop</c> in M6.</summary>
-    private static readonly string[] Skills = ["docs-refresh"];
+    /// <summary>The skills §11 names. <c>docs-loop</c> lands in M6.</summary>
+    private static readonly string[] Skills = ["docs-refresh", "docs-feedback"];
+
+    /// <summary>
+    /// The branch each skill's PR is opened on (rule §8.4, PLAN.md §9/§10). Asserted because it is a
+    /// convention shared with the workflow templates, which grep for <c>docs/refresh-*</c> and
+    /// <c>docs/feedback-*</c> to tell a run that did nothing from one that opened a PR.
+    /// </summary>
+    private static readonly Dictionary<string, string> BranchPrefixes = new(StringComparer.Ordinal)
+    {
+        ["docs-refresh"] = "docs/refresh-",
+        ["docs-feedback"] = "docs/feedback-",
+    };
 
     /// <summary>
     /// URL fragments that only appear in a direct Confluence call. Not <c>curl</c>: the refresh skill's
@@ -126,11 +138,114 @@ public sealed class SkillContractTests
         }
     }
 
+    [Fact]
+    public void No_skill_writes_to_Confluence_from_its_own_commands()
+    {
+        foreach (var skill in Skills)
+        {
+            // Read from the bash blocks rather than from the whole file, for the reason RestPaths skips
+            // `curl`: both of these skills *document* the writes that follow their PR — a refresh explains
+            // that merging republishes, a feedback run explains that `sync --reply` answers the reviewer
+            // afterwards — and a grep that punished the explanation would push the next editor to drop it.
+            // What is asserted is the commands, where the mistake would be silent and consequential: a
+            // reply posted from the skill's own run says "fixed in the latest version" while the fix sits
+            // in an unmerged branch (§9 step 5).
+            var commands = string.Join('\n', BashCommands(skill));
+
+            commands.ShouldNotContain(
+                "docume publish",
+                Case.Insensitive,
+                $"{skill}/SKILL.md publishes — a skill's output is a PR (rule §0.4, §1.5).");
+            commands.ShouldNotContain(
+                "--reply",
+                Case.Insensitive,
+                $"{skill}/SKILL.md posts replies — only the CLI does, after the merge (§9 step 5).");
+        }
+    }
+
+    [Fact]
+    public void Every_skill_names_the_branch_its_PR_is_opened_on()
+    {
+        foreach (var (skill, prefix) in BranchPrefixes)
+        {
+            // Rule §8.4's slash grouping, and the coupling that makes it load-bearing: each workflow
+            // template confirms its run did something by listing `refs/heads/<prefix>*` on origin. A skill
+            // that pushed `feedback/2026-08-02` would still open a perfectly good PR, and the job that ran
+            // it would still warn that nothing happened.
+            Text(skill).ShouldContain(
+                prefix,
+                customMessage: $"{skill}/SKILL.md must open its PR on a {prefix}<date> branch (rule §8.4).");
+        }
+    }
+
+    [Fact]
+    public void The_feedback_skill_spells_the_statuses_the_CLI_reads()
+    {
+        var text = Text("docs-feedback");
+
+        // The coupling this test exists for. §9 step 3's triage writes `status` into an inbox item and
+        // `docume sync --reply` decides from it: FeedbackReplyText.IsTriaged answers false for anything it
+        // does not recognise, deliberately, so that an unknown value never puts a wrong sentence under a
+        // reviewer's comment. The consequence is that a skill writing `resolved` instead of `fixed` fails
+        // nothing, changes no page, and leaves the reviewer permanently unanswered.
+        string[] statuses =
+        [
+            FeedbackStatus.New,
+            FeedbackStatus.Fixed,
+            FeedbackStatus.Rejected,
+            FeedbackStatus.Question,
+        ];
+
+        foreach (var status in statuses)
+        {
+            text.ShouldContain(
+                status,
+                Case.Sensitive,
+                $"docs-feedback/SKILL.md must spell the status '{status}' as the CLI reads it (§5.4).");
+        }
+
+        // The other half of the same coupling, in the other direction: `repliedAt` is the CLI's field and
+        // the entire double-reply guard, so the skill has to be told not to write it. Stamped by the skill,
+        // the reply pass skips the item as already answered and nobody ever replies.
+        text.ShouldContain(
+            "repliedAt",
+            customMessage: "docs-feedback/SKILL.md must say who owns `repliedAt` (§9 step 5).");
+    }
+
     private static string Directory { get; } = Locate();
 
     private static string SkillFile(string skill) => Path.Combine(Directory, skill, "SKILL.md");
 
     private static string Text(string skill) => File.ReadAllText(SkillFile(skill));
+
+    /// <summary>
+    /// The lines inside <paramref name="skill"/>'s <c>bash</c> fences: the commands the skill runs, as
+    /// opposed to the prose around them.
+    /// </summary>
+    /// <remarks>
+    /// A fence closes whatever is open and opens only when it names bash, so the <c>markdown</c> block
+    /// holding a PR-body template — and the <c>json</c> block nested inside it — never read as commands.
+    /// That nesting is why this is a small state machine rather than a regex over the file.
+    /// </remarks>
+    private static IEnumerable<string> BashCommands(string skill)
+    {
+        var inside = false;
+
+        foreach (var line in Text(skill).Split('\n'))
+        {
+            var trimmed = line.TrimStart();
+            if (trimmed.StartsWith("```", StringComparison.Ordinal))
+            {
+                inside = !inside && trimmed.Contains("bash", StringComparison.OrdinalIgnoreCase);
+                continue;
+            }
+
+            if (inside)
+            {
+                yield return line;
+            }
+        }
+    }
 
     /// <summary>
     /// The YAML block between the opening and closing <c>---</c> of <paramref name="skill"/>'s SKILL.md.
