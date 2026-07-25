@@ -50,9 +50,36 @@ jobs:
         id: baseline
         run: |
           set -euo pipefail
-          root=$(jq -r '.wiki.root // "docs/wiki"' docume.json)
+
+          if [ ! -f docume.json ]; then
+            echo "::error title=DocuMe::No docume.json in the repository root. This workflow reads the wiki root from it. Run \`docume init\` (or \`docume init --adopt\` over an existing wiki) and commit the result."
+            exit 1
+          fi
+
+          # `if !` rather than a bare assignment, so `set -e` does not kill the step before the
+          # annotation is written. jq's own parse error is already on stderr above it.
+          if ! root=$(jq -r '.wiki.root // "docs/wiki"' docume.json); then
+            echo "::error title=DocuMe::docume.json is present but jq could not read it (see the error above). Every path this workflow uses comes out of it, so nothing can run until it parses."
+            exit 1
+          fi
+
           state="$root/_meta/state.json"
-          sha=$(jq -r '.baselineSha // empty' "$state")
+
+          # A state file that is not there yet means what an empty baselineSha means: the wiki has never
+          # been generated. The step below says so and lets the job pass — but it was UNREACHABLE in this
+          # case. Unlike docs-publish.yml, this is a bare assignment, which `set -e` does see, so jq's
+          # exit 2 killed the step and the whole log was `Could not open file .../state.json`. The one
+          # situation the warning was written for was the one situation that failed instead.
+          #
+          # A state file that EXISTS and will not parse stays loud: that is a broken file, not an absent
+          # one, and silently reading it as "no baseline" would turn a corrupt state into a quiet skip.
+          sha=''
+          if [ -f "$state" ]; then
+            if ! sha=$(jq -r '.baselineSha // empty' "$state"); then
+              echo "::error title=DocuMe::$state is present but jq could not read it (see the error above). It is machine-owned (§5.3) — if it was hand-edited, revert it; the docs/sync PR carries the good copy."
+              exit 1
+            fi
+          fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       # Not-yet-configured, not a failure: baselineSha is stamped by the generation pass

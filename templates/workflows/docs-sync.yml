@@ -53,11 +53,26 @@ jobs:
       - name: Restore tools
         run: dotnet tool restore
 
+      # Guarded as in docs-publish.yml, and on a cron job the guard earns more: nobody is watching when
+      # this runs, so a red step whose entire log is `jq: error: Could not open file docume.json` is a
+      # message read hours later by someone with no idea which of six workflows is complaining.
       - name: Locate the state file and the feedback inbox
         id: paths
         run: |
           set -euo pipefail
-          root=$(jq -r '.wiki.root // "docs/wiki"' docume.json)
+
+          if [ ! -f docume.json ]; then
+            echo "::error title=DocuMe::No docume.json in the repository root. This workflow reads the wiki root from it. Run \`docume init\` (or \`docume init --adopt\` over an existing wiki) and commit the result."
+            exit 1
+          fi
+
+          if ! root=$(jq -r '.wiki.root // "docs/wiki"' docume.json); then
+            echo "::error title=DocuMe::docume.json is present but jq could not read it (see the error above). Every path this workflow uses comes out of it, so nothing can run until it parses."
+            exit 1
+          fi
+
+          # No state read here, unlike docs-publish.yml: a bare `sync` needs no sha. The state file is
+          # named only so the PR step can carry it, and `docume sync` creates it when it is not there.
           echo "state=$root/_meta/state.json" >> "$GITHUB_OUTPUT"
           echo "inbox=$root/_meta/feedback/inbox" >> "$GITHUB_OUTPUT"
 

@@ -52,14 +52,49 @@ jobs:
       - name: Restore tools
         run: dotnet tool restore
 
+      # Every path this job uses is derived here, so this step is also where a repo that is not set up
+      # says so. Both guards below replace a bare `jq:` line — the whole log a consumer used to get —
+      # with a message naming the command that fixes it.
       - name: Locate the state file and the feedback directories
         id: paths
         run: |
           set -euo pipefail
-          root=$(jq -r '.wiki.root // "docs/wiki"' docume.json)
+
+          # Not a jq problem: a repo holding these workflows without the config they read is what
+          # copying them in by hand rather than through `docume init` leaves behind.
+          if [ ! -f docume.json ]; then
+            echo "::error title=DocuMe::No docume.json in the repository root. This workflow reads the wiki root from it. Run \`docume init\` (or \`docume init --adopt\` over an existing wiki) and commit the result."
+            exit 1
+          fi
+
+          # `if !` rather than a bare assignment, so `set -e` does not kill the step before the
+          # annotation is written. jq's own parse error is already on stderr above it.
+          if ! root=$(jq -r '.wiki.root // "docs/wiki"' docume.json); then
+            echo "::error title=DocuMe::docume.json is present but jq could not read it (see the error above). Every path this workflow uses comes out of it, so nothing can run until it parses."
+            exit 1
+          fi
+
           state="$root/_meta/state.json"
           echo "state=$state" >> "$GITHUB_OUTPUT"
-          echo "sha=$(jq -r '.lastPublishedSha // empty' "$state")" >> "$GITHUB_OUTPUT"
+
+          # A missing state file is the first publish from this repo, not a failure, and the step below
+          # is written for exactly that: no sha means no --changed-since to narrow with, so the whole
+          # tree is the right scope. It already behaved that way — `set -e` does not see a command
+          # substitution nested inside an argument, so jq's "Could not open file" went to stderr and the
+          # empty sha still landed. What that cost was the log: an ordinary first run carried a line
+          # that reads like a bug. A state file that EXISTS and will not parse is a different thing and
+          # stays loud, because it holds the page ids.
+          sha=''
+          if [ -f "$state" ]; then
+            if ! sha=$(jq -r '.lastPublishedSha // empty' "$state"); then
+              echo "::error title=DocuMe::$state is present but jq could not read it (see the error above). It is machine-owned (§5.3) and holds the page id of every page published from here — if it was hand-edited, revert it rather than deleting it, and the docs/sync PR carries the good copy."
+              exit 1
+            fi
+          else
+            echo "::notice title=DocuMe::No state file at $state yet — treating this as the first publish from this repository."
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
           # Both, because the reply pass reads both and stamps whichever holds the item it answered:
           # §9 step 4 archives an item in the same PR that fixes the page, so by the time step 5 runs
           # the item is usually in the archive rather than the inbox.

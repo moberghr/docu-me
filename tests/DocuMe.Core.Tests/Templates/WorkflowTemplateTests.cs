@@ -59,9 +59,25 @@ public sealed class WorkflowTemplateTests
     /// </summary>
     private static readonly string[] SkillDriven = ["docs-feedback.yml"];
 
+    /// <summary>
+    /// The templates that read <c>docume.json</c> to find the wiki root, and the job each does it in.
+    /// Five of the six: <c>docs-drift-pr.yml</c> takes its base ref from the pull-request event instead.
+    /// </summary>
+    private static readonly (string Template, string Job)[] ConfigReaders =
+    [
+        ("docs-publish.yml", "publish"),
+        ("docs-sync.yml", "sync"),
+        ("docs-drift.yml", "mark"),
+        ("docs-refresh.yml", "refresh"),
+        ("docs-feedback.yml", "feedback"),
+    ];
+
     private const string CredentialPrefix = "DOCUME_CONFLUENCE_";
     private const string ToolRestore = "dotnet tool restore";
     private const string ToolRun = "dotnet tool run docume";
+    private const string ConfigRead = "jq -r '.wiki.root // \"docs/wiki\"' docume.json";
+    private const string ConfigGuard = "if [ ! -f docume.json ]; then";
+    private const string Annotation = "::error title=DocuMe::";
 
     [Fact]
     public void Every_template_PLAN_10_names_is_present()
@@ -609,6 +625,84 @@ public sealed class WorkflowTemplateTests
 
         report.ShouldBeGreaterThan(-1, unread);
         report.ShouldBeGreaterThan(carry, $"{name} must fail the job only after the feedback is safe.");
+    }
+
+    [Fact]
+    public void A_repository_without_the_config_is_told_which_command_fixes_it()
+    {
+        foreach (var (name, job) in ConfigReaders)
+        {
+            var step = Steps(name, job).Single(s => s.Run.Contains(ConfigRead, StringComparison.Ordinal));
+
+            // The guard has to precede the read to be a guard at all. Measured before it existed: jq
+            // exited 2 and the entire step log was `jq: error: Could not open file docume.json`, which
+            // names neither DocuMe nor the command that fixes it — on a cron job, read hours later by
+            // someone with six workflows to choose between.
+            var guard = step.Run.IndexOf(ConfigGuard, StringComparison.Ordinal);
+            var read = step.Run.IndexOf(ConfigRead, StringComparison.Ordinal);
+
+            var unguarded =
+                $"{name}: the \"{step.Name}\" step reads docume.json without first checking it is there. "
+                + "A repo that copied these workflows in by hand rather than running `docume init` gets a "
+                + "bare jq error as its whole log.";
+
+            guard.ShouldBeGreaterThan(-1, unguarded);
+            guard.ShouldBeLessThan(read, unguarded);
+            step.Run.ShouldContain(Annotation, customMessage: unguarded);
+
+            // `if ! root=$(...)` rather than `root=$(...)`: under `set -e` a bare assignment whose
+            // command substitution fails kills the step before any annotation can be echoed, so a
+            // docume.json that exists but does not parse would report itself as a jq parse error and
+            // nothing else.
+            var swallowed =
+                $"{name}: the \"{step.Name}\" step must read docume.json as `if ! root=$(...)`. A bare "
+                + "assignment lets `set -e` end the step before it can say what was wrong.";
+
+            step.Run.ShouldContain($"if ! root=$({ConfigRead}); then", customMessage: swallowed);
+        }
+    }
+
+    [Fact]
+    public void A_wiki_nobody_has_generated_reaches_its_own_warning()
+    {
+        // Both templates carry a "No baseline yet" step gated on an empty sha, which exists to say
+        // calmly that the wiki has never been generated and let the job pass. It was unreachable in the
+        // clearest case of that: with no state file at all, `sha=$(jq ...)` — a bare assignment, unlike
+        // docs-publish.yml's, so `set -e` sees it — exited 2 first. The nightly refresh turned that into
+        // a red cron check every morning on a repo whose only problem was that nobody had run /docs-loop.
+        foreach (var (name, job) in new[] { ("docs-drift.yml", "mark"), ("docs-refresh.yml", "refresh") })
+        {
+            var steps = Steps(name, job);
+
+            // By id, not by searching for "baselineSha": the warning step names the field too, in the
+            // text it prints, so a text match finds two steps and the assertion below would be reading
+            // whichever came first.
+            var baseline = steps.Single(s => string.Equals(s.Id, "baseline", StringComparison.Ordinal));
+
+            var unreachable =
+                $"{name}: the \"{baseline.Name}\" step must read baselineSha only when the state file "
+                + "exists. Without the check, a repo that has never been generated fails here with a jq "
+                + "error instead of reaching the \"No baseline yet\" warning written for exactly that.";
+
+            baseline.Run.ShouldContain("if [ -f \"$state\" ]; then", customMessage: unreachable);
+            baseline.Run.ShouldContain("sha=''", customMessage: unreachable);
+
+            // A state file that EXISTS and will not parse is a broken file, not an absent one, and must
+            // stay loud: reading it as "no baseline" would turn a corrupt state into a quiet skip of the
+            // whole drift pass.
+            var quiet =
+                $"{name}: a state file that exists but will not parse must fail loudly with a DocuMe "
+                + "annotation, not fall through to the empty-baseline path.";
+
+            baseline.Run.ShouldContain("if ! sha=$(jq -r '.baselineSha // empty' \"$state\"); then", customMessage: quiet);
+            baseline.Run.ShouldContain(Annotation, customMessage: quiet);
+
+            var warning = steps.SingleOrDefault(
+                s => s.If.Contains($"steps.{baseline.Id}.outputs.sha == ''", StringComparison.Ordinal));
+
+            warning.ShouldNotBeNull(
+                $"{name} reads a baseline sha but has no step saying what an empty one means.");
+        }
     }
 
     [Fact]

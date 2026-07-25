@@ -73,9 +73,30 @@ jobs:
         id: baseline
         run: |
           set -euo pipefail
-          root=$(jq -r '.wiki.root // "docs/wiki"' docume.json)
+
+          if [ ! -f docume.json ]; then
+            echo "::error title=DocuMe::No docume.json in the repository root. This workflow reads the wiki root from it. Run \`docume init\` (or \`docume init --adopt\` over an existing wiki) and commit the result."
+            exit 1
+          fi
+
+          if ! root=$(jq -r '.wiki.root // "docs/wiki"' docume.json); then
+            echo "::error title=DocuMe::docume.json is present but jq could not read it (see the error above). Every path this workflow uses comes out of it, so nothing can run until it parses."
+            exit 1
+          fi
+
           state="$root/_meta/state.json"
-          sha=$(jq -r '.baselineSha // empty' "$state")
+
+          # Absent state file guarded as in docs-drift.yml, and it bites harder on this one: this job is
+          # nightly, so the failure it used to produce was a red cron check every morning on a repo whose
+          # only problem was that nobody had generated the wiki yet — which is precisely what the "No
+          # baseline yet" warning below exists to say calmly.
+          sha=''
+          if [ -f "$state" ]; then
+            if ! sha=$(jq -r '.baselineSha // empty' "$state"); then
+              echo "::error title=DocuMe::$state is present but jq could not read it (see the error above). It is machine-owned (§5.3) — if it was hand-edited, revert it; the docs/sync PR carries the good copy."
+              exit 1
+            fi
+          fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       # Not-yet-configured, not a failure — same as docs-drift.yml. baselineSha is stamped by the

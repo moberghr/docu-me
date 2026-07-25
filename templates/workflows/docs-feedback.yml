@@ -72,7 +72,21 @@ jobs:
         id: paths
         run: |
           set -euo pipefail
-          root=$(jq -r '.wiki.root // "docs/wiki"' docume.json)
+
+          if [ ! -f docume.json ]; then
+            echo "::error title=DocuMe::No docume.json in the repository root. This workflow reads the wiki root from it. Run \`docume init\` (or \`docume init --adopt\` over an existing wiki) and commit the result."
+            exit 1
+          fi
+
+          # `if !` rather than a bare assignment, so `set -e` does not kill the step before the
+          # annotation is written. jq's own parse error is already on stderr above it.
+          if ! root=$(jq -r '.wiki.root // "docs/wiki"' docume.json); then
+            echo "::error title=DocuMe::docume.json is present but jq could not read it (see the error above). Every path this workflow uses comes out of it, so nothing can run until it parses."
+            exit 1
+          fi
+
+          # No state read: this job counts inbox items, and an inbox that does not exist yet is handled
+          # by the unexpanded-glob guard in the step below rather than here.
           echo "inbox=$root/_meta/feedback/inbox" >> "$GITHUB_OUTPUT"
 
       # The cheap half, and the gate on the expensive one: `status: new` is what §9 step 1 defines as the
