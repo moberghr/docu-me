@@ -47,9 +47,23 @@ public sealed record PageState
     public string? FeedbackCursor { get; init; }
 }
 
+/// <summary>
+/// The two values <see cref="ApprovalState.Status"/> takes (PLAN.md §5.3). Constants rather than
+/// an enum because the state file spells them as-is and stays hand-readable; one place to compare
+/// against keeps a typo from reading as "not approved" and silently skipping invalidation.
+/// </summary>
+public static class ApprovalStatus
+{
+    /// <summary>A reviewer's <c>approved</c> label was observed on the published version.</summary>
+    public const string Approved = "approved";
+
+    /// <summary>Approval was invalidated by a content change, or never granted (§8).</summary>
+    public const string NeedsReview = "needs-review";
+}
+
 public sealed record ApprovalState
 {
-    /// <summary><c>approved</c> | <c>needs-review</c> (see PLAN.md §8).</summary>
+    /// <summary><c>approved</c> | <c>needs-review</c> (see PLAN.md §8, <see cref="ApprovalStatus"/>).</summary>
     public string? Status { get; init; }
 
     public string? ApprovedBy { get; init; }
