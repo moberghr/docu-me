@@ -27,13 +27,14 @@ namespace DocuMe.Core.Tests.Templates;
 /// </remarks>
 public sealed class WorkflowTemplateTests
 {
-    /// <summary>The four templates §14 names, by the filenames M6's <c>init</c> will scaffold.</summary>
+    /// <summary>The templates §14 names, by the filenames M6's <c>init</c> will scaffold.</summary>
     private static readonly string[] Templates =
     [
         "docs-drift.yml",
         "docs-drift-pr.yml",
         "docs-publish.yml",
         "docs-sync.yml",
+        "docs-refresh.yml",
     ];
 
     /// <summary>The templates that talk to Confluence, and so need both credential variables.</summary>
@@ -190,6 +191,56 @@ public sealed class WorkflowTemplateTests
                 "--base=",
                 customMessage: $"{name}: the option is --baseline, not --base.");
         }
+    }
+
+    [Fact]
+    public void The_refresh_template_keeps_the_permission_gate_on_its_model_run()
+    {
+        const string name = "docs-refresh.yml";
+        var runnable = Runnable(name).ToList();
+
+        // §11's headless invocation is `claude -p "/docs-refresh" --permission-mode acceptEdits`. The
+        // flag is the assertion, not the mode: this is the one template that hands an unattended model a
+        // token that can push branches and open PRs, and `--dangerously-skip-permissions` would remove
+        // the only thing standing between the two. A template is the worst place to lose that, because
+        // whoever copies it will not re-derive why it was there.
+        var text = string.Join('\n', runnable);
+
+        text.ShouldContain("--permission-mode", customMessage: $"{name} runs a model with no permission mode (§11).");
+        text.ShouldNotContain(
+            "--dangerously-skip-permissions",
+            customMessage: $"{name}: never in a template — this job can push branches and open PRs.");
+
+        // Rule §1.1 again, for the key this template alone carries.
+        var apiKey = runnable
+            .Where(line => line.Contains("ANTHROPIC_API_KEY", StringComparison.Ordinal))
+            .Where(line => line.Contains(':', StringComparison.Ordinal))
+            .ToList();
+
+        apiKey.ShouldNotBeEmpty($"{name} runs a model without an API key.");
+        apiKey.ShouldAllBe(
+            line => line.Contains("secrets.", StringComparison.Ordinal),
+            $"{name}: the API key must come from `${{{{ secrets.… }}}}`.");
+    }
+
+    [Fact]
+    public void The_refresh_template_neither_publishes_nor_holds_a_Confluence_credential()
+    {
+        // Rule §0.4 as a file assertion. The refresh skill's output is a PR; publishing happens later,
+        // behind a human's merge, in docs-publish.yml. So the nightly unattended model run has no reason
+        // to hold the publishing token — and once it holds none, a run that tried to publish anyway
+        // fails on credentials rather than writing to Confluence.
+        var text = Text("docs-refresh.yml");
+
+        text.ShouldNotContain(
+            CredentialPrefix,
+            customMessage: "The refresh job publishes nothing — keep the Confluence token out of it.");
+
+        var publishes = Runnable("docs-refresh.yml")
+            .Where(line => line.Contains("docume publish", StringComparison.Ordinal))
+            .ToList();
+
+        publishes.ShouldBeEmpty("A refresh opens a PR; docs-publish.yml publishes it after merge (§10).");
     }
 
     [Fact]

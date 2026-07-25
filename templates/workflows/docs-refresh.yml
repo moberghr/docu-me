@@ -1,0 +1,195 @@
+# DocuMe — nightly documentation refresh via headless Claude (PLAN.md §10, third bullet; §11).
+#
+# What it does: asks `docume drift` which wiki pages derive from code that changed since the wiki was last
+# generated, and if any did, runs the `/docs-refresh` skill to rewrite them and open a
+# `docs/refresh-<date>` PR. Merging that PR is what republishes them, through docs-publish.yml.
+#
+# This is the only template that runs a model, so it is the only one that costs money per run. Two things
+# keep that bounded, and both are deliberate:
+#   * The drift precheck below. `docume drift` is a git diff plus a glob match — seconds, no tokens — and
+#     the model step is skipped entirely when nothing drifted. On a repo whose code moves nightly but
+#     whose documented areas do not, most nights cost nothing.
+#   * Cost scales with the diff, not with the wiki. A run reads the changed files plus the affected pages,
+#     so a one-page refresh is a one-page refresh however large the wiki is. A release that touches every
+#     documented area is the expensive night.
+# A team that wants to pay only on request can delete the `schedule:` block and keep `workflow_dispatch`;
+# the drift labels from docs-drift.yml still say when a refresh is worth asking for.
+#
+# It holds NO Confluence credentials, like docs-drift-pr.yml and for the same reason. Everything this job
+# runs is local: the drift report is a diff, `docume status --offline` skips its one request, and
+# publishing is a separate workflow behind a human's merge. The unsupervised model run never has the
+# publishing token in its environment (rule §0.4: skills output PRs, only the CLI writes to Confluence).
+#
+# EDIT BEFORE USE:
+#   * ANTHROPIC_API_KEY must exist as a repository secret.
+#   * The plugin step must point at the DocuMe plugin your team installs — see the comment on it.
+#   * `cron:` is UTC.
+name: docs-refresh
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+# Not shared with docs-publish.yml/docs-sync.yml: this job commits `baselineSha` to its own
+# `docs/refresh-<date>` branch and never to `docs/sync`. Its own group so two nights, or a night and a
+# manual run, cannot both be rewriting pages. Not cancel-in-progress — a half-finished refresh should
+# finish and open its PR rather than leave a pushed branch with no PR on it.
+concurrency:
+  group: docume-refresh
+  cancel-in-progress: false
+
+# The skill pushes a branch and opens a PR; it never pushes to the default branch (§10, rule §1.5).
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DRIFT_FILE: ${{ runner.temp }}/docume-drift.json
+      BRANCHES_BEFORE: ${{ runner.temp }}/docume-refresh-branches
+    steps:
+      # fetch-depth: 0 because the baseline is an arbitrary older sha — the commit the wiki was last
+      # generated against, which may be months back. A depth-1 clone cannot resolve it, and the skill is
+      # instructed to stop rather than report zero drift.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # §12: consumers pin the tool version in .config/dotnet-tools.json, so every workflow restores the
+      # manifest instead of installing a floating latest.
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Read the wiki baseline
+        id: baseline
+        run: |
+          set -euo pipefail
+          root=$(jq -r '.wiki.root // "docs/wiki"' docume.json)
+          state="$root/_meta/state.json"
+          sha=$(jq -r '.baselineSha // empty' "$state")
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # Not-yet-configured, not a failure — same as docs-drift.yml. baselineSha is stamped by the
+      # generation pass, so a wiki nobody has generated has nothing to refresh from, and there is nothing
+      # a nightly job can do about that.
+      - name: No baseline yet
+        if: steps.baseline.outputs.sha == ''
+        run: |
+          echo "::warning title=DocuMe::baselineSha is empty in the state file, so there is no baseline to \
+          refresh from. Run /docs-loop to generate the wiki and merge its PR."
+
+      # The cheap half, and the gate on the expensive one. `hasDrift` is the CLI's own answer to "is there
+      # work", so the decision is not re-derived here from a page count that would disagree with it.
+      - name: Check for drift
+        id: drift
+        if: steps.baseline.outputs.sha != ''
+        run: |
+          set -euo pipefail
+          dotnet tool run docume drift --baseline "${{ steps.baseline.outputs.sha }}" --format json \
+            > "$DRIFT_FILE"
+          echo "has=$(jq -r '.hasDrift' "$DRIFT_FILE")" >> "$GITHUB_OUTPUT"
+          echo "affected=$(jq -r '.affectedCount' "$DRIFT_FILE")" >> "$GITHUB_OUTPUT"
+          jq -r '.sourcesUndeclared' "$DRIFT_FILE" | grep -qx true && \
+            echo "::warning title=DocuMe::No page declares 'sources', so drift detection is off for this \
+            wiki. Add sources to page frontmatter (§5.2) — a /docs-loop job." || true
+
+      - name: Nothing drifted
+        if: steps.baseline.outputs.sha != '' && steps.drift.outputs.has != 'true'
+        run: |
+          echo "::notice title=DocuMe::No page's declared sources changed since \
+          ${{ steps.baseline.outputs.sha }}. No model run, no PR."
+
+      # Node is here for the Claude Code CLI, not for DocuMe. (The mermaid renderer also needs Node, but
+      # it runs in the publish path, not here — a refresh writes markdown.)
+      - name: Set up Node
+        if: steps.drift.outputs.has == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Pin this to an exact version once you have picked one. A floating `latest` in an unattended
+      # nightly job means the thing driving your repo's write token can change under you between runs,
+      # which is the same argument `dotnet tool restore` settles for docume.
+      - name: Install Claude Code
+        if: steps.drift.outputs.has == 'true'
+        run: npm install -g @anthropic-ai/claude-code@latest
+
+      # Where the skill comes from. EDIT BEFORE USE: pin `ref:` to the DocuMe release your
+      # .config/dotnet-tools.json pins the CLI to. §12 ships CLI, library and plugin under one version, so
+      # a matching tag is the entire compatibility story between the skill and the commands it runs.
+      #
+      # A repo that would rather vendor the skill can delete this step and the --plugin-dir flag below,
+      # and keep a copy at .claude/skills/docs-refresh/SKILL.md instead: Claude Code finds project skills
+      # without being told. A team with the Moberg marketplace configured can install the plugin as the
+      # DocuMe README describes. This is the version that needs neither.
+      #
+      # While docu-me is private, add `token: ${{ secrets.DOCUME_PLUGIN_TOKEN }}` here — the default
+      # GITHUB_TOKEN is scoped to this repository and cannot read another one.
+      - name: Fetch the DocuMe plugin
+        if: steps.drift.outputs.has == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: moberg/docu-me
+          ref: main
+          path: .docume-plugin
+          sparse-checkout: plugin
+
+      - name: Prepare the workspace
+        if: steps.drift.outputs.has == 'true'
+        run: |
+          set -euo pipefail
+          # The commit the skill makes needs an identity, and a runner has none by default.
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          # The plugin checkout lands inside the workspace, so keep it out of the skill's `git status`.
+          # info/exclude rather than .gitignore: it is this runner's business, not the repo's.
+          echo '/.docume-plugin/' >> .git/info/exclude
+          git ls-remote --heads origin 'refs/heads/docs/refresh-*' > "$BRANCHES_BEFORE"
+
+      # §11's headless invocation. Three flags carry a decision each:
+      #
+      #   --plugin-dir loads the plugin for this session only: no marketplace lookup, nothing installed
+      #     persistently on the runner, and the ref above is the only version that can run.
+      #   --permission-mode acceptEdits so the skill can write the pages it was asked to write.
+      #   --allowed-tools because acceptEdits covers file edits and not Bash, and Bash is the skill's only
+      #     path to `docume` and `gh` (§11: skills invoke the CLI, they never call Confluence themselves).
+      #
+      # `--dangerously-skip-permissions` is deliberately absent. This job holds a token that can push
+      # branches and open PRs; the permission gate is the thing standing between an unattended model run
+      # and that token, and a template is the worst possible place to remove it.
+      - name: Refresh the drifted pages
+        if: steps.drift.outputs.has == 'true'
+        run: |
+          set -euo pipefail
+          echo "::notice title=DocuMe::${{ steps.drift.outputs.affected }} page(s) drifted since \
+          ${{ steps.baseline.outputs.sha }} — running /docs-refresh."
+          claude -p '/docs-refresh' \
+            --plugin-dir "$GITHUB_WORKSPACE/.docume-plugin/plugin" \
+            --permission-mode acceptEdits \
+            --allowed-tools 'Bash,Read,Write,Edit,Glob,Grep'
+
+      # A model run that exits 0 having done nothing is the failure mode this job actually has, and it
+      # would otherwise read as a green check. Drift was reported, so a refresh branch is the expected
+      # outcome; its absence gets said out loud rather than passed over.
+      - name: Confirm a refresh branch appeared
+        if: steps.drift.outputs.has == 'true'
+        run: |
+          set -euo pipefail
+          git ls-remote --heads origin 'refs/heads/docs/refresh-*' > "$RUNNER_TEMP/branches-after"
+          if diff -q "$BRANCHES_BEFORE" "$RUNNER_TEMP/branches-after" >/dev/null; then
+            echo "::warning title=DocuMe::${{ steps.drift.outputs.affected }} page(s) drifted but no \
+            docs/refresh-* branch was pushed. Read the step log above: the skill stops without a PR when \
+            it cannot verify a claim, and it reports why."
+            exit 0
+          fi
+          echo "::notice title=DocuMe::Refresh branch(es) on origin:"
+          grep -o 'refs/heads/docs/refresh-.*' "$RUNNER_TEMP/branches-after" || true
