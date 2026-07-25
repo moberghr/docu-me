@@ -1,0 +1,220 @@
+using DocuMe.Core.Acceptance;
+using DocuMe.Core.Drift;
+using DocuMe.Core.Markdown;
+using DocuMe.Core.Publishing;
+using Shouldly;
+
+namespace DocuMe.Core.Tests.Acceptance;
+
+/// <summary>
+/// DocuMe's own wiki (<c>docs/wiki</c>) held to the bar it documents (PLAN.md §3, §12: "dogfooded —
+/// DocuMe's own docs published with DocuMe"). The corpus here is the shipped tree, not a fixture:
+/// these assertions fail when someone edits a page, which is the point.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Why the strict bar rather than the golden corpus's accepted-loss policy: the goldens exist to pin
+/// what the converter does with a construct, degradations included, so they deliberately contain
+/// constructs that degrade. This wiki is *content*, and a tool whose own documentation converts badly
+/// is not making a good argument. <c>docs/wiki/_meta/STYLE.md</c> lists the constructs to avoid and
+/// names this class as what enforces them.
+/// </para>
+/// <para>
+/// The <c>sources</c> check is the one that would otherwise rot silently. A glob matching no file
+/// makes its page permanently invisible to <c>docume drift</c> — no error, no warning, just a page
+/// that never appears in a drift report and therefore never gets refreshed. It is the failure mode of
+/// documentation-adjacent config generally: wrong in a way that looks like "nothing changed".
+/// </para>
+/// </remarks>
+public sealed class DogfoodWikiTests
+{
+    /// <summary>Directory names that hold no source and would dominate the repo walk.</summary>
+    private static readonly HashSet<string> SkippedDirectories =
+        new(StringComparer.Ordinal) { ".git", ".mtk", "bin", "obj", "node_modules" };
+
+    [Fact]
+    public void The_wiki_loads_as_a_tree_that_can_be_published()
+    {
+        var tree = Load();
+
+        // Deliberately not an exact count: the number is expected to grow, and a test that fails on
+        // every new page is a test people delete.
+        tree.Pages.Count.ShouldBeGreaterThanOrEqualTo(6);
+
+        // _meta holds the style guide, the gaps list and (once published) state.json. wiki.exclude's
+        // default keeps them out of Confluence, and this is the assertion that the default is what
+        // the repo actually relies on.
+        tree.Pages
+            .Select(page => page.Path)
+            .ShouldAllBe(path => !path.StartsWith("_meta/", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Every_page_converts_with_no_failure_and_no_degradation()
+    {
+        var report = ConversionAcceptance.RunTree(Load(), AcceptancePolicy.Strict);
+
+        var failures = FailureSummary(report);
+        report.FailedPageCount.ShouldBe(0, failures);
+
+        // Relative .md links are checked here rather than in their own test: a link to a page outside
+        // the tree fails its page in the converter, so it lands in FailedPageCount above.
+        var degradations = DegradationSummary(report);
+        report.DiagnosticCount.ShouldBe(0, degradations);
+        report.MeetsAcceptanceBar.ShouldBeTrue(failures);
+    }
+
+    [Fact]
+    public void Every_page_declares_the_code_it_derives_from()
+    {
+        var tree = Load();
+
+        var undeclared = tree.Pages
+            .Where(page => page.Parsed.Frontmatter.Sources.Count == 0)
+            .Select(page => page.Path)
+            .ToList();
+
+        const string message =
+            "Every page needs at least one `sources` glob or `docume drift` can never flag it "
+            + "(PLAN.md §5.2, §6.4). Pages missing one:";
+
+        undeclared.ShouldBeEmpty(message);
+    }
+
+    [Fact]
+    public void Every_sources_glob_matches_a_file_that_exists()
+    {
+        var tree = Load();
+        var files = RepoFiles();
+
+        // Feeding the whole repo in as the changed set turns DriftPlanner into the question "which
+        // globs can ever match anything?" — and answers it with the same Matcher a real drift run
+        // uses, rather than a second glob implementation that would eventually disagree with it.
+        var report = DriftPlanner.Plan("baseline", "head", files, tree.Pages);
+
+        var matched = report.Pages
+            .SelectMany(page => page.Matches.Select(match => match.Pattern))
+            .ToHashSet(StringComparer.Ordinal);
+
+        // Vacuous-pass guards: an empty file list, or a plan that matched nothing, would make the
+        // assertion below pass while proving nothing.
+        files.Count.ShouldBeGreaterThan(100);
+        matched.ShouldNotBeEmpty();
+        report.AffectedCount.ShouldBe(tree.Pages.Count);
+
+        var dead = tree.Pages
+            .SelectMany(page => page.Parsed.Frontmatter.Sources.Select(source => (page.Path, source)))
+            .Where(entry => !matched.Contains(entry.source))
+            .Select(entry => $"{entry.Path} → {entry.source}")
+            .ToList();
+
+        const string message =
+            "A `sources` glob matching no file in the repo makes its page invisible to `docume drift` "
+            + "with no error anywhere. Dead globs:";
+
+        dead.ShouldBeEmpty(message);
+    }
+
+    [Fact]
+    public void Every_directory_publishes_through_its_own_index_page()
+    {
+        var tree = Load();
+        var paths = tree.Pages.Select(page => page.Path).ToHashSet(StringComparer.Ordinal);
+
+        var missing = paths
+            .Select(DirectoryOf)
+            .Distinct(StringComparer.Ordinal)
+            .Select(IndexOf)
+            .Where(index => !paths.Contains(index))
+            .ToList();
+
+        // PageHierarchy skips a directory with no index rather than synthesizing one, so its pages
+        // hang from whatever index is above it — the published tree stops mirroring the folders and
+        // nothing complains (rule §9.1).
+        const string message =
+            "A directory whose pages have no README.md loses its level in the published tree. Missing:";
+
+        missing.ShouldBeEmpty(message);
+
+        // And exactly one page sits at the tree root, under confluence.rootPageId.
+        PageHierarchy.Resolve(paths)
+            .Where(entry => entry.Value is null)
+            .Select(entry => entry.Key)
+            .ShouldBe(["README.md"]);
+    }
+
+    private static WikiTree Load() => WikiTree.Load(Path.Combine(RepoRoot, "docs", "wiki"));
+
+    private static string DirectoryOf(string pagePath)
+    {
+        var lastSlash = pagePath.LastIndexOf('/');
+        return lastSlash < 0 ? string.Empty : pagePath[..lastSlash];
+    }
+
+    private static string IndexOf(string directory) =>
+        directory.Length == 0 ? "README.md" : $"{directory}/README.md";
+
+    /// <summary>
+    /// Every file in the repo as a forward-slash path relative to the root — the spelling
+    /// <c>sources</c> globs are written against (§6.4).
+    /// </summary>
+    private static List<string> RepoFiles()
+    {
+        var files = new List<string>();
+        Walk(new DirectoryInfo(RepoRoot), string.Empty, files);
+        return files;
+    }
+
+    private static void Walk(DirectoryInfo directory, string prefix, List<string> files)
+    {
+        foreach (var file in directory.EnumerateFiles())
+        {
+            files.Add(prefix + file.Name);
+        }
+
+        foreach (var child in directory.EnumerateDirectories())
+        {
+            if (!SkippedDirectories.Contains(child.Name))
+            {
+                Walk(child, $"{prefix}{child.Name}/", files);
+            }
+        }
+    }
+
+    private static string DegradationSummary(AcceptanceReport report) =>
+        report.DiagnosticCount == 0
+            ? "no degradations"
+            : string.Join(
+                " // ",
+                report.Pages.SelectMany(page => page.Diagnostics.Select(
+                    diagnostic => $"{page.Path}: {diagnostic.Code} ({diagnostic.Construct})")));
+
+    private static string FailureSummary(AcceptanceReport report) =>
+        report.Failures.Count == 0
+            ? "no failures"
+            : string.Join(
+                " // ",
+                report.Failures.Select(group => $"{group.Count}x {group.Occurrences[0].Message}"));
+
+    private static string RepoRoot { get; } = Locate();
+
+    /// <summary>
+    /// Walks up to the directory holding <c>DocuMe.slnx</c>: the wiki ships in the tree and is not
+    /// copied beside the test assembly, so the shipped copy is the one under test.
+    /// </summary>
+    private static string Locate()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
+             directory is not null;
+             directory = directory.Parent)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "DocuMe.slnx")))
+            {
+                return directory.FullName;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"No DocuMe.slnx above {AppContext.BaseDirectory}, so docs/wiki cannot be found.");
+    }
+}
