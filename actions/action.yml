@@ -1,0 +1,62 @@
+# DocuMe — the composite action PLAN.md §12 promises consumers (`moberghr/docu-me/actions@v1`):
+# install the version of the CLI this repo is pinned to, then run it. It wraps the three lines every
+# one of the six scaffolded workflows in `templates/workflows/` opens with, so a consumer writing a
+# docs job of their own does not have to get them right a seventh time.
+#
+# WHY THE PIN IS THE POINT. `dotnet tool restore` installs whatever `.config/dotnet-tools.json` says,
+# and `docume init` writes that manifest with the version of the tool that did the scaffolding. So the
+# CLI a consumer's CI runs is the one their repo chose, not whatever is newest — and this action never
+# names a DocuMe version, which is why it can float on `@v1` without pretending to pin anything.
+#
+# THE REF. `@v1` is a floating major tag, force-moved by the final step of
+# `.github/workflows/release.yml` on each release (rule §8.2a). It tracks the newest 1.x. Before 1.0.0
+# there is no `v1` to resolve: pin the exact release instead, `moberghr/docu-me/actions@v0.1.0`.
+name: DocuMe
+description: Run the repo-pinned DocuMe CLI — restores .config/dotnet-tools.json, then invokes docume.
+
+inputs:
+  args:
+    description: >-
+      Arguments for `docume`, as one string — e.g. `publish --dry-run` or
+      `drift --format json`. Word-split into separate arguments, so it cannot carry a
+      value containing spaces.
+    required: true
+  dotnet-version:
+    description: >-
+      SDK to install. The default matches what `docume init` scaffolds into
+      templates/workflows/, and DocuMe.Cli targets net10.0 — override it only to install
+      a newer SDK alongside.
+    required: false
+    default: '10.0.x'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+
+    # The guard, not decoration: `dotnet tool restore` in a repo with no manifest fails with the SDK's
+    # own wording, which says nothing about DocuMe. A consumer who copied a workflow in by hand
+    # instead of running `docume init` lands here, so this is the one place that can name the fix.
+    - name: Restore the pinned docume
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [ ! -f .config/dotnet-tools.json ]; then
+          echo "::error::No .config/dotnet-tools.json — this repo has no pinned docume. Run \`docume init\` and commit the manifest (PLAN.md §6.1, §12)."
+          exit 1
+        fi
+
+        dotnet tool restore
+
+    # `args` arrives as an environment variable rather than through `${{ }}` interpolated into the
+    # script: a value spliced into the shell is a command-injection surface, and the caller of this
+    # action is often a workflow passing something derived from an issue or a comment. Unquoted on
+    # purpose — the word splitting is how one input string becomes an argv, which is the whole job.
+    - name: docume ${{ inputs.args }}
+      shell: bash
+      env:
+        ARGS: ${{ inputs.args }}
+      run: dotnet tool run docume $ARGS

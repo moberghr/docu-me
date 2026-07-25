@@ -429,8 +429,114 @@ public sealed class ReleaseWorkflowTests : IDisposable
         unexpanded.ShouldBeFalse("The asset glob reached gh unexpanded, so the release would carry no packages.");
     }
 
+    // ---- the floating major tag (rule §8.2a) --------------------------------------------------------
+
     /// <summary>
-    /// The drift guard for everything above: both executed steps are found by name, so a rename would fail
+    /// The move is the last thing a release does, and that ordering is the whole safety argument for it:
+    /// the action's own job is <c>dotnet tool restore</c>, so a major ref pointing at a commit whose
+    /// packages never reached the feed turns every consumer's docs job red.
+    /// </summary>
+    [Fact]
+    public void The_floating_major_tag_moves_only_after_the_release_exists()
+    {
+        var steps = Steps();
+        var move = steps.FindIndex(step =>
+            string.Equals(Value(step, "name", fallback: string.Empty), TagMoveStep, StringComparison.Ordinal));
+
+        move.ShouldBeGreaterThanOrEqualTo(0, $"release.yml has no step named '{TagMoveStep}'.");
+        move.ShouldBe(steps.Count - 1, "The tag move must be the final step — every step above it can fail.");
+        IndexOfRun("gh release create").ShouldBeLessThan(
+            move,
+            "The floating major tag must not move before the release it advertises has been cut.");
+    }
+
+    /// <summary>
+    /// §12's <c>moberghr/docu-me/actions@vN</c> resolving to this release. The major is derived from the
+    /// version rather than hardcoded to <c>v1</c>: this repository releases 0.x, and a <c>v1</c> pointing
+    /// at 0.1.0 would advertise a 1.x nobody shipped.
+    /// </summary>
+    [Theory]
+    [InlineData("v0.1.0", "0.1.0", "v0")]
+    [InlineData("v1.2.3", "1.2.3", "v1")]
+    [InlineData("v2.0.0", "2.0.0", "v2")]
+    public void The_release_points_the_floating_major_tag_at_itself(string tag, string version, string major)
+    {
+        var repo = NewThrowawayRepo();
+        var move = RunTagMove(tag, version, repo);
+
+        move.Code.ShouldBe(0, move.Diagnostics);
+        OriginRev(repo, major).ShouldBe(repo.Head, $"{major} does not point at the released commit.");
+    }
+
+    /// <summary>
+    /// The force half, which is the only reason this needed authorizing: the second release of a major has
+    /// to move a ref that already exists, and a plain push is rejected as non-fast-forward.
+    /// </summary>
+    [Fact]
+    public void The_second_release_of_a_major_moves_the_tag_off_the_first()
+    {
+        var repo = NewThrowawayRepo(existingMajorTag: "v1");
+
+        OriginRev(repo, "v1").ShouldBe(repo.FirstCommit, "The fixture did not publish the stale tag.");
+
+        var move = RunTagMove("v1.2.3", "1.2.3", repo);
+
+        move.Code.ShouldBe(0, move.Diagnostics);
+        OriginRev(repo, "v1").ShouldBe(repo.Head, "v1 was not force-moved to the new release.");
+    }
+
+    /// <summary>
+    /// A prerelease must not become what <c>@vN</c> resolves to. The tag filter is <c>v*.*.*</c>, which
+    /// matches <c>v1.0.0-rc.1</c> as happily as <c>v1.0.0</c>, so this is reachable rather than theoretical.
+    /// </summary>
+    [Theory]
+    [InlineData("v1.0.0-rc.1", "1.0.0-rc.1")]
+    [InlineData("v2.0.0-beta", "2.0.0-beta")]
+    public void A_prerelease_leaves_the_floating_major_tag_where_it_is(string tag, string version)
+    {
+        var repo = NewThrowawayRepo(existingMajorTag: "v1");
+        var move = RunTagMove(tag, version, repo);
+
+        // Exit 0, not a failure: the packages are already on the feed and the release is already cut, so
+        // a red step here would report a successful release as broken.
+        move.Code.ShouldBe(0, move.Diagnostics);
+        OriginRev(repo, "v1").ShouldBe(repo.FirstCommit, $"A prerelease moved the floating major tag ({tag}).");
+
+        // A green step that did nothing is indistinguishable from a green step that worked, unless it
+        // says so — and this is the one release where `@vN` deliberately does not follow the tag.
+        move.Summary.ShouldContain(
+            "prerelease",
+            customMessage: $"The skipped move left no trace in the step summary. Got: '{move.Summary}'");
+    }
+
+    /// <summary>
+    /// Rule §8.2a is one exception for one tag. Branch history stays untouchable under §8.2, and the step
+    /// runs with a force-push in it — so this asserts the blast radius rather than trusting the wording.
+    /// </summary>
+    [Fact]
+    public void Moving_the_tag_never_rewrites_a_branch()
+    {
+        var repo = NewThrowawayRepo(existingMajorTag: "v1");
+        var before = OriginRev(repo, "refs/heads/main");
+
+        var move = RunTagMove("v1.2.3", "1.2.3", repo);
+
+        move.Code.ShouldBe(0, move.Diagnostics);
+        OriginRev(repo, "refs/heads/main").ShouldBe(before, "The tag move rewrote a branch on the origin (§8.2).");
+
+        // The static half: the force in that step is spent on one ref, and it is a tag.
+        var script = ScriptOf(TagMoveStep);
+        var forced = script
+            .Split('\n')
+            .Where(line => line.Contains("push", StringComparison.Ordinal))
+            .ToList();
+
+        forced.Count.ShouldBe(1, $"The tag-move step pushes more than once:\n{string.Join('\n', forced)}");
+        forced[0].ShouldContain("$major", customMessage: "The force-push targets something other than the derived tag.");
+    }
+
+    /// <summary>
+    /// The drift guard for everything above: every executed step is found by name, so a rename would fail
     /// here instead of turning every execution test into a silent skip.
     /// </summary>
     [Fact]
@@ -440,11 +546,13 @@ public sealed class ReleaseWorkflowTests : IDisposable
 
         names.ShouldContain(VersionGuardStep, $"release.yml no longer has a step named '{VersionGuardStep}'.");
         names.ShouldContain(CutReleaseStep, $"release.yml no longer has a step named '{CutReleaseStep}'.");
+        names.ShouldContain(TagMoveStep, $"release.yml no longer has a step named '{TagMoveStep}'.");
     }
 
     // ---- fixtures and process plumbing -------------------------------------------------------------
     private const string VersionGuardStep = "Verify the tag is the single version";
     private const string CutReleaseStep = "Cut the GitHub Release";
+    private const string TagMoveStep = "Move the floating major tag";
 
     private static string RepoRoot { get; } = Locate();
 
@@ -542,6 +650,133 @@ public sealed class ReleaseWorkflowTests : IDisposable
             CutReleaseStep,
             File.Exists(notesPath) ? File.ReadAllText(notesPath) : string.Empty,
             File.Exists(argv) ? File.ReadAllLines(argv).ToList() : []);
+    }
+
+    /// <summary>
+    /// A throwaway repository with an on-disk origin, two commits, and optionally a stale major tag
+    /// already published — never this repository and never its origin, which the step under test
+    /// force-pushes to.
+    /// </summary>
+    /// <remarks>
+    /// The origin is a bare repo beside the working copy, so the push is real: a fixture that stubbed
+    /// <c>git</c> would prove the step spells a command rather than that the ref ends up where a
+    /// consumer's <c>@vN</c> will look for it. No committer identity is configured anywhere, which also
+    /// pins the tag as lightweight — an annotated one would fail here exactly as it would on a runner.
+    /// </remarks>
+    private ThrowawayRepo NewThrowawayRepo(string? existingMajorTag = null)
+    {
+        var root = NewScratch("tagmove");
+        var origin = Path.Combine(root, "origin.git");
+        var work = Path.Combine(root, "work");
+
+        Directory.CreateDirectory(work);
+        Git(root, "init", "--bare", origin);
+        Git(work, "init", "-b", "main");
+        Git(work, "remote", "add", "origin", origin);
+
+        Commit(work, "first.txt");
+        var first = Git(work, "rev-parse", "HEAD").Trim();
+
+        if (existingMajorTag is not null)
+        {
+            Git(work, "tag", existingMajorTag);
+        }
+
+        Commit(work, "second.txt");
+        Git(work, "push", "origin", "main");
+
+        if (existingMajorTag is not null)
+        {
+            Git(work, "push", "origin", existingMajorTag);
+        }
+
+        return new ThrowawayRepo(work, origin, first, Git(work, "rev-parse", "HEAD").Trim());
+    }
+
+    /// <summary>Runs the shipped tag-move step against <paramref name="repo"/>, as the release's last step.</summary>
+    private static TagMoveRun RunTagMove(string tag, string version, ThrowawayRepo repo)
+    {
+        var summary = Path.Combine(repo.Work, "summary.md");
+        var environment = BaseEnvironment(repo.Work);
+        environment["TAG"] = tag;
+        environment["VERSION"] = version;
+        environment["GITHUB_STEP_SUMMARY"] = summary;
+
+        var result = Shell(ScriptOf(TagMoveStep), repo.Work, environment);
+
+        return new TagMoveRun(
+            result.Code,
+            result.Output,
+            result.Error,
+            TagMoveStep,
+            File.Exists(summary) ? File.ReadAllText(summary) : string.Empty);
+    }
+
+    /// <summary>What <paramref name="reference"/> resolves to on the origin, or null if it is not there.</summary>
+    private static string? OriginRev(ThrowawayRepo repo, string reference)
+    {
+        var result = GitResult(repo.Origin, "rev-parse", reference);
+
+        return result.Code is 0 ? result.Output.Trim() : null;
+    }
+
+    /// <summary>A commit adding one file, with the identity passed per-invocation so no config is written.</summary>
+    private static void Commit(string repository, string file)
+    {
+        File.WriteAllText(Path.Combine(repository, file), file);
+        Git(repository, "add", "-A");
+        Git(
+            repository,
+            "-c",
+            "user.name=DocuMe tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "commit",
+            "-m",
+            $"add {file}");
+    }
+
+    private static string Git(string repository, params string[] arguments)
+    {
+        var result = GitResult(repository, arguments);
+
+        result.Code.ShouldBe(
+            0,
+            $"git {string.Join(' ', arguments)} failed in {repository}:\n{result.Output}\n{result.Error}");
+
+        return result.Output;
+    }
+
+    private static ProcessResult GitResult(string repository, params string[] arguments)
+    {
+        var info = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = repository,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+
+        foreach (var argument in arguments)
+        {
+            info.ArgumentList.Add(argument);
+        }
+
+        // Cleared for the same reason the step's own environment is: a developer's global git config
+        // must not be able to supply something a runner would not have.
+        info.Environment.Clear();
+        info.Environment["PATH"] = Environment.GetEnvironmentVariable("PATH") ?? "/usr/bin:/bin";
+        info.Environment["HOME"] = repository;
+        info.Environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
+        info.Environment["GIT_CONFIG_SYSTEM"] = "/dev/null";
+
+        using var process = Process.Start(info)
+            ?? throw new InvalidOperationException("git did not start.");
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        return new ProcessResult(process.ExitCode, output, error);
     }
 
     /// <summary>The shell of the step named <paramref name="name"/>, extracted from the shipped yaml.</summary>
@@ -729,6 +964,14 @@ public sealed class ReleaseWorkflowTests : IDisposable
         return Scalar(child);
     }
 
+    /// <summary>As <see cref="Value(YamlMappingNode, string)"/>, but for keys a step need not carry.</summary>
+    private static string Value(YamlMappingNode parent, string key, string fallback)
+    {
+        var child = parent.Children.FirstOrDefault(candidate => IsKey(candidate.Key, key)).Value;
+
+        return child is null ? fallback : Scalar(child);
+    }
+
     private static bool IsKey(YamlNode node, string name)
         => string.Equals(Scalar(node), name, StringComparison.Ordinal);
 
@@ -756,6 +999,13 @@ public sealed class ReleaseWorkflowTests : IDisposable
 
     private sealed record ProcessResult(int Code, string Output, string Error);
 
+    /// <summary>
+    /// A disposable git repository and the bare origin it pushes to, with the two commits the tag move is
+    /// asserted against: <see cref="FirstCommit"/> is where a stale major tag sits, <see cref="Head"/> is
+    /// the release.
+    /// </summary>
+    private sealed record ThrowawayRepo(string Work, string Origin, string FirstCommit, string Head);
+
     private abstract record StepRun(int Code, string Output, string Error, string Step)
     {
         /// <summary>Everything a failure needs, since the interesting half is usually on stderr.</summary>
@@ -779,6 +1029,13 @@ public sealed class ReleaseWorkflowTests : IDisposable
             .Where(line => line.StartsWith("::error::", StringComparison.Ordinal))
             .ToList();
     }
+
+    /// <summary>
+    /// The tag move, plus the step summary it wrote. The summary is the only trace this step leaves on a
+    /// green run, so it is also the only place a skipped move can say it skipped and why.
+    /// </summary>
+    private sealed record TagMoveRun(int Code, string Output, string Error, string Step, string Summary)
+        : StepRun(Code, Output, Error, Step);
 
     private sealed record ReleaseRun(
         int Code, string Output, string Error, string Step, string Notes, List<string> Argv)

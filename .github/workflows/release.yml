@@ -12,6 +12,9 @@
 # that was never released is one Claude Code keeps its cached copy of forever, and it fails silently.
 # `PluginManifestTests` catches (1) vs (2) at desk time; only the tag can be checked here.
 #
+# The last step then force-moves the floating major tag (`v0` now, `v1` from 1.0.0 on) so §12's
+# `moberghr/docu-me/actions@vN` resolves to this release. That is rule §8.2's one exception, §8.2a.
+#
 # WHAT THIS WORKFLOW CANNOT DO: update the Moberg marketplace. That marketplace is a different
 # repository, so §12's "plugin marketplace ref update" is a copy-paste — the release notes carry the
 # exact entry, with `ref` already set to this tag. See plugin/README.md.
@@ -166,3 +169,42 @@ jobs:
             --verify-tag
 
           cat "$notes" >> "$GITHUB_STEP_SUMMARY"
+
+      # The floating major ref of the composite action, `actions/action.yml` — §12 promises consumers
+      # `moberghr/docu-me/actions@v1` and a floating ref only floats if something moves it.
+      #
+      # LAST, AND DELIBERATELY AFTER THE RELEASE. The action's own job is `dotnet tool restore`, so a
+      # major ref pointing at a commit whose packages never reached the feed turns every consumer's
+      # docs job red. Every step above this one can fail; none of them can fail after it.
+      #
+      # THE FORCE-PUSH IS AUTHORIZED HERE AND NOWHERE ELSE: rule §8.2a, one narrow exception to §8.2,
+      # scoped to this tag, on the runner, with GITHUB_TOKEN (`contents: write`, line 35 — no new
+      # grant). It never touches branch history, and the loop's own shell still may not force-push.
+      - name: Move the floating major tag
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          # A prerelease must not become what `@vN` resolves to: the floating ref advertises the
+          # newest *stable* major, and `v*.*.*` up there matches `v1.0.0-rc.1` too.
+          case "$VERSION" in
+            *-*)
+              echo "$TAG is a prerelease — leaving the floating major tag where it is." \
+                >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+
+          # Derived, not hardcoded to `v1`: this releases 0.x today, and a `v1` pointing at 0.1.0
+          # would advertise a 1.x that does not exist. `@v0` before 1.0.0, `@v1` from 1.0.0 on, and
+          # `v1` correctly stops moving when 2.0.0 ships. §12's `@v1` goes live at 1.0.0.
+          major="v${VERSION%%.*}"
+
+          # Lightweight: an annotated tag needs a committer identity this runner has not configured,
+          # and there is nothing to annotate — the notes live on the release.
+          git tag -f "$major"
+          git push -f origin "$major"
+
+          echo "\`$major\` now points at $TAG." >> "$GITHUB_STEP_SUMMARY"
