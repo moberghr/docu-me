@@ -135,6 +135,10 @@ public sealed class PublishExecutor
         }
 
         var pageIds = KnownPageIds(state);
+        var excludedByScope = report.ExcludedByScope
+            .Select(page => page.Path)
+            .ToHashSet(StringComparer.Ordinal);
+
         var writes = report.Pages.Count(page => page.Action != PagePublishAction.Skip);
         var spaceId = string.Empty;
 
@@ -175,15 +179,26 @@ public sealed class PublishExecutor
 
             if (planned.Action == PagePublishAction.Skip)
             {
-                WarnOnParentDrift(planned, state, pageIds, config.Confluence.RootPageId, warnings);
+                // A page the scope excluded was deliberately left alone, and the report already names it
+                // as held back, so nagging about its parent here would only offer advice (--force) that
+                // this run would ignore anyway.
+                if (!planned.ExcludedByScope)
+                {
+                    WarnOnParentDrift(planned, state, pageIds, config.Confluence.RootPageId, warnings);
+                }
+
                 continue;
             }
 
             if (!TryResolveParentId(planned, pageIds, config.Confluence.RootPageId, out var parentId))
             {
-                var orphaned = $"its parent page '{planned.ParentPath}' was not published in this run, so "
-                    + "filing this page would put it somewhere the tree does not say. Fix the parent's "
-                    + "failure and re-run.";
+                var orphaned = excludedByScope.Contains(planned.ParentPath!)
+                    ? $"its parent page '{planned.ParentPath}' has never been published and this run's "
+                        + "scope excludes it, so there is nothing to file this page under. Widen the scope "
+                        + "to include the parent, or publish the whole tree once."
+                    : $"its parent page '{planned.ParentPath}' was not published in this run, so filing "
+                        + "this page would put it somewhere the tree does not say. Fix the parent's "
+                        + "failure and re-run.";
 
                 failures.Add(new PagePublishFailure(planned.Path, orphaned));
                 continue;

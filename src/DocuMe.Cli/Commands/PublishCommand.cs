@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Text.Json;
 using DocuMe.Core.Config;
 using DocuMe.Core.Confluence;
+using DocuMe.Core.Git;
 using DocuMe.Core.Markdown;
 using DocuMe.Core.Publishing;
 using DocuMe.Core.State;
@@ -58,6 +59,18 @@ internal static class PublishCommand
             Description = "Also print the page tree the run would build (parents resolved from the "
                 + "directory index pages).",
         };
+        var changedSinceOption = new Option<string>("--changed-since")
+        {
+            Description = "Write only the pages touched since <sha> — `git diff --name-only` over the "
+                + "wiki root, including the pages whose images changed. The whole tree is still loaded, "
+                + "converted and checked for orphans.",
+        };
+        var pageOption = new Option<string[]>("--page")
+        {
+            Description = "Write only these pages (wiki-root-relative markdown paths). Repeatable; a "
+                + "path that is not in the tree is an error.",
+            DefaultValueFactory = _ => [],
+        };
 
         var command = new Command(
             "publish",
@@ -69,6 +82,8 @@ internal static class PublishCommand
             forceOption,
             allowProtectedSpaceOption,
             treeOption,
+            changedSinceOption,
+            pageOption,
         };
 
         command.SetAction((parseResult, cancellationToken) => RunAsync(
@@ -78,6 +93,8 @@ internal static class PublishCommand
             parseResult.GetValue(forceOption),
             parseResult.GetValue(allowProtectedSpaceOption),
             parseResult.GetValue(treeOption),
+            parseResult.GetValue(changedSinceOption),
+            parseResult.GetValue(pageOption) ?? [],
             cancellationToken));
 
         return command;
@@ -90,8 +107,17 @@ internal static class PublishCommand
         bool force,
         bool allowProtectedSpace,
         bool printTree,
+        string? changedSince,
+        string[] pagePaths,
         CancellationToken cancellationToken)
     {
+        if (changedSince is { Length: > 0 } && pagePaths.Length > 0)
+        {
+            return Fail(
+                "--changed-since and --page cannot be combined: each one narrows the run in its own way, "
+                + "and guessing which you meant would be worse than asking. Pick one.");
+        }
+
         var fullConfigPath = Path.GetFullPath(configPath);
 
         DocumeConfig config;
@@ -148,6 +174,33 @@ internal static class PublishCommand
             return Fail(stateFailure!);
         }
 
+        ScopeResolution resolved;
+        try
+        {
+            resolved = await ResolveScopeAsync(wikiRoot, changedSince, pagePaths, tree, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (GitException ex)
+        {
+            // A scope that cannot be computed must not fall back to the whole tree: the caller asked for
+            // less, and silently publishing more is the one outcome they did not ask for.
+            return Fail(ex.Message);
+        }
+
+        if (resolved.UnknownPaths.Count > 0)
+        {
+            return FailUnknownPages(resolved.UnknownPaths, tree);
+        }
+
+        var scope = resolved.Scope;
+
+        if (scope is not null)
+        {
+            AnsiConsole.MarkupLine(
+                $"Scope:     [blue]{scope.Description.EscapeMarkup()}[/] "
+                + $"[grey]({scope.Paths.Count} path(s) in scope)[/]");
+        }
+
         var report = PublishPipeline.Plan(
             config,
             tree,
@@ -156,6 +209,7 @@ internal static class PublishCommand
             {
                 Force = force,
                 AllowProtectedSpace = allowProtectedSpace,
+                Scope = scope,
 
                 // One date for the whole run, in UTC so a laptop and a CI runner agree (§8).
                 GeneratedOn = DateOnly.FromDateTime(DateTime.UtcNow),
@@ -216,7 +270,7 @@ internal static class PublishCommand
 
         var rendererPath = Path.GetFullPath(Path.Combine(repoRoot, config.Mermaid.Renderer));
         var executor = new PublishExecutor(client, wikiRoot, new MermaidRenderer(rendererPath).RenderAsync);
-        var sha = await GitHead.TryReadAsync(repoRoot, cancellationToken).ConfigureAwait(false);
+        var sha = await GitRepository.TryReadHeadAsync(repoRoot, cancellationToken).ConfigureAwait(false);
 
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine(
@@ -239,6 +293,64 @@ internal static class PublishCommand
         RenderOutcome(outcome, sha);
 
         return outcome.Succeeded ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Turns <c>--changed-since</c> / <c>--page</c> into a <see cref="PublishScope"/>, or answers
+    /// <c>null</c> for a whole-tree run (§6.2, last paragraph).
+    /// </summary>
+    /// <remarks>
+    /// Only <c>--page</c> is checked against the tree. A file <c>--changed-since</c> reports may
+    /// legitimately name a deleted page, an image, or something under <c>_meta/</c>, whereas a
+    /// hand-typed page path that matches nothing is a typo, and a typo that publishes nothing while
+    /// exiting 0 is the mistake this check exists to prevent.
+    /// </remarks>
+    private static async Task<ScopeResolution> ResolveScopeAsync(
+        string wikiRoot,
+        string? changedSince,
+        string[] pagePaths,
+        WikiTree tree,
+        CancellationToken cancellationToken)
+    {
+        if (changedSince is { Length: > 0 } sha)
+        {
+            // The wiki root, not the repo root: git answers in paths relative to it, which is what the
+            // plan keys on.
+            var changed = await GitRepository.ChangedFilesSinceAsync(wikiRoot, sha, cancellationToken)
+                .ConfigureAwait(false);
+
+            return new ScopeResolution(PublishScope.ForFilesChangedSince(sha, changed), []);
+        }
+
+        if (pagePaths.Length == 0)
+        {
+            return new ScopeResolution(null, []);
+        }
+
+        var scope = PublishScope.ForPages(pagePaths);
+
+        return new ScopeResolution(scope, scope.MissingFrom(tree.Pages.Select(page => page.Path)));
+    }
+
+    /// <summary>
+    /// A <c>--page</c> path that names nothing, said with what the tree does hold — the answer a
+    /// mistyped path needs is the spelling that would have worked.
+    /// </summary>
+    private static int FailUnknownPages(IReadOnlyList<string> unknown, WikiTree tree)
+    {
+        AnsiConsole.MarkupLine(
+            $"[red]--page names {unknown.Count} path(s) that are not pages in this wiki:[/]");
+        foreach (var path in unknown)
+        {
+            AnsiConsole.MarkupLine($"  [red]•[/] {path.EscapeMarkup()}");
+        }
+
+        AnsiConsole.MarkupLine(
+            $"[grey]Paths are wiki-root-relative and case-sensitive. The tree has {tree.Pages.Count} "
+            + "page(s):[/]");
+        RenderPaths(tree.Pages.Select(page => page.Path));
+
+        return 1;
     }
 
     /// <summary>
@@ -307,10 +419,38 @@ internal static class PublishCommand
                 + "(run `docume convert` for the grouped report)[/]");
         }
 
+        RenderScope(report);
         RenderApprovals(report);
         RenderOrphans(report);
         RenderFailures(report);
         RenderVerdict(report);
+    }
+
+    /// <summary>
+    /// What the scope held back (§6.2 <c>--changed-since</c> / <c>--page</c>). Printed by every scoped
+    /// run, including one that held nothing back: a filtered run that reads like a full run is this
+    /// flag's failure mode, so the numbers always come with what narrowed them.
+    /// </summary>
+    private static void RenderScope(PublishReport report)
+    {
+        if (report.Scope is not { } scope)
+        {
+            return;
+        }
+
+        var excluded = report.ExcludedByScope;
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine(
+            $"[blue]SCOPE[/] — {scope.Description.EscapeMarkup()} put {scope.Paths.Count} path(s) in "
+            + $"scope; {excluded.Count} page(s) a full run would have written are left alone");
+
+        if (scope.Paths.Count == 0)
+        {
+            AnsiConsole.MarkupLine("  [grey]Nothing is in scope, so this run writes nothing.[/]");
+        }
+
+        RenderPaths(excluded.Select(page => page.Path));
     }
 
     /// <summary>
@@ -386,10 +526,14 @@ internal static class PublishCommand
             return;
         }
 
+        var scoped = report.Scope is { } scope
+            ? $" Scope {scope.Description} held back {report.ExcludedByScope.Count} page(s)."
+            : string.Empty;
+
         AnsiConsole.MarkupLine(
             $"[green]PLAN OK[/] — {report.Pages.Count} page(s) convert; "
-            + $"{report.CreateCount + report.UpdateCount} body write(s), {report.UploadCount} upload(s). "
-            + "Nothing was written.");
+            + $"{report.CreateCount + report.UpdateCount} body write(s), {report.UploadCount} upload(s)."
+            + $"{scoped.EscapeMarkup()} Nothing was written.");
     }
 
     /// <summary>
@@ -524,4 +668,10 @@ internal static class PublishCommand
         AnsiConsole.MarkupLine($"[red]{message.EscapeMarkup()}[/]");
         return 1;
     }
+
+    /// <summary>
+    /// The scope a run will use, plus the <c>--page</c> paths that matched nothing. Two fields rather
+    /// than an exception: an unmatched path is an ordinary user mistake with a long answer, not a fault.
+    /// </summary>
+    private sealed record ScopeResolution(PublishScope? Scope, IReadOnlyList<string> UnknownPaths);
 }

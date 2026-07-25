@@ -17,6 +17,16 @@ public sealed record PublishOptions
     public bool AllowProtectedSpace { get; init; }
 
     /// <summary>
+    /// <c>--changed-since &lt;sha&gt;</c> or <c>--page &lt;path&gt;</c>: the files this run may write, or
+    /// <c>null</c> for the whole tree.
+    /// </summary>
+    /// <remarks>
+    /// It narrows the write set alone — the tree is still walked whole, so orphan detection and the link
+    /// map still see every page. <see cref="PublishScope"/> says why that distinction is the whole design.
+    /// </remarks>
+    public PublishScope? Scope { get; init; }
+
+    /// <summary>
     /// The date the §8 banner records, or <c>null</c> to omit it.
     /// </summary>
     /// <remarks>
@@ -103,20 +113,23 @@ public static class PublishPipeline
 
         foreach (var page in tree.Pages)
         {
-            var planned = PlanOne(tree, state, page, parents[page.Path], banner, options.Force, failures);
+            var planned = PlanOne(tree, state, page, parents[page.Path], banner, options, failures);
             if (planned is not null)
             {
                 pages.Add(planned);
             }
         }
 
+        // Orphans stay whole-tree even under a scope: an orphan is a state entry whose file is gone, and a
+        // scope hides no file (PublishScope).
         return new PublishReport(
             config.Confluence.SpaceKey,
             options.GeneratedOn,
             pages,
             failures,
             PublishPlanner.OrphanPages(state, tree.Pages.Select(page => page.Path)),
-            PublishGuard.WriteRefusal(config.Confluence, options.AllowProtectedSpace));
+            PublishGuard.WriteRefusal(config.Confluence, options.AllowProtectedSpace),
+            options.Scope);
     }
 
     /// <summary>
@@ -129,7 +142,7 @@ public static class PublishPipeline
         WikiPage page,
         string? parentPath,
         PageBanner banner,
-        bool force,
+        PublishOptions options,
         List<PageConversionFailure> failures)
     {
         var resolvers = tree.ResolversFor(page.Path);
@@ -202,7 +215,26 @@ public static class PublishPipeline
         }
 
         var contentHash = ContentHash.OfBody(body);
-        var plan = PublishPlanner.PlanPage(page.Path, current, contentHash, PlanningHashes(attachments), force);
+        var plan = PublishPlanner.PlanPage(
+            page.Path, current, contentHash, PlanningHashes(attachments), options.Force);
+
+        // The scope is applied here, to the DECISION, and nowhere earlier: the page has already been
+        // converted, hashed and planned, so everything a full run knows about it is known. What changes is
+        // that a page outside the scope is skipped rather than written — no body, no uploads, and no
+        // approval revoked, because a run that writes nothing to a page cannot have invalidated it (§8).
+        var excluded = options.Scope is { } scope
+            && plan.Action != PagePublishAction.Skip
+            && !scope.Includes(page.Path, attachments.Values);
+
+        if (excluded)
+        {
+            plan = plan with
+            {
+                Action = PagePublishAction.Skip,
+                ChangedAttachments = [],
+                InvalidatesApproval = false,
+            };
+        }
 
         return new PlannedPage(
             page.Path,
@@ -211,7 +243,10 @@ public static class PublishPipeline
             plan,
             plan.WritesBody ? banner.InjectInto(body) : null,
             [.. attachments.Values.OrderBy(attachment => attachment.Name, StringComparer.Ordinal)],
-            diagnostics);
+            diagnostics)
+        {
+            ExcludedByScope = excluded,
+        };
     }
 
     private static Dictionary<string, string> PlanningHashes(

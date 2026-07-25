@@ -292,6 +292,131 @@ public sealed class PublishPipelineTests : IDisposable
         report.Pages.Count.ShouldBe(2);
     }
 
+    /// <summary>
+    /// The scope's whole contract (§6.2, PublishScope): it narrows what is WRITTEN, not what is KNOWN.
+    /// Both halves are asserted here because both are silent when broken — an orphan list narrowed to the
+    /// scope would offer the rest of the wiki to a later <c>--prune</c>, and a link map narrowed to the
+    /// scope would publish a page whose links point at nothing.
+    /// </summary>
+    [Fact]
+    public void A_scope_narrows_what_is_written_without_narrowing_what_is_known()
+    {
+        var state = Published(Plan(new DocumeState()));
+
+        // A page state remembers and the tree no longer has: an orphan a scoped run must still report.
+        state = StateUpdates.RecordPublish(
+            state,
+            "gone.md",
+            new PublishedPage(
+                "page-gone", "Gone", null, "sha256:gone", 1, new Dictionary<string, string>(StringComparer.Ordinal)));
+
+        Write("README.md", "# Home\n\nRewritten, and [the guide](guides/setup.md) is still linked.\n");
+        Write("guides/setup.md", "---\ntitle: Setup Guide\n---\n\n# Setup\n\nRewritten too.\n");
+
+        var report = Plan(state, scope: PublishScope.ForPages(["README.md"]));
+
+        var home = Page(report, "README.md");
+        home.Action.ShouldBe(PagePublishAction.Update);
+        home.ExcludedByScope.ShouldBeFalse();
+
+        var setup = Page(report, "guides/setup.md");
+        setup.Action.ShouldBe(PagePublishAction.Skip);
+        setup.ExcludedByScope.ShouldBeTrue();
+        setup.UploadBody.ShouldBeNull();
+        setup.Plan.ChangedAttachments.ShouldBeEmpty();
+
+        report.ExcludedByScope.Select(page => page.Path).ShouldBe(["guides/setup.md"]);
+        report.Scope.ShouldNotBeNull().Description.ShouldBe("--page");
+
+        // Known, not written: the whole tree was still walked, so the deleted page is still an orphan…
+        report.OrphanPages.ShouldBe(["gone.md"]);
+
+        // …and the link map still knew the title of a page this run does not publish. "the guide" is the
+        // link text; "Setup Guide" can only come from the excluded page's frontmatter.
+        home.UploadBody.ShouldNotBeNull().ShouldContain("Setup Guide");
+    }
+
+    /// <summary>
+    /// <c>--changed-since</c> sees files, not pages, and a changed image moves no markdown. Without this,
+    /// the flag would be the one publish that cannot ship a changed picture (PublishScope).
+    /// </summary>
+    [Fact]
+    public void A_changed_asset_pulls_in_the_pages_that_reference_it()
+    {
+        var state = Published(Plan(new DocumeState()));
+
+        Write("notes.md", "# Notes\n\nA new page with no image.\n");
+        WriteBytes("images/logo.png", [9, 9, 9, 9]);
+
+        var report = Plan(
+            state, scope: PublishScope.ForFilesChangedSince("abc1234", ["images/logo.png"]));
+
+        // Both pages reference the logo — README directly, setup.md as ../images/logo.png.
+        foreach (var path in (string[])["README.md", "guides/setup.md"])
+        {
+            var page = Page(report, path);
+            page.Action.ShouldBe(PagePublishAction.UpdateAttachments);
+            page.ExcludedByScope.ShouldBeFalse();
+            page.Plan.ChangedAttachments.ShouldBe(["images_logo.png"]);
+        }
+
+        // The new page is a create a full run would have made, and this run says so instead of making it.
+        var notes = Page(report, "notes.md");
+        notes.Action.ShouldBe(PagePublishAction.Skip);
+        notes.ExcludedByScope.ShouldBeTrue();
+
+        report.UploadCount.ShouldBe(2);
+        report.ExcludedByScope.Select(page => page.Path).ShouldBe(["notes.md"]);
+    }
+
+    /// <summary>
+    /// §8 invalidates approval on a content change the run publishes. A page the scope held back was not
+    /// published, so its approval stands — the control run proves the scope is the only reason.
+    /// </summary>
+    [Fact]
+    public void A_scope_never_revokes_the_approval_of_a_page_it_excludes()
+    {
+        var state = Approve(Published(Plan(new DocumeState())), "guides/setup.md");
+
+        Write("guides/setup.md", "---\ntitle: Setup Guide\n---\n\n# Setup\n\nRewritten.\n");
+
+        var scoped = Plan(state, scope: PublishScope.ForPages(["README.md"]));
+        scoped.InvalidatedApprovals.ShouldBeEmpty();
+        Page(scoped, "guides/setup.md").Plan.InvalidatesApproval.ShouldBeFalse();
+
+        var full = Plan(state);
+        full.InvalidatedApprovals.Select(page => page.Path).ShouldBe(["guides/setup.md"]);
+    }
+
+    /// <summary>
+    /// A scope does not narrow §7 either. A page the converter refuses fails the whole run even when the
+    /// scope excludes it: the repo is broken whichever pages this particular run was going to write, and a
+    /// scoped publish that quietly tolerates an unconvertible page is how one stays broken.
+    /// </summary>
+    [Fact]
+    public void A_page_the_converter_refuses_still_fails_a_run_that_excludes_it()
+    {
+        Write("legacy.md", "# Legacy\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```\n");
+
+        var report = Plan(new DocumeState(), scope: PublishScope.ForPages(["README.md"]));
+
+        report.Failures.Select(failure => failure.Path).ShouldBe(["legacy.md"]);
+        report.CanPublish.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The honest number is what the scope cost, not how many pages it named: a page that was going to be
+    /// skipped anyway lost nothing.
+    /// </summary>
+    [Fact]
+    public void A_page_that_was_going_to_be_skipped_anyway_is_not_reported_as_excluded()
+    {
+        var report = Plan(Published(Plan(new DocumeState())), scope: PublishScope.ForPages(["README.md"]));
+
+        report.SkipCount.ShouldBe(2);
+        report.ExcludedByScope.ShouldBeEmpty();
+    }
+
     [Fact]
     public void Planning_touches_no_file()
     {
@@ -324,8 +449,11 @@ public sealed class PublishPipelineTests : IDisposable
         },
     };
 
-    private static PublishOptions Options(bool force = false, DateOnly? generatedOn = null) =>
-        new() { Force = force, GeneratedOn = generatedOn };
+    private static PublishOptions Options(
+        bool force = false,
+        DateOnly? generatedOn = null,
+        PublishScope? scope = null) =>
+        new() { Force = force, GeneratedOn = generatedOn, Scope = scope };
 
     private static PlannedPage Page(PublishReport report, string path) =>
         report.Pages.Single(page => string.Equals(page.Path, path, StringComparison.Ordinal));
@@ -355,8 +483,12 @@ public sealed class PublishPipelineTests : IDisposable
         return state with { Pages = pages };
     }
 
-    private PublishReport Plan(DocumeState state, bool force = false, DateOnly? generatedOn = null) =>
-        PublishPipeline.Plan(Config(), Tree(), state, Options(force, generatedOn ?? RunDate));
+    private PublishReport Plan(
+        DocumeState state,
+        bool force = false,
+        DateOnly? generatedOn = null,
+        PublishScope? scope = null) =>
+        PublishPipeline.Plan(Config(), Tree(), state, Options(force, generatedOn ?? RunDate, scope));
 
     /// <summary>
     /// The state a real run would have written after <paramref name="report"/>, via the same

@@ -80,6 +80,19 @@ public sealed record PlannedPage(
 {
     /// <summary>Shorthand for <see cref="PagePublishPlan.Action"/>.</summary>
     public PagePublishAction Action => Plan.Action;
+
+    /// <summary>
+    /// True when a <see cref="PublishScope"/> forced this page to <see cref="PagePublishAction.Skip"/> —
+    /// a page the run would otherwise have written.
+    /// </summary>
+    /// <remarks>
+    /// Kept apart from an ordinary skip because the two mean opposite things to a reader: "nothing moved"
+    /// versus "something moved and this run left it alone". A scoped run that printed the second as the
+    /// first would read exactly like a full run, which is the failure mode of the whole feature.
+    /// Deliberately false for a page that was going to skip anyway: the honest number is what the scope
+    /// cost, not how many pages it named.
+    /// </remarks>
+    public bool ExcludedByScope { get; init; }
 }
 
 /// <summary>
@@ -105,13 +118,18 @@ public sealed record PageConversionFailure(string Path, string Message);
 /// <param name="WriteRefusal">
 /// Why a real run must not write, from <see cref="PublishGuard.WriteRefusal"/>, or <c>null</c>.
 /// </param>
+/// <param name="Scope">
+/// The scope that narrowed the write set (<c>--changed-since</c>, <c>--page</c>), or <c>null</c> for a
+/// whole-tree run. Carried so the report can name what narrowed it.
+/// </param>
 public sealed record PublishReport(
     string? SpaceKey,
     DateOnly? GeneratedOn,
     IReadOnlyList<PlannedPage> Pages,
     IReadOnlyList<PageConversionFailure> Failures,
     IReadOnlyList<string> OrphanPages,
-    string? WriteRefusal)
+    string? WriteRefusal,
+    PublishScope? Scope = null)
 {
     /// <summary>False when the target space is locked (<see cref="PublishGuard"/>).</summary>
     public bool CanWrite => WriteRefusal is null;
@@ -131,8 +149,17 @@ public sealed record PublishReport(
     /// <summary>Pages whose body is unchanged but an attachment's bytes moved: no page version spent.</summary>
     public int AttachmentOnlyCount => Count(PagePublishAction.UpdateAttachments);
 
-    /// <summary>Pages where nothing moved.</summary>
+    /// <summary>
+    /// Pages this run writes nothing to: nothing moved, or <see cref="Scope"/> held the page back.
+    /// <see cref="ExcludedByScope"/> separates the two.
+    /// </summary>
     public int SkipCount => Count(PagePublishAction.Skip);
+
+    /// <summary>
+    /// Pages <see cref="Scope"/> kept from being written that a whole-tree run would have written. Named
+    /// rather than counted, so a scoped run can say exactly what it left alone.
+    /// </summary>
+    public IReadOnlyList<PlannedPage> ExcludedByScope => [.. Pages.Where(page => page.ExcludedByScope)];
 
     /// <summary>Attachment uploads across the run, counted per page (attachments are per page).</summary>
     public int UploadCount => Pages.Sum(page => page.Plan.ChangedAttachments.Count);

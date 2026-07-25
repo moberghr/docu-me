@@ -399,6 +399,64 @@ public sealed class PublishExecutorTests : IDisposable
     }
 
     /// <summary>
+    /// A scoped run's one structural trap: the page asked for hangs under a page that has never been
+    /// published, and the scope excludes the parent. Filing the child anywhere else would put it where the
+    /// tree does not say, so it fails — naming the scope, because blaming the parent for a failure it did
+    /// not have would send the reader looking for a bug.
+    /// </summary>
+    [Fact]
+    public async Task Says_the_parent_is_out_of_scope_rather_than_blaming_it()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var outcome = await ExecuteAsync(
+            server, new DocumeState(), scope: PublishScope.ForPages(["guides/setup.md"]));
+
+        outcome.Succeeded.ShouldBeFalse();
+
+        var failure = outcome.Failures.Single();
+        failure.Path.ShouldBe("guides/setup.md");
+        failure.Message.ShouldContain("scope");
+
+        // Nothing was created: not the excluded parent, and not the child that needed it.
+        Requests(server, "POST", "/wiki/api/v2/pages").ShouldBeEmpty();
+        outcome.StateChanged.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The parent-drift warning tells a reader to re-run with <c>--force</c>. For a page the scope
+    /// deliberately held back that advice is wrong — the scope, not the missing body, is why the page
+    /// stayed put, and the report already names it as excluded.
+    /// </summary>
+    [Fact]
+    public async Task Does_not_nag_about_a_reparented_page_the_scope_excluded()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+
+        // The new index reparents guides/setup.md, and its body changes too — so a full run would update
+        // it and carry the new parent along. This run's scope covers only the index.
+        Write("guides/README.md", "# Guides\n\nIndex page added after the fact.\n");
+        Write("guides/setup.md", SetupPage + "\n\nOne more line.\n");
+        server.ResetLogEntries();
+
+        var second = await ExecuteAsync(
+            server, first.State, scope: PublishScope.ForPages(["guides/README.md"]));
+
+        second.Succeeded.ShouldBeTrue();
+        second.Pages.Single().Path.ShouldBe("guides/README.md");
+        second.Warnings.ShouldNotContain(warning =>
+            warning.Contains("guides/setup.md", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// A wrong base URL or a Confluence outage must read as a sentence, not a stack trace — and must
     /// still return the state accumulated so far. Caught by the first CLI smoke run of the write path.
     /// </summary>
@@ -565,7 +623,8 @@ public sealed class PublishExecutorTests : IDisposable
         DocumeConfig? config = null,
         string? repoSha = null,
         DiagramRenderer? renderer = null,
-        Uri? baseUrl = null)
+        Uri? baseUrl = null,
+        PublishScope? scope = null)
     {
         config ??= Config();
 
@@ -573,7 +632,7 @@ public sealed class PublishExecutorTests : IDisposable
             config,
             WikiTree.Load(_dir),
             state,
-            new PublishOptions { GeneratedOn = new DateOnly(2026, 7, 25) });
+            new PublishOptions { GeneratedOn = new DateOnly(2026, 7, 25), Scope = scope });
 
         var options = new ConfluenceClientOptions
         {
