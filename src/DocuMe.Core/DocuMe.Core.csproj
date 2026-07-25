@@ -5,6 +5,18 @@
     <Description>Core library for DocuMe — the repo-to-Confluence docs lifecycle toolkit.</Description>
   </PropertyGroup>
 
+  <!-- The consumer-facing files `docume init` scaffolds (PLAN.md §6.1), embedded from the repo-root
+       templates/ directory rather than duplicated into this project. templates/ is already a tested
+       contract (WorkflowTemplateTests reads that exact directory), so a second copy in here would
+       drift away from the tested one silently. Globbed on purpose: a workflow added to the tree
+       ships without anyone remembering to register it. See Scaffolding/BundledTemplates.cs. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\templates\workflows\*.yml"
+                      LogicalName="DocuMe.Core.Templates.workflows.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\templates\tools\render-mermaid.mjs"
+                      LogicalName="DocuMe.Core.Templates.tools.render-mermaid.mjs" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- Markdown parsing + custom storage-format renderer (PLAN.md §4, §7). -->
     <PackageReference Include="Markdig" />

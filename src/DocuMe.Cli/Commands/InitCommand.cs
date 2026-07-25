@@ -56,5 +56,13 @@ internal static class InitCommand
         }
 
         AnsiConsole.Write(table);
+
+        // Below the table rather than as a third column: a note explains why a path is not the
+        // obvious one and runs to a sentence or two, which a column would wrap into noise.
+        foreach (var note in results.Where(r => r.Note is not null))
+        {
+            AnsiConsole.MarkupLine(
+                $"[yellow]note[/] {note.RelativePath.EscapeMarkup()}: {note.Note!.EscapeMarkup()}");
+        }
     }
 }

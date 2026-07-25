@@ -75,6 +75,26 @@ public sealed class WorkflowTemplateTests
         missing.ShouldBeEmpty($"Missing workflow template(s) under {Directory}.");
     }
 
+    /// <summary>
+    /// And nothing beyond them. <c>docume init</c> ships this directory by glob, so a template
+    /// dropped in here without being added to <see cref="Templates"/> would reach consumer repos
+    /// with none of the assertions below ever having read it.
+    /// </summary>
+    [Fact]
+    public void No_template_ships_without_being_covered_here()
+    {
+        var uncovered = System.IO.Directory
+            .GetFiles(Directory, "*.yml")
+            .Select(Path.GetFileName)
+            .Where(name => !Templates.Contains(name, StringComparer.Ordinal))
+            .ToList();
+
+        uncovered.ShouldBeEmpty(
+            $"Workflow template(s) under {Directory} that `docume init` ships but this class does not "
+            + "check. Add them to Templates (and to ConfluenceFacing / ModelDriven / SkillDriven as "
+            + "they apply).");
+    }
+
     [Fact]
     public void Every_template_is_a_yaml_workflow()
     {
