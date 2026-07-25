@@ -338,6 +338,57 @@ public sealed class ConfluenceClient : IDisposable
     }
 
     /// <summary>
+    /// Moves a page to the space trash — the one destructive verb in the tool, and the delete half of a
+    /// confirmed <c>--prune</c> (PLAN.md §6.2 "Orphans", rule §9.6).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Trash, not purge.</strong> A bare <c>DELETE</c> moves the page to the space trash, where
+    /// a human can restore it; <c>?purge=true</c> deletes permanently and only works on a page that is
+    /// already trashed. This client sends the recoverable one and offers no way to ask for the other: a
+    /// machine that permanently deletes human-visible pages has no undo, which is exactly why §6.2 puts
+    /// an interactive confirmation in front of this call.
+    /// </para>
+    /// <para>
+    /// A 404 arrives as an ordinary <see cref="ConfluenceApiException"/> rather than being swallowed
+    /// here, matching <see cref="RemoveLabelAsync"/>: "already gone" happens to be the state a prune
+    /// wants, but it is the caller who knows that, and a 404 from an id typo means something else
+    /// entirely.
+    /// </para>
+    /// <para>
+    /// Children are Confluence's business, not this method's. Cloud has historically re-parented the
+    /// children of a deleted page up one level rather than trashing them with it, so the caller deletes
+    /// deepest-first and refuses to delete a page that still has children it is keeping — see
+    /// <see cref="Publishing.PrunePlanner"/>.
+    /// </para>
+    /// </remarks>
+    /// <param name="pageId">The page to trash.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">
+    /// 401/403: token expired, or the account can edit but not delete.
+    /// </exception>
+    /// <exception cref="ConfluenceApiException">
+    /// Any other non-success status, including a page that is already gone (404).
+    /// </exception>
+    public async Task DeletePageAsync(string pageId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
+
+        var path = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}";
+
+        var (statusCode, body) = await SendAsync(
+                HttpMethod.Delete,
+                path,
+                content: null,
+                ApiSurface.V2,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        // 204 with an empty body is the documented success, and it needs no deserialization.
+        ThrowIfFailed(path, statusCode, body, $"deleting page {pageId}");
+    }
+
+    /// <summary>
     /// Uploads a file to a page, replacing whatever is already attached under that name (PLAN.md §6.2
     /// step 5).
     /// </summary>

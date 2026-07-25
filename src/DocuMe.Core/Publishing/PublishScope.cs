@@ -1,5 +1,21 @@
 namespace DocuMe.Core.Publishing;
 
+/// <summary>Which flag asked for a <see cref="PublishScope"/> (PLAN.md §6.2, last paragraph).</summary>
+/// <remarks>
+/// Carried as a value rather than parsed back out of <see cref="PublishScope.Description"/> because one
+/// decision turns on it: <c>--prune</c> composes with <c>--changed-since</c> and contradicts
+/// <c>--page</c> (<see cref="PruneGuard"/>), and a refusal that guards a delete should not depend on the
+/// spelling of a display string.
+/// </remarks>
+public enum PublishScopeKind
+{
+    /// <summary><c>--page &lt;path&gt;</c>: an explicit list of markdown paths that exist in the tree.</summary>
+    Pages,
+
+    /// <summary><c>--changed-since &lt;sha&gt;</c>: whatever git reported, pages and assets alike.</summary>
+    ChangedFiles,
+}
+
 /// <summary>
 /// Which files a scoped publish run may write: <c>--changed-since &lt;sha&gt;</c> and
 /// <c>--page &lt;path&gt;</c> (PLAN.md §6.2, last paragraph).
@@ -39,16 +55,20 @@ public sealed class PublishScope
 {
     private readonly HashSet<string> _paths;
 
-    private PublishScope(string description, IEnumerable<string> paths)
+    private PublishScope(PublishScopeKind kind, string description, IEnumerable<string> paths)
     {
         _paths = paths
             .Select(Normalize)
             .Where(path => path.Length > 0)
             .ToHashSet(StringComparer.Ordinal);
 
+        Kind = kind;
         Description = description;
         Paths = [.. _paths.Order(StringComparer.Ordinal)];
     }
+
+    /// <summary>Which flag produced this scope.</summary>
+    public PublishScopeKind Kind { get; }
 
     /// <summary>
     /// How the scope was asked for, spelled as the flag that produced it, so a report can name what
@@ -68,7 +88,7 @@ public sealed class PublishScope
     {
         ArgumentNullException.ThrowIfNull(pagePaths);
 
-        return new PublishScope("--page", pagePaths);
+        return new PublishScope(PublishScopeKind.Pages, "--page", pagePaths);
     }
 
     /// <summary>
@@ -82,7 +102,7 @@ public sealed class PublishScope
         ArgumentException.ThrowIfNullOrWhiteSpace(sha);
         ArgumentNullException.ThrowIfNull(changedPaths);
 
-        return new PublishScope($"--changed-since {sha}", changedPaths);
+        return new PublishScope(PublishScopeKind.ChangedFiles, $"--changed-since {sha}", changedPaths);
     }
 
     /// <summary>

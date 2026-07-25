@@ -997,6 +997,68 @@ public sealed class ConfluenceClientTests
         server.LogEntries.Count.ShouldBe(1);
     }
 
+    /// <summary>
+    /// The delete half of <c>--prune</c> (PLAN.md §6.2 "Orphans"). Trash, not purge: a bare
+    /// <c>DELETE</c> is recoverable from the space trash, and <c>?purge=true</c> is the one thing this
+    /// client must never send, because a machine that permanently deletes pages has no undo.
+    /// </summary>
+    [Fact]
+    public async Task Deletes_a_page_to_the_trash_and_never_purges()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ApiPath($"pages/{PageId}")).UsingDelete())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NoContent));
+
+        using var client = CreateClient(server);
+        await client.DeletePageAsync(PageId, TestContext.Current.CancellationToken);
+
+        var request = LastRequest(server);
+        request.Method.ShouldBe("DELETE");
+        request.Path.ShouldBe(ApiPath($"pages/{PageId}"));
+        request.Query!.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A page that is already gone is reported rather than swallowed, matching
+    /// <c>RemoveLabelAsync</c>: "already gone" is the state a prune wants, but only the caller knows
+    /// that, and a 404 from a mistyped id means something else entirely.
+    /// </summary>
+    [Fact]
+    public async Task A_page_that_is_already_gone_surfaces_as_a_404()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ApiPath($"pages/{PageId}")).UsingDelete())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NotFound).WithBody("{}"));
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceApiException>(
+            () => client.DeletePageAsync(PageId, TestContext.Current.CancellationToken));
+
+        exception.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        exception.Operation!.ShouldContain(PageId);
+    }
+
+    /// <summary>
+    /// Deleting needs more permission in Confluence than editing, so a token that published happily can
+    /// still be refused here — and it must stop the run rather than be retried (rule §1.2).
+    /// </summary>
+    [Fact]
+    public async Task A_token_that_cannot_delete_stops_rather_than_retrying()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ApiPath($"pages/{PageId}")).UsingDelete())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Forbidden));
+
+        using var client = CreateClient(server);
+        _ = await Should.ThrowAsync<ConfluenceAuthenticationException>(
+            () => client.DeletePageAsync(PageId, TestContext.Current.CancellationToken));
+
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
     private static ConfluenceClient CreateClient(
         WireMockServer server,
         int maxRetryAttempts = 2,

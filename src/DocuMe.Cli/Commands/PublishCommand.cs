@@ -71,6 +71,11 @@ internal static class PublishCommand
                 + "path that is not in the tree is an error.",
             DefaultValueFactory = _ => [],
         };
+        var pruneOption = new Option<bool>("--prune")
+        {
+            Description = "After publishing, delete the orphan pages (state entries whose markdown file "
+                + "is gone) from Confluence. Asks first, needs a terminal, refuses to run in CI.",
+        };
 
         var command = new Command(
             "publish",
@@ -84,6 +89,7 @@ internal static class PublishCommand
             treeOption,
             changedSinceOption,
             pageOption,
+            pruneOption,
         };
 
         command.SetAction((parseResult, cancellationToken) => RunAsync(
@@ -95,6 +101,7 @@ internal static class PublishCommand
             parseResult.GetValue(treeOption),
             parseResult.GetValue(changedSinceOption),
             parseResult.GetValue(pageOption) ?? [],
+            parseResult.GetValue(pruneOption),
             cancellationToken));
 
         return command;
@@ -109,6 +116,7 @@ internal static class PublishCommand
         bool printTree,
         string? changedSince,
         string[] pagePaths,
+        bool prune,
         CancellationToken cancellationToken)
     {
         if (changedSince is { Length: > 0 } && pagePaths.Length > 0)
@@ -227,13 +235,54 @@ internal static class PublishCommand
             return 1;
         }
 
+        if (prune && PruneRefusal(report, dryRun) is { } pruneRefusal)
+        {
+            return Fail(pruneRefusal);
+        }
+
         if (dryRun)
         {
+            if (prune)
+            {
+                RenderPrunePlan(PrunePlanner.Plan(state, report.OrphanPages, report.Scope), dryRun: true);
+            }
+
             return 0;
         }
 
-        return await PublishAsync(config, repoRoot, wikiRoot, resolvedStatePath, report, state, cancellationToken)
+        return await PublishAsync(
+                config, repoRoot, wikiRoot, resolvedStatePath, report, state, prune, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Why <c>--prune</c> cannot run, or <c>null</c>. <see cref="PruneGuard"/> plus the one precondition
+    /// only the CLI can see: a prompt needs somewhere to prompt.
+    /// </summary>
+    /// <remarks>
+    /// A refusal fails the whole command, <c>--dry-run</c> included. <c>--prune</c> in CI is a broken
+    /// command line whatever else the run does, and saying so on the dry-run is better than waiting for
+    /// the real one; a pipeline that wants to watch for orphans needs no flag, because every run reports
+    /// them.
+    /// </remarks>
+    private static string? PruneRefusal(PublishReport report, bool dryRun)
+    {
+        if (PruneGuard.Refusal(report) is { } refusal)
+        {
+            return refusal;
+        }
+
+        // Checked here rather than answered "no" inside the executor: being unable to ask is a broken
+        // precondition, and a run that exited 0 having silently skipped the delete would read as a prune
+        // that found nothing.
+        if (!dryRun && !AnsiConsole.Profile.Capabilities.Interactive)
+        {
+            return "--prune has to ask before it deletes, but this terminal cannot prompt (stdin is not a "
+                + "TTY). Run it from an interactive shell, or drop --prune: orphans are reported by every "
+                + "run, so nothing is lost by leaving them for one.";
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -247,6 +296,7 @@ internal static class PublishCommand
         string statePath,
         PublishReport report,
         DocumeState state,
+        bool prune,
         CancellationToken cancellationToken)
     {
         ConfluenceCredentials credentials;
@@ -292,7 +342,80 @@ internal static class PublishCommand
 
         RenderOutcome(outcome, sha);
 
-        return outcome.Succeeded ? 0 : 1;
+        if (!prune)
+        {
+            return outcome.Succeeded ? 0 : 1;
+        }
+
+        return await PruneAsync(client, statePath, report, outcome, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The orphan post-pass (§6.2 "Orphans", rule §9.6): plan the deletes from the state the publish just
+    /// produced, ask, then trash them deepest-first.
+    /// </summary>
+    /// <remarks>
+    /// Planned against <see cref="PublishOutcome.State"/> rather than the state that was loaded, because a
+    /// page the publish just moved is a page the prune no longer has to refuse.
+    /// </remarks>
+    private static async Task<int> PruneAsync(
+        ConfluenceClient client,
+        string statePath,
+        PublishReport report,
+        PublishOutcome outcome,
+        CancellationToken cancellationToken)
+    {
+        if (!outcome.Succeeded)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine(
+                "[yellow]--prune was not run:[/] the publish did not finish clean, so state does not yet "
+                + "describe the tree and deleting pages on top of that is the wrong order. Fix the "
+                + "failures above, re-run, and the orphans will still be there.");
+
+            return 1;
+        }
+
+        var plan = PrunePlanner.Plan(outcome.State, report.OrphanPages, report.Scope);
+        RenderPrunePlan(plan, dryRun: false);
+
+        if (plan.IsEmpty)
+        {
+            return 0;
+        }
+
+        var pruned = await new PruneExecutor(client)
+            .PruneAsync(plan, outcome.State, ConfirmPruneAsync, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (pruned.StateChanged)
+        {
+            StateStore.Save(statePath, pruned.State);
+            AnsiConsole.MarkupLine($"State written: [blue]{statePath.EscapeMarkup()}[/]");
+        }
+
+        RenderPruneOutcome(pruned);
+
+        return pruned.Succeeded ? 0 : 1;
+    }
+
+    /// <summary>
+    /// The confirmation §6.2 requires, listing every page by name first: this is the only prompt in the
+    /// tool that cannot be undone outside the space trash, so it defaults to no.
+    /// </summary>
+    private static async Task<bool> ConfirmPruneAsync(
+        IReadOnlyList<string> pagePaths,
+        CancellationToken cancellationToken)
+    {
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine(
+            $"[red]--prune will DELETE {pagePaths.Count} page(s) from Confluence[/] — moved to the space "
+            + "trash, where a human can restore them:");
+        RenderPaths(pagePaths);
+
+        return await AnsiConsole
+            .ConfirmAsync($"Delete these {pagePaths.Count} page(s)?", defaultValue: false, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -484,6 +607,101 @@ internal static class PublishCommand
             $"[yellow]ORPHANS[/] — {report.OrphanPages.Count} state entr(ies) whose markdown file is gone; "
             + "deleted only by --prune after confirmation");
         RenderPaths(report.OrphanPages);
+    }
+
+    /// <summary>
+    /// What <c>--prune</c> would do (§6.2 "Orphans"). The refusals and the out-of-scope orphans print on
+    /// every prune run: a page the plan will not delete has to be named, or "prune found nothing" and
+    /// "prune refused to touch four pages" look identical.
+    /// </summary>
+    /// <param name="plan">The plan.</param>
+    /// <param name="dryRun">
+    /// Whether to list the deletes here. A real run lists them in the confirmation prompt instead, which
+    /// is the copy that matters.
+    /// </param>
+    private static void RenderPrunePlan(PrunePlan plan, bool dryRun)
+    {
+        if (plan.Refused.Count > 0)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine(
+                $"[yellow]PRUNE REFUSED[/] — {plan.Refused.Count} orphan(s) left alone because deleting "
+                + "them would move pages this run keeps");
+
+            foreach (var refused in plan.Refused.Take(PagesPerSection))
+            {
+                AnsiConsole.MarkupLine($"  [yellow]•[/] {refused.Path.EscapeMarkup()}");
+                AnsiConsole.MarkupLine($"    [grey]{refused.Reason.EscapeMarkup()}[/]");
+            }
+
+            if (plan.Refused.Count > PagesPerSection)
+            {
+                AnsiConsole.MarkupLine($"  [grey]… and {plan.Refused.Count - PagesPerSection} more[/]");
+            }
+        }
+
+        if (plan.OutOfScope.Count > 0)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine(
+                $"[grey]PRUNE OUT OF SCOPE[/] — {plan.OutOfScope.Count} orphan(s) this run's scope does "
+                + "not cover; a full run would offer to delete them");
+            RenderPaths(plan.OutOfScope);
+        }
+
+        if (!dryRun)
+        {
+            return;
+        }
+
+        AnsiConsole.WriteLine();
+
+        if (plan.IsEmpty)
+        {
+            AnsiConsole.MarkupLine("[grey]PRUNE[/] — nothing to delete.");
+            return;
+        }
+
+        AnsiConsole.MarkupLine(
+            $"[yellow]PRUNE[/] — a real run would ask, then delete {plan.Pages.Count} page(s), deepest "
+            + "first:");
+        RenderPaths(plan.Pages.Select(page => page.Path));
+    }
+
+    private static void RenderPruneOutcome(PruneOutcome outcome)
+    {
+        foreach (var warning in outcome.Warnings.Take(PagesPerSection))
+        {
+            AnsiConsole.MarkupLine($"[yellow]•[/] {warning.EscapeMarkup()}");
+        }
+
+        if (outcome.Warnings.Count > PagesPerSection)
+        {
+            AnsiConsole.MarkupLine($"  [grey]… and {outcome.Warnings.Count - PagesPerSection} more warning(s)[/]");
+        }
+
+        foreach (var failure in outcome.Failures)
+        {
+            AnsiConsole.MarkupLine($"  [red]•[/] {failure.Path.EscapeMarkup()}");
+            AnsiConsole.MarkupLine($"    [grey]{failure.Message.EscapeMarkup()}[/]");
+        }
+
+        AnsiConsole.WriteLine();
+
+        if (outcome.StoppedBecause is { } stopped)
+        {
+            AnsiConsole.MarkupLine($"[red]PRUNE STOPPED[/] — {stopped.EscapeMarkup()}");
+            return;
+        }
+
+        if (!outcome.Confirmed)
+        {
+            AnsiConsole.MarkupLine("[grey]PRUNE DECLINED[/] — nothing was deleted.");
+            return;
+        }
+
+        AnsiConsole.MarkupLine(
+            $"[green]PRUNED[/] — {outcome.Deleted.Count} page(s) moved to the space trash.");
     }
 
     private static void RenderFailures(PublishReport report)
