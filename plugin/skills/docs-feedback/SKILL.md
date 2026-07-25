@@ -272,10 +272,12 @@ Not your work, and worth knowing so the PR body does not promise the wrong thing
 1. Merging touches `<wiki.root>/**`, which fires the consumer's `docs-publish.yml`. The corrected pages
    republish and §8 invalidates the approvals on the ones whose content changed — the approval a reviewer
    gave the old text must not survive the new text.
-2. Once those pages are live, `docume sync --reply` answers the reviewers: one reply under each triaged
-   comment, and the inline ones closed where the API allows. That is the CLI's job, on a published page,
-   with the fix already live. It stamps `repliedAt` on each item it answers, which is why it can never
-   answer twice — whichever job ends up running it.
+2. Once those pages are live, the same `docs-publish.yml` run calls `docume sync --reply`, which answers
+   the reviewers: one reply under each triaged comment, and the inline ones closed where the API allows.
+   That is the CLI's job, on a published page, with the fix already live — and it happens in that job
+   because that is the only place where the merge and the republish have both already happened. It stamps
+   `repliedAt` on each item it answers, which is why it can never answer twice, and the same run commits
+   those stamps back through the `docs/sync` PR.
 
 That order is the reason clause 4 forbids you from replying: a reply posted from this run would say "fixed
 in the latest version" while the fix sat unmerged in a branch.

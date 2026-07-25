@@ -364,6 +364,117 @@ public sealed class WorkflowTemplateTests
     }
 
     [Fact]
+    public void The_publish_template_answers_the_reviewers_after_it_republishes()
+    {
+        const string name = "docs-publish.yml";
+        var steps = Steps(name, "publish");
+
+        var publish = steps.FindIndex(step => step.Run.Contains($"{ToolRun} publish", StringComparison.Ordinal));
+        var reply = steps.FindIndex(step => step.Run.Contains($"{ToolRun} sync --reply", StringComparison.Ordinal));
+
+        publish.ShouldBeGreaterThan(-1, $"{name} never publishes (§10).");
+
+        // §9 step 5 has to run from here and nowhere else. This is the one job where the sentence a
+        // reply makes — the reviewer's point is fixed in the page they are looking at — is true: the
+        // fix PR merged (that push is this trigger) and the page was republished (the step above), in
+        // that order, in one run. Nothing else fails if it is missing; reviewers just never hear back.
+        const string missing =
+            "docs-publish.yml must run `docume sync --reply` — it is the only job where a merge and a "
+            + "republish have both happened, so it is the only place a reply is true (§9 step 5).";
+
+        reply.ShouldBeGreaterThan(-1, missing);
+
+        const string ordered =
+            "docs-publish.yml answers the reviewers before republishing their page, so the reply "
+            + "claims a fix that is not live yet (§9 step 5).";
+
+        reply.ShouldBeGreaterThan(publish, ordered);
+    }
+
+    [Fact]
+    public void The_publish_template_commits_every_file_the_reply_pass_stamps()
+    {
+        const string name = "docs-publish.yml";
+        var text = Text(name);
+
+        // Both directories, and the archive is the one that matters most: §9 step 4 moves an item to the
+        // archive in the same PR that fixes the page, so by the time step 5 runs, the item being
+        // answered is usually no longer in the inbox.
+        text.ShouldContain(
+            FeedbackInbox.RelativeDirectory,
+            customMessage: $"{name} must locate the inbox the reply pass stamps (§5.4).");
+        text.ShouldContain(
+            FeedbackInbox.RelativeArchiveDirectory,
+            customMessage: $"{name} must locate the archive the reply pass stamps (§5.4).");
+
+        // `repliedAt` is the whole double-reply guard: a run that posts the replies and throws the
+        // stamps away answers every one of them again on the next publish, and each re-run posts
+        // another comment under a reviewer's comment. Nothing goes red when that happens.
+        const string staged =
+            "docs-publish.yml must stage the inbox and the archive alongside the state file — "
+            + "`sync --reply` stamps `repliedAt` into those files, and dropping the stamp re-posts "
+            + "every reply on the next publish (§5.4, §9 step 5).";
+
+        text.ShouldContain("git add \"$state\" \"$inbox\" \"$archive\"", customMessage: staged);
+
+        // And the early exit has to watch them too. A push that changes no page body still stamps the
+        // items the reply answered, so a guard reading the state alone calls that "nothing to do".
+        const string guarded =
+            "docs-publish.yml's early exit must watch the feedback directories as well as the state "
+            + "file: a publish can stamp an item while leaving state.json untouched.";
+
+        text.ShouldContain(
+            "git status --porcelain -- \"$state\" \"$inbox\" \"$archive\"",
+            customMessage: guarded);
+    }
+
+    [Fact]
+    public void A_refused_reply_still_carries_the_state_and_the_stamps()
+    {
+        const string name = "docs-publish.yml";
+        var steps = Steps(name, "publish");
+
+        var reply = steps.Single(step => step.Run.Contains($"{ToolRun} sync --reply", StringComparison.Ordinal));
+
+        reply.Id.ShouldNotBeEmpty($"{name}: the reply step needs an id for its exit code to be read.");
+
+        // The step holds its exit code instead of failing. `--reply` stamps each item the moment that
+        // item's reply lands, so a run that posts six of ten and then hits a 403 has six stamps on disk
+        // — and the state file above it holds the pageId of every page this run created. Letting the
+        // step fail skips the carry and throws away both: the six replies get posted again, and the
+        // next publish creates a second copy of every new page.
+        const string held =
+            "docs-publish.yml's reply step must hold its exit code (`|| code=$?`) rather than fail, so "
+            + "the carry step still runs — a failed reply must not cost the state file or the stamps "
+            + "the replies that did land wrote.";
+
+        reply.Run.ShouldContain("|| code=$?", customMessage: held);
+
+        var carry = steps.FindIndex(step => step.Run.Contains("git add \"$state\"", StringComparison.Ordinal));
+        var fails = steps.FindIndex(step => step.If.Contains($"steps.{reply.Id}.outputs", StringComparison.Ordinal));
+
+        carry.ShouldBeGreaterThan(-1, $"{name} never carries the state file into the PR.");
+
+        // Nothing in between. Every step standing between a posted reply and the commit that records it
+        // is a step whose failure turns one answered comment into two on the next publish — the dashboard
+        // refresh is the obvious candidate, and it belongs before the reply because losing it costs a
+        // stale table and nothing in the repo.
+        const string adjacent =
+            "docs-publish.yml must carry the stamps in the step right after the replies are posted: "
+            + "anything in between is a failure that re-posts a reply a reviewer already received.";
+
+        carry.ShouldBe(steps.IndexOf(reply) + 1, adjacent);
+
+        // Held, not swallowed. Without this the job is green while a reviewer's comment sits unanswered.
+        const string reported =
+            "docs-publish.yml holds the reply exit code and never checks it, so Confluence refusing a "
+            + "reply leaves a green check.";
+
+        fails.ShouldBeGreaterThan(-1, reported);
+        fails.ShouldBeGreaterThan(carry, $"{name} must fail the job only after the state is safe.");
+    }
+
+    [Fact]
     public void The_sticky_comment_marker_matches_the_one_the_CLI_writes()
     {
         var env = Mapping(Mapping(Mapping(Root("docs-drift-pr.yml"), "jobs"), "comment"), "env");
@@ -409,6 +520,37 @@ public sealed class WorkflowTemplateTests
     private static IEnumerable<string> Keys(YamlMappingNode node)
         => node.Children.Select(child => Scalar(child.Key));
 
+    /// <summary>
+    /// The steps of <paramref name="job"/>, in the order a runner executes them.
+    /// </summary>
+    /// <remarks>
+    /// Read structurally rather than by searching the file text, because the assertions that use this
+    /// are about order and about which step owns which line — and a step's <c>run</c> block is the only
+    /// place where "after" means "after". Two commands in one script would look ordered to a text search
+    /// while being one step to a runner, and a step's <c>if</c> would look like prose.
+    /// </remarks>
+    private static List<WorkflowStep> Steps(string template, string job)
+    {
+        var steps = Mapping(Mapping(Root(template), "jobs"), job).Children
+            .Single(child => IsKey(child.Key, "steps"))
+            .Value;
+
+        return ((YamlSequenceNode)steps).Children
+            .OfType<YamlMappingNode>()
+            .Select(step => new WorkflowStep(
+                Value(step, "id"),
+                Value(step, "name"),
+                Value(step, "run"),
+                Value(step, "if")))
+            .ToList();
+    }
+
+    /// <summary>The scalar at <paramref name="key"/>, or empty when the step does not carry it.</summary>
+    private static string Value(YamlMappingNode node, string key)
+        => node.Children.FirstOrDefault(child => IsKey(child.Key, key)).Value is YamlScalarNode scalar
+            ? scalar.Value ?? string.Empty
+            : string.Empty;
+
     private static YamlMappingNode Mapping(YamlMappingNode parent, string key)
         => (YamlMappingNode)parent.Children.Single(child => IsKey(child.Key, key)).Value;
 
@@ -440,4 +582,7 @@ public sealed class WorkflowTemplateTests
         throw new InvalidOperationException(
             $"No DocuMe.slnx above {AppContext.BaseDirectory}, so templates/workflows cannot be found.");
     }
+
+    /// <summary>One step of a workflow job — the four keys the assertions here read.</summary>
+    private sealed record WorkflowStep(string Id, string Name, string Run, string If);
 }

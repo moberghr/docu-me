@@ -1,8 +1,9 @@
 # DocuMe — republish changed pages on merge to the default branch (PLAN.md §10, fourth bullet).
 #
 # What it does: publishes only the pages touched since the last publish, lets §6.2 step 7 invalidate
-# the approvals on the pages whose content changed, refreshes the Documentation Status page, and
-# carries the machine-owned state file back into the repo through the `docs/sync` PR.
+# the approvals on the pages whose content changed, answers the reviewers whose feedback shipped in
+# this merge (§9 step 5), refreshes the Documentation Status page, and carries the machine-owned state
+# file plus the answered feedback items back into the repo through the `docs/sync` PR.
 #
 # EDIT BEFORE USE: `branches:` must name your default branch, and `paths:` your wiki root if it is not
 # docs/wiki.
@@ -51,7 +52,7 @@ jobs:
       - name: Restore tools
         run: dotnet tool restore
 
-      - name: Locate the state file
+      - name: Locate the state file and the feedback directories
         id: paths
         run: |
           set -euo pipefail
@@ -59,6 +60,11 @@ jobs:
           state="$root/_meta/state.json"
           echo "state=$state" >> "$GITHUB_OUTPUT"
           echo "sha=$(jq -r '.lastPublishedSha // empty' "$state")" >> "$GITHUB_OUTPUT"
+          # Both, because the reply pass reads both and stamps whichever holds the item it answered:
+          # §9 step 4 archives an item in the same PR that fixes the page, so by the time step 5 runs
+          # the item is usually in the archive rather than the inbox.
+          echo "inbox=$root/_meta/feedback/inbox" >> "$GITHUB_OUTPUT"
+          echo "archive=$root/_meta/feedback/archive" >> "$GITHUB_OUTPUT"
 
       # No lastPublishedSha means nothing has ever been published from this repo, so there is no
       # "changed" to narrow to and the whole tree is the correct scope. Unchanged pages are skipped by
@@ -77,9 +83,40 @@ jobs:
       - name: Refresh the dashboard
         run: dotnet tool run docume dashboard
 
+      # §9 step 5, and this job is the only honest place for it. The reply says the reviewer's point is
+      # fixed in the published page, and that is true here and nowhere else: the fix PR has merged (this
+      # is a push to the default branch) and the page has been republished (a step above), in that order,
+      # in one run. Running it from docs-feedback.yml would answer a reviewer about a branch nobody has
+      # merged, which is why WorkflowTemplateTests forbids `docume sync` there.
+      #
+      # `--reply` is never in a bare `sync`, so the six-hourly cron in docs-sync.yml still writes nothing
+      # to Confluence. This is the one scheduled write, and it needs no --space: it answers comments on
+      # pages the state file already knows.
+      #
+      # LAST BEFORE THE CARRY, DELIBERATELY. `--reply` stamps `repliedAt` into each item the moment that
+      # item's reply lands, and that stamp is all that stops the same reply being posted again. Every
+      # step standing between the posting and the commit is a step whose failure turns one answered
+      # comment into two, so the dashboard refresh goes first — it writes a Confluence page and nothing
+      # in this repo, so losing it costs a stale table until the next run and nothing more.
+      #
+      # THE EXIT CODE IS HELD, NOT ALLOWED TO FAIL THE STEP, for the same reason. A run that posts six of
+      # ten replies and then hits a 403 has six stamps on disk. Failing here would skip the carry step
+      # and throw away both those stamps and the state file the publish wrote (which holds the pageId of
+      # every page created in this run — lose it and the next publish creates them again). The last step
+      # turns the held code into a red check, after the carry.
+      - name: Answer the reviewers whose feedback shipped
+        id: reply
+        run: |
+          set -euo pipefail
+          code=0
+          dotnet tool run docume sync --reply || code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
       # The state write is not optional bookkeeping: it holds the pageId of every page and the sha the
       # next --changed-since narrows against. Lose it and the next run has no id for a page it created,
-      # so it creates a second one.
+      # so it creates a second one. The feedback items ride along for the same kind of reason: `--reply`
+      # stamps `repliedAt` into the item it answered, and that stamp is the only thing stopping the next
+      # publish from posting the same reply again.
       #
       # It goes through a PR because direct pushes to a protected default branch do not work in this
       # org (§6.3's closing line). If yours lets the actions bot push, replace this step with a commit
@@ -88,29 +125,54 @@ jobs:
       # If the docs/sync branch is behind and holds approvals this state file does not, they come back
       # on the next `docume sync`: approvals are reconstructible from the live labels, pageIds are not.
       # Merge the PR promptly and the window closes.
-      - name: Carry the state file into the docs/sync PR
+      - name: Carry the state file and the answered feedback into the docs/sync PR
         run: |
           set -euo pipefail
           state='${{ steps.paths.outputs.state }}'
-          if git diff --quiet -- "$state"; then
-            echo "::notice title=DocuMe::State unchanged — no PR needed."
+          inbox='${{ steps.paths.outputs.inbox }}'
+          archive='${{ steps.paths.outputs.archive }}'
+
+          # All three paths, not the state alone. A push that changed no page body still stamps every
+          # item the reply pass answered, and a guard watching only the state would call that "nothing
+          # to do" and drop the stamps. `git status` rather than `git diff` because it sees an item that
+          # is not tracked yet as well as one that was edited; a pathspec matching nothing is not an
+          # error for it, so a repo that has never had feedback passes straight through.
+          if [ -z "$(git status --porcelain -- "$state" "$inbox" "$archive")" ]; then
+            echo "::notice title=DocuMe::State and feedback unchanged — no PR needed."
             exit 0
           fi
 
+          # Copy aside, switch branches, copy back — the same dance as docs-sync.yml, and for the same
+          # reason: the docs/sync branch carries its own copy of every file below, so switching to it
+          # with them modified here aborts. One difference from the sync job, which matters. There the
+          # inbox items are new and untracked, so `git clean` clears them; here they are already tracked
+          # (they arrived through an earlier docs/sync PR) and `--reply` edits them in place, which
+          # `git clean` does not touch. Hence the forced switch.
           cp "$state" "$RUNNER_TEMP/state.json"
+          rm -rf "$RUNNER_TEMP/feedback"
+          mkdir -p "$RUNNER_TEMP/feedback/inbox" "$RUNNER_TEMP/feedback/archive"
+          if [ -d "$inbox" ]; then cp -R "$inbox/." "$RUNNER_TEMP/feedback/inbox/"; fi
+          if [ -d "$archive" ]; then cp -R "$archive/." "$RUNNER_TEMP/feedback/archive/"; fi
+
           git fetch origin "$STATE_BRANCH" || true
           if git rev-parse --verify "origin/$STATE_BRANCH" >/dev/null 2>&1; then
-            git checkout -B "$STATE_BRANCH" "origin/$STATE_BRANCH"
+            git checkout -f -B "$STATE_BRANCH" "origin/$STATE_BRANCH"
           else
-            git checkout -B "$STATE_BRANCH"
+            git checkout -f -B "$STATE_BRANCH"
           fi
+
           cp "$RUNNER_TEMP/state.json" "$state"
+          mkdir -p "$inbox" "$archive"
+          cp -R "$RUNNER_TEMP/feedback/inbox/." "$inbox/"
+          cp -R "$RUNNER_TEMP/feedback/archive/." "$archive/"
 
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git add "$state"
+          # An empty directory is not fatal to `git add`, and git stores no such thing, so a repo with no
+          # feedback at all stages the state file and nothing else.
+          git add "$state" "$inbox" "$archive"
           if git diff --cached --quiet; then
-            echo "::notice title=DocuMe::Branch already holds this state."
+            echo "::notice title=DocuMe::Branch already holds this state and these replies."
             exit 0
           fi
           git commit -m "docs: DocuMe state after publishing ${GITHUB_SHA:0:7}"
@@ -119,4 +181,12 @@ jobs:
           gh pr view "$STATE_BRANCH" --json number >/dev/null 2>&1 || gh pr create \
             --head "$STATE_BRANCH" \
             --title 'docs: DocuMe state' \
-            --body 'Machine-owned state file (§5.3): page ids, versions, content hashes, approvals. Written by docs-publish.yml and docs-sync.yml. Review the diff, then merge.'
+            --body 'Machine-owned state file (§5.3): page ids, versions, content hashes, approvals. Written by docs-publish.yml and docs-sync.yml. May also carry feedback items stamped `repliedAt` by the reply pass (§9 step 5) — that stamp is what stops the same reply being posted twice, so merge it rather than dropping it. Review the diff, then merge.'
+
+      # Held from the reply step so the carry above could run first. Everything the reply pass managed to
+      # post is stamped and on its way to the repo by now; this is only the red check.
+      - name: Fail if Confluence refused a reply
+        if: steps.reply.outputs.code != '0'
+        run: |
+          echo "::error title=DocuMe::Confluence refused at least one reply (§9 step 5) — see the \"Answer the reviewers whose feedback shipped\" step. The replies that did land are stamped and carried in the docs/sync PR, so a re-run answers only what is left."
+          exit 1

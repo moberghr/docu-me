@@ -72,7 +72,9 @@ First release. Everything below is new, so it is grouped by what it does rather 
 ### Packaging
 
 - Six workflow templates shipped by `init`: publish on merge, sync on a schedule, drift on a PR, drift after
-  a deploy, nightly refresh, and feedback.
+  a deploy, nightly refresh, and feedback. The publish job closes the feedback loop: after republishing it
+  runs `sync --reply`, then carries the state file and the `repliedAt`-stamped items into the `docs/sync` PR
+  together, so a reviewer is answered once and only once.
 - A release workflow that fires on a `vX.Y.Z` tag: verify, restore, build, test, pack, push to GitHub
   Packages, cut the release. The verify step refuses the release unless the tag matches all three files
   carrying the version, and it runs first because a package on a feed cannot be unpublished.
