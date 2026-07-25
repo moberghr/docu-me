@@ -13,6 +13,7 @@ internal static class Program
             InitCommand.Build(),
             ConvertCommand.Build(),
             PublishCommand.Build(),
+            StatusCommand.Build(),
         };
 
         // Show help on a bare invocation so `docume` is self-describing rather than
