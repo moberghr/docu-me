@@ -549,6 +549,69 @@ public sealed class WorkflowTemplateTests
     }
 
     [Fact]
+    public void A_failed_dashboard_still_carries_the_feedback_the_sync_ingested()
+    {
+        const string name = "docs-sync.yml";
+        var steps = Steps(name, "sync");
+
+        // Both commands, and the dashboard is the one this test is really about. It writes a Confluence
+        // page and nothing in this repo, so its own failure costs a stale table — but a step that failed
+        // there would skip the PR step below and discard a SUCCESSFUL sync's state file and inbox items.
+        // Nothing is lost forever, unlike a publish's page ids: approvals are reconstructible from the live
+        // labels and the comments from a cursor that never advanced. What breaks is the loop. A dashboard
+        // that keeps failing means every six-hourly run reads a reviewer's comment and throws it away, and
+        // §9 stalls behind a red check that names the dashboard rather than the feedback.
+        var held = steps
+            .Where(step => step.Run.Contains(ToolRun, StringComparison.Ordinal))
+            .ToList();
+
+        held.Count.ShouldBe(2, $"{name} should run the sync and the dashboard (§10).");
+
+        foreach (var step in held)
+        {
+            step.Id.ShouldNotBeEmpty($"{name}: the \"{step.Name}\" step needs an id to publish its code.");
+
+            var unheld =
+                $"{name}: the \"{step.Name}\" step must hold its exit code (`|| code=$?`) rather than fail. "
+                + "A failure there skips the step that opens the docs/sync PR, which is the only thing "
+                + "that gets an ingested comment out of the runner (§6.3, §9).";
+
+            step.Run.ShouldContain("|| code=$?", customMessage: unheld);
+
+            var unreported =
+                $"{name}: the \"{step.Name}\" step holds its exit code without writing it to $GITHUB_OUTPUT, "
+                + "so the failure cannot be turned into a red check further down.";
+
+            step.Run.ShouldContain("echo \"code=$code\" >> \"$GITHUB_OUTPUT\"", customMessage: unreported);
+        }
+
+        var carry = steps.FindIndex(step => step.Run.Contains("git add \"$state\"", StringComparison.Ordinal));
+
+        carry.ShouldBeGreaterThan(-1, $"{name} never opens the docs/sync PR.");
+
+        foreach (var step in held)
+        {
+            steps
+                .IndexOf(step)
+                .ShouldBeLessThan(carry, $"{name}: \"{step.Name}\" must run before the PR is opened.");
+        }
+
+        // Held and never read is the worse of the two bugs this guards. A cron job nobody watches is
+        // exactly the job where a green check over a failed sync goes unnoticed for weeks, and the symptom
+        // is a dashboard that has quietly stopped agreeing with the labels a reviewer is adding.
+        var report = steps.FindIndex(step => held.All(
+            command => step.If.Contains($"steps.{command.Id}.outputs.code", StringComparison.Ordinal)));
+
+        const string unread =
+            "docs-sync.yml must fail the job on either held exit code — the sync and the dashboard — in "
+            + "one step after the PR is opened. A code that nothing reads is a green check over a failed "
+            + "sync.";
+
+        report.ShouldBeGreaterThan(-1, unread);
+        report.ShouldBeGreaterThan(carry, $"{name} must fail the job only after the feedback is safe.");
+    }
+
+    [Fact]
     public void The_sticky_comment_marker_matches_the_one_the_CLI_writes()
     {
         var env = Mapping(Mapping(Mapping(Root("docs-drift-pr.yml"), "jobs"), "comment"), "env");

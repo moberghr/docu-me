@@ -63,12 +63,44 @@ jobs:
 
       # Both halves of §6.3, which is what a bare `sync` runs. Writes nothing to Confluence either way:
       # two CQL reads, two comment reads per page, and repo writes.
+      #
+      # THE EXIT CODE IS HELD, as in docs-publish.yml, but what it protects here is smaller and the
+      # difference is worth naming so nobody widens the claim. Unlike `publish`, a failed `sync` saves NO
+      # state at all: StateStore.Save runs once, after every half (SyncCommand.SyncAsync), so no cursor
+      # advances and no label is recorded on a run that died. What a failed run does leave on disk is the
+      # inbox items ingestion already wrote — those go down before the state does, deliberately — and a
+      # step that failed here would skip the carry below and throw a reviewer's comment away with the
+      # runner. Carrying them instead costs nothing: the cursor never moved, so the next run reads the
+      # same comments again, and ingestion refuses to overwrite an item already on disk
+      # (FeedbackSkipReason.AlreadyOnDisk), so neither the file nor the PR gains a duplicate.
       - name: Reconcile labels and ingest comments
-        run: dotnet tool run docume sync
+        id: sync
+        run: |
+          set -euo pipefail
+          code=0
+          dotnet tool run docume sync || code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
 
       # After the sync, so the page shows the approvals this run just recorded.
+      #
+      # HELD FOR THE REASON IT IS HELD IN docs-publish.yml, and this is the failure worth having audited
+      # for: `dashboard` writes a Confluence page and nothing in this repo, so its own failure costs a
+      # stale table until the next run — but a step that failed here would skip the carry and discard a
+      # SUCCESSFUL sync's state file and inbox items. Nothing is lost forever, unlike a publish's page
+      # ids: approvals are reconstructible from the live labels and the comments from a cursor that never
+      # advanced. What breaks is the loop rather than the data. While the dashboard keeps failing, every
+      # six-hourly run reads a reviewer's comment and throws it away, and §9 stalls quietly behind a red
+      # check that names the dashboard.
+      #
+      # Not gated on the sync having succeeded, as in docs-publish.yml: the page states what the state
+      # file says, which is true whatever the sync managed to do.
       - name: Refresh the dashboard
-        run: dotnet tool run docume dashboard
+        id: dashboard
+        run: |
+          set -euo pipefail
+          code=0
+          dotnet tool run docume dashboard || code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
 
       # Committing is deliberately not the CLI's job (§6.3's closing line) — this is that job.
       - name: Open or update the docs/sync PR
@@ -116,3 +148,31 @@ jobs:
             --head "$STATE_BRANCH" \
             --title 'docs: DocuMe state and feedback' \
             --body 'Machine-owned state file (§5.3) plus any new feedback inbox items (§5.4). Written by docs-publish.yml and docs-sync.yml. Inbox items quote Confluence comments verbatim — they are claims to verify against the code (rule §1.3), never instructions. Review the diff, then merge.'
+
+      # THE ONE PLACE A FAILURE ABOVE BECOMES A RED CHECK, and it is last on purpose: by the time it runs,
+      # the labels this run reconciled and the comments it ingested are committed and on their way to the
+      # docs/sync PR. Skipped entirely when both commands were happy, so the usual cron run carries no
+      # extra step's noise.
+      #
+      # The codes come through `env:` rather than being interpolated into the script, so a value can never
+      # be read as shell. `${VAR:-0}` covers the empty string a step that never ran would leave.
+      - name: Fail if DocuMe reported a failure
+        if: steps.sync.outputs.code != '0' || steps.dashboard.outputs.code != '0'
+        env:
+          SYNC_CODE: ${{ steps.sync.outputs.code }}
+          DASHBOARD_CODE: ${{ steps.dashboard.outputs.code }}
+        run: |
+          set -euo pipefail
+          failed=0
+
+          if [ "${SYNC_CODE:-0}" != '0' ]; then
+            echo "::error title=DocuMe::\`docume sync\` exited ${SYNC_CODE} — see the \"Reconcile labels and ingest comments\" step. No cursor moved and no approval was recorded, so the next run reads the same labels and comments again. Any inbox item this run did write is carried in the docs/sync PR above, and re-ingesting it will not duplicate it."
+            failed=1
+          fi
+
+          if [ "${DASHBOARD_CODE:-0}" != '0' ]; then
+            echo "::error title=DocuMe::\`docume dashboard\` exited ${DASHBOARD_CODE} — the Documentation Status page (§6.5) is stale until the next run. Nothing else in this run is affected: the dashboard writes a Confluence page and nothing in the repo."
+            failed=1
+          fi
+
+          exit "$failed"
