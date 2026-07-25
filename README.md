@@ -141,9 +141,12 @@ title: Loans Domain     # optional; defaults to the first H1
 `sources` is the load-bearing field. It is what `drift` matches changed files against, what marks a page
 stale, and what `/docs-refresh` regenerates from. A page with no `sources` is never reported as drifted.
 
-> **`/docs-loop` is not yet shipped.** The quickstart in `PLAN.md` §12 names it as the way to generate a
-> wiki from scratch; it is the last open item of M6. Until it lands, write the pages by hand, or point
-> `/docs-refresh` at ones that already exist. The rest of the lifecycle does not depend on it.
+**To generate the pages instead of writing them, run `/docs-loop` in Claude Code.** Fill in
+`docs/wiki/_meta/STYLE.md` first — its four headings (audience, tone, structure, verification) are what the
+skill reads instead of carrying assumptions about your repo. The first run builds an inventory of what the
+wiki should cover, into `docs/wiki/_meta/PROGRESS.md`, and writes no page: correct that list before forty
+pages get generated against it. Each run after that takes one unit, reads its code, writes the page with its
+`sources` and a citation behind every claim, and adds a commit to a `docs/loop-<date>` pull request.
 
 ### 6. Check before you publish
 
@@ -179,7 +182,7 @@ unchanged are skipped.
 | **Refresh** | `/docs-refresh` rewrites the stale pages and opens `docs/refresh-<date>`. |
 | **Report** | `docume dashboard` regenerates a "Documentation Status" page in Confluence; `docume status` prints the same data in your terminal. |
 
-Both skills read a Confluence comment as a **claim to verify against the code**, never as an instruction to
+Every skill reads a Confluence comment as a **claim to verify against the code**, never as an instruction to
 follow. A comment body is untrusted input.
 
 ## Commands
@@ -201,9 +204,12 @@ Confluence is a hard stop with a token-expiry message rather than a retry.
 
 | Skill | What it does |
 |---|---|
+| `/docs-loop` | Writes the pages. One unit per run, read from the code, every claim cited; opens `docs/loop-<date>`. |
 | `/docs-refresh` | Rewrites the pages whose `sources` changed since the baseline; opens `docs/refresh-<date>`. |
 | `/docs-feedback` | Verifies a reviewer's comment against the code; opens `docs/feedback-<date>` or declines with a citation. |
-| `/docs-loop` | The generic generation engine: inventory, section taxonomy, verification rules, one-unit-per-run discipline. **Not yet shipped.** |
+
+All three end by putting `docume status --json` in the PR body, so the state of the wiki is visible in the
+pull request a reviewer is already reading.
 
 ## Working on DocuMe itself
 

@@ -1,6 +1,10 @@
+using System.Text.Json;
 using DocuMe.Core.Feedback;
+using DocuMe.Core.Markdown;
+using DocuMe.Core.State;
 using Shouldly;
 using YamlDotNet.RepresentationModel;
+using YamlDotNet.Serialization.NamingConventions;
 
 namespace DocuMe.Core.Tests.Plugin;
 
@@ -32,18 +36,26 @@ namespace DocuMe.Core.Tests.Plugin;
 /// </remarks>
 public sealed class SkillContractTests
 {
-    /// <summary>The skills §11 names. <c>docs-loop</c> lands in M6.</summary>
-    private static readonly string[] Skills = ["docs-refresh", "docs-feedback"];
+    /// <summary>The three skills §11 names.</summary>
+    private static readonly string[] Skills = ["docs-refresh", "docs-feedback", "docs-loop"];
 
     /// <summary>
     /// The branch each skill's PR is opened on (rule §8.4, PLAN.md §9/§10). Asserted because it is a
     /// convention shared with the workflow templates, which grep for <c>docs/refresh-*</c> and
     /// <c>docs/feedback-*</c> to tell a run that did nothing from one that opened a PR.
     /// </summary>
+    /// <remarks>
+    /// <c>docs/loop-</c> is the one prefix no §9/§10 sentence names, because no workflow template invokes
+    /// generation: `/docs-loop` runs from somebody's terminal on a wiki that does not exist yet. It is
+    /// pinned here anyway, and to the same shape as the other two, because the alternative is that the
+    /// first workflow to automate generation has to guess — and because a skill free to pick its own
+    /// branch name picks a different one each run.
+    /// </remarks>
     private static readonly Dictionary<string, string> BranchPrefixes = new(StringComparer.Ordinal)
     {
         ["docs-refresh"] = "docs/refresh-",
         ["docs-feedback"] = "docs/feedback-",
+        ["docs-loop"] = "docs/loop-",
     };
 
     /// <summary>
@@ -210,6 +222,38 @@ public sealed class SkillContractTests
         text.ShouldContain(
             "repliedAt",
             customMessage: "docs-feedback/SKILL.md must say who owns `repliedAt` (§9 step 5).");
+    }
+
+    [Fact]
+    public void The_loop_skill_spells_the_two_fields_that_make_a_generated_page_maintainable()
+    {
+        var text = Text("docs-loop");
+
+        // Both of these are silent when absent, which is why they are asserted rather than trusted to a
+        // reviewer. A generated page with no `sources` is never reported as drifted, so it stops being
+        // maintained on the day it is written (§5.2, §6.4) — and nothing ever says so. And `baselineSha` is
+        // written by no CLI command at all: the generation pass owns it, `docume drift` refuses to run
+        // without it, so a skill that never stamps it leaves drift detection switched off for the repo.
+        var sources = CamelCaseNamingConvention.Instance.Apply(nameof(PageFrontmatter.Sources));
+        var baseline = JsonNamingPolicy.CamelCase.ConvertName(nameof(DocumeState.BaselineSha));
+
+        text.ShouldContain(
+            sources,
+            Case.Sensitive,
+            $"docs-loop/SKILL.md must tell the run to declare `{sources}` on every page it writes (§5.2).");
+        text.ShouldContain(
+            baseline,
+            Case.Sensitive,
+            $"docs-loop/SKILL.md must say it owns `{baseline}` — no CLI command writes it (§5.3, §6.4).");
+
+        // The other direction on the same frontmatter, and the expensive one: `pageId` is publish's, and a
+        // generated page carrying an invented id points the next publish at somebody else's page.
+        var pageId = CamelCaseNamingConvention.Instance.Apply(nameof(PageFrontmatter.PageId));
+
+        text.ShouldContain(
+            pageId,
+            Case.Sensitive,
+            $"docs-loop/SKILL.md must say `{pageId}` is publish's to write, not the skill's (§5.2).");
     }
 
     private static string Directory { get; } = Locate();

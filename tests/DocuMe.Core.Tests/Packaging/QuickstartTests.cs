@@ -29,6 +29,9 @@ public sealed partial class QuickstartTests
     /// <summary>Where step 3's list of what <c>init</c> writes lives.</summary>
     private const string ScaffoldSection = "### 3. Scaffold your repo";
 
+    /// <summary>Where the table of what the plugin ships lives.</summary>
+    private const string SkillsSection = "## Skills";
+
     [Fact]
     public void The_README_is_the_install_story_and_not_a_stub()
     {
@@ -215,16 +218,21 @@ public sealed partial class QuickstartTests
     }
 
     [Fact]
-    public void Every_skill_that_ships_is_in_the_README()
+    public void Every_skill_that_ships_has_a_row_in_the_README_skills_table()
     {
-        var readme = Readme();
+        var section = Section(SkillsSection);
 
         var undocumented = ShippedSkills()
-            .Where(skill => !readme.Contains($"`/{skill}`", StringComparison.Ordinal))
+            .Where(skill => !section.Contains($"`/{skill}`", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal)
             .ToList();
 
-        var message = $"plugin/skills/ ships [{string.Join(", ", undocumented)}], and the README never says so.";
+        // Read from the "## Skills" section rather than from the whole file. A skill mentioned only in a
+        // quickstart step is a skill nobody finds when they come back looking for the list, and the
+        // whole-file version of this assertion passed on exactly that: the step-5 mention alone satisfied it
+        // while the table row was gone.
+        var message = $"plugin/skills/ ships [{string.Join(", ", undocumented)}], and README.md's "
+            + $"'{SkillsSection}' table has no row for them.";
 
         undocumented.ShouldBeEmpty(message);
     }
@@ -326,24 +334,36 @@ public sealed partial class QuickstartTests
         return string.Join('\n', collected);
     }
 
-    /// <summary>The first cell of every row in step 3's table, in the order the README lists them.</summary>
-    private static List<string> ScaffoldTableRows()
+    /// <summary>
+    /// The text under <paramref name="heading"/>, up to the next heading at the same level or shallower.
+    /// </summary>
+    private static string Section(string heading)
     {
         var readme = Readme();
-        var start = readme.IndexOf(ScaffoldSection, StringComparison.Ordinal);
+        var start = readme.IndexOf(heading, StringComparison.Ordinal);
 
-        start.ShouldBeGreaterThanOrEqualTo(0, $"README.md has no '{ScaffoldSection}' section.");
+        start.ShouldBeGreaterThanOrEqualTo(0, $"README.md has no '{heading}' section.");
 
-        var next = readme.IndexOf("\n### ", start + ScaffoldSection.Length, StringComparison.Ordinal);
-        var section = next < 0 ? readme[start..] : readme[start..next];
+        var level = heading.TakeWhile(character => character == '#').Count();
+        var lines = readme[start..].Split('\n');
 
-        return section.Split('\n')
+        var end = Array.FindIndex(
+            lines,
+            1,
+            line => line.StartsWith('#') && line.TakeWhile(character => character == '#').Count() <= level);
+
+        return string.Join('\n', end < 0 ? lines : lines[..end]);
+    }
+
+    /// <summary>The first cell of every row in step 3's table, in the order the README lists them.</summary>
+    private static List<string> ScaffoldTableRows()
+        => Section(ScaffoldSection)
+            .Split('\n')
             .Where(line => line.StartsWith("| ", StringComparison.Ordinal))
             .Select(line => line.Split('|')[1].Trim().Trim('`'))
             .Where(cell => cell.Length > 0 && !cell.StartsWith("---", StringComparison.Ordinal))
             .Where(cell => !string.Equals(cell, "Target", StringComparison.Ordinal))
             .ToList();
-    }
 
     /// <summary>What <c>docume init</c> writes into an empty directory, in the order it reports them.</summary>
     private static List<string> Scaffold()

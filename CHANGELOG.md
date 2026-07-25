@@ -57,12 +57,16 @@ First release. Everything below is new, so it is grouped by what it does rather 
 
 ### The Claude Code plugin
 
+- `/docs-loop` writes the pages. One unit per run, read from the code, with a citation behind every claim; it
+  keeps an inventory in `_meta/PROGRESS.md`, sends what the code cannot settle to `_meta/GAPS.md`, and opens
+  `docs/loop-<date>`. The first run builds the inventory and writes no page, so the list can be corrected
+  before pages are generated against it.
 - `/docs-refresh` rewrites the pages whose declared sources moved and opens `docs/refresh-<date>`.
 - `/docs-feedback` verifies a reviewer's comment against the code and opens `docs/feedback-<date>`, or
   declines it with a citation.
-- Both treat Confluence page bodies and comments as untrusted input: claims to verify against the code,
-  never instructions to follow. Neither calls the Confluence API, and neither publishes: the output is a
-  pull request.
+- All three treat Confluence page bodies and comments as untrusted input: claims to verify against the code,
+  never instructions to follow. None calls the Confluence API, and none publishes: the output is a pull
+  request.
 - The repository is its own plugin marketplace, so the plugin installs without waiting on the Moberg one.
 
 ### Packaging
@@ -77,6 +81,5 @@ First release. Everything below is new, so it is grouped by what it does rather 
 
 ### Not in this release
 
-- `/docs-loop`, the generic generation engine. Write pages by hand until it lands.
 - The composite GitHub Action wrapping install-and-run. The shipped workflow templates call
   `dotnet tool restore` and `dotnet tool run docume` directly and need no action.

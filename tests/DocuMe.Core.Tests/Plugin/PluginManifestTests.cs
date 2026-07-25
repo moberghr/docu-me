@@ -27,8 +27,8 @@ namespace DocuMe.Core.Tests.Plugin;
 /// </para>
 /// <para>
 /// What is deliberately *not* asserted: that the manifest lists its skills. It does not, and should not —
-/// <c>skills/</c> is scanned by default, so listing them would add a second place to edit when
-/// <c>docs-loop</c> lands. This file walks the tree instead, which is the same thing Claude Code does.
+/// <c>skills/</c> is scanned by default, so listing them would add a second place to edit every time a skill
+/// is added. This file walks the tree instead, which is the same thing Claude Code does.
 /// <see cref="SkillContractTests"/> covers what is inside each SKILL.md.
 /// </para>
 /// </remarks>
@@ -163,6 +163,26 @@ public sealed partial class PluginManifestTests
             .ToList();
 
         unresolved.ShouldBeEmpty($"plugin.json declares skill paths that do not exist under {PluginDirectory}.");
+    }
+
+    [Fact]
+    public void Every_skill_the_plugin_ships_is_listed_in_the_plugin_README()
+    {
+        var readme = File.ReadAllText(Path.Combine(PluginDirectory, "README.md"));
+
+        var undocumented = Directory.EnumerateDirectories(Path.Combine(PluginDirectory, "skills"))
+            .Select(directory => Path.GetFileName(directory)!)
+            .Where(skill => !readme.Contains($"`/{skill}`", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        // plugin/README.md's skills table is the file a plugin author reads and the one whose install
+        // snippet the release notes mirror, so a skill missing from it is a skill that ships without ever
+        // being described. Nothing else notices: the plugin loads it, and the table just reads as complete.
+        var message = $"plugin/ ships [{string.Join(", ", undocumented)}], and plugin/README.md's skills "
+            + "table has no row for them.";
+
+        undocumented.ShouldBeEmpty(message);
     }
 
     [Fact]
