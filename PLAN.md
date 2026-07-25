@@ -276,14 +276,14 @@ The highest-risk component. Requirements (derived from the actual AurServices wi
 | Headings h1–h4 | `<h1>`–`<h4>` (h1 dropped from body — it's the page title) |
 | Tables (GFM) | `<table>` with header row. **Accepted loss:** GFM column alignment is not representable in storage format (confmark finding) — goldens assert plain tables |
 | Fenced code blocks | `<ac:structured-macro ac:name="code">` with language param (map common langs; unknown → none) |
-| Code fence attributes ` ```lang title=Foo collapse linenumbers ` | Code macro params `title`, `collapse=true`, `linenumbers=true` (mark's fence-attribute syntax; all optional, ignored if absent) |
+| Code fence attributes ` ```lang collapse linenumbers firstline 10 title My Title ` | Code macro params `collapse`, `linenumbers`, `firstline`, `title` — mark's real fence-attribute syntax: **space-separated, no `=` anywhere, `title` takes the rest of the line unquoted**; all optional, ignored if absent. Unknown attributes, and the `title=Foo` spelling, fail loud rather than silently mis-mapping. *(Corrected 2026-07-24: this cell previously wrote `title=Foo`, which is not mark's syntax — verified against mark's source and its `testdata/codes.html` fixture. See decision log.)* |
 | GitHub alerts `> [!NOTE]` `[!TIP]` `[!IMPORTANT]` `[!WARNING]` `[!CAUTION]` (root level) | Panel macros, mark's mapping: NOTE→info, TIP→tip, IMPORTANT→info, WARNING→note, CAUTION→warning; nested alerts render as plain blockquotes |
 | ```mermaid``` fences | SVG attachment + `<ac:image ac:width="…"><ri:attachment ri:filename="…"/></ac:image>` |
 | Relative `.md` links | `<ac:link><ri:page ri:content-title="…"/></ac:link>` |
 | External links | `<a href>` |
 | `[TOC]` alone on a line | `ac:toc` macro |
 | Inline code, bold, italic, strikethrough, blockquotes, hr, nested lists | Native XHTML |
-| Task lists | Native `<ac:task-list>` (proven by mark); mixed task/plain lists fall back to plain list with emoji markers |
+| Task lists | Native `<ac:task-list>` (proven by mark); a mixed task/plain list falls back to a plain list that echoes the author's literal `[x] ` / `[ ] ` text — **no emoji**. *(Corrected 2026-07-24: this cell previously said "emoji markers", but mark — the reference this row names — emits the literal source spelling: `renderer/tasklist.go` + `testdata/tasklists-mixed.html`. Emoji would put content into `contentHash` (§8) that the author never wrote. See decision log.)* |
 | Images (local files) | Attachment + `ac:image`; optional width via `{width=300}` attribute → `ac:width` |
 | ⚠️ `UNVERIFIED` / `AMBIGUOUS` markers | Pass through as text (styling optional later: status macro) |
 | Footer line (`*Generated … by the docs loop*`) | Pass through italic |
@@ -291,7 +291,9 @@ The highest-risk component. Requirements (derived from the actual AurServices wi
 
 **Approach:** custom Markdig renderer (`ConfluenceStorageRenderer : TextRendererBase`), NOT md→html→regex. Borrow ideas from `bojanrajkovic/MarkdigConfluenceExtensions` (proof of concept, too old to depend on), `kovetskiy/mark` (behavioral reference: fence attributes, alert mapping, task lists, macros) and `MrEhbr/confmark` (MIT; its `docs/MAPPING.md` + round-trip fixtures document construct-by-construct storage-format mappings).
 
-**Golden-file test suite is the contract:** `tests/golden/<case>.md` → `<case>.storage.xml`, reviewed by hand once, asserted forever. Seed cases from real AurServices pages (they exercise every construct, 59 mermaid blocks) plus construct edge cases adapted from confmark's round-trip fixtures. Acceptance for the converter: **all 79 Aur pages convert without errors or unknown-construct warnings.**
+**Golden-file test suite is the contract:** `tests/golden/<case>.md` → `<case>.storage.xml`, reviewed by hand once, asserted forever. Seed cases from construct edge cases adapted from confmark's round-trip fixtures, one per row of the table above. Acceptance for the converter: **the golden corpus converts without errors or unknown-construct warnings, with a case for every construct in the table.**
+
+*Revised 2026-07-25 (Mirko): the acceptance bar was "all 79 Aur pages convert cleanly". The Aur wiki files are no longer required on the build machine, so the goldens are the whole bar. Known cost, accepted: goldens are hand-authored from the same understanding that built the renderer, so they verify no regression but cannot discover a real-world dialect nobody predicted. The two open discovery questions — how many pages use a fence dialect that now fails loud, and how many of the 59 mermaid diagrams use spellings `beautiful-mermaid` rejects (`graph TD;`, `pie`) — move to M7 Aur adoption, the first point real content flows through. See `.claude/references/decisions.md`.*
 
 ---
 
@@ -363,8 +365,8 @@ Run once in the new repo: **`/mtk:setup-bootstrap`** (tech stack: dotnet). Then 
 | M | Scope (spec §§) | Key deliverables | Acceptance | Size |
 |---|---|---|---|---|
 | **M0** | §3, §4 | Solution, Core+Cli+tests projects, CI build/test workflow, config loader + schema validation, state load/save, `docume --version`, minimal `init` | Tool packs, installs and runs locally from a NuGet pack | S |
-| **M1** | §5, §7, S2 | Frontmatter parse/strip, link map, ConfluenceStorageRenderer, mermaid render integration, golden-file suite | All 79 AurServices pages convert with zero errors; goldens reviewed | L |
-| **M2** | §6.2, §4-client, S1/S5/S6 | Confluence client, publish pipeline (upsert, attachments, hashing, banner, dry-run, changed-since, orphan report), `status` | Publish DocuMe's own docs to a sandbox space; then **Aur bulk publish (79 pages), human-reviewed page-by-page** | L |
+| **M1** | §5, §7, S2 | Frontmatter parse/strip, link map, ConfluenceStorageRenderer, mermaid render integration, golden-file suite | Golden corpus converts with zero errors and zero unknown-construct warnings, one case per §7 construct; goldens reviewed *(revised 2026-07-25, was "all 79 AurServices pages")* | L |
+| **M2** | §6.2, §4-client, S1/S5/S6 | Confluence client, publish pipeline (upsert, attachments, hashing, banner, dry-run, changed-since, orphan report), `status` | Publish DocuMe's own docs **plus the golden corpus** to a sandbox space, human-reviewed page-by-page *(revised 2026-07-25: the Aur bulk publish moves to M7, which is where the Aur files live)* | L |
 | **M3** | §6.3-labels, §6.5, §8, S3 | Label sync, approval state machine + invalidation, dashboard page, status table | Sandbox e2e: approve → republish changed page → label removed → re-approve; dashboard correct | M |
 | **M4** | §6.3-comments, §5.4, §9, S4 | Comment ingestion + cursors + inbox, reply/resolve, `docs-feedback` SKILL.md | Sandbox e2e: comment → inbox → fix PR → merged → reply posted | M |
 | **M5** | §6.4, §10 | Drift engine, github-comment format, stale labeling, workflow templates (drift/publish/sync/refresh), `docs-refresh` SKILL.md | Simulated code change → PR drift comment; deploy-sim → stale label → refresh PR → merge → auto-publish | M |
