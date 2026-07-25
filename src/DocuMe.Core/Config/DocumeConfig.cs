@@ -39,6 +39,18 @@ public sealed record ConfluenceConfig
 
     /// <summary>Parent page under which the wiki tree is published.</summary>
     public string? RootPageId { get; init; }
+
+    /// <summary>
+    /// Space keys this repo is not cleared to publish into. A run targeting one of them refuses to
+    /// write unless a human unlocks it for that run (<c>--allow-protected-space</c>). Empty by default.
+    /// </summary>
+    /// <remarks>
+    /// The write lock behind CLAUDE.md §0.1 and rule §1.4, expressed where repo-specific knowledge
+    /// belongs (rule §9.5) rather than as a space key hardcoded in the tool. Going live is then a
+    /// reviewed config commit that removes the entry, not a flag someone types often enough to stop
+    /// reading. See <see cref="Publishing.PublishGuard"/>.
+    /// </remarks>
+    public IReadOnlyList<string> ProtectedSpaces { get; init; } = [];
 }
 
 public sealed record WikiConfig
