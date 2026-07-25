@@ -83,36 +83,50 @@ docu-me/
 ├── src/
 │   ├── DocuMe.Core/                  # library (NuGet DocuMe.Core)
 │   │   ├── Config/                   #   docume.json model + loader + validation
-│   │   ├── State/                    #   state.json model, load/save, migration
-│   │   ├── Markdown/                 #   frontmatter, Markdig pipeline, link map, mermaid
+│   │   ├── State/                    #   state.json model, load/save, contentHash, approval records
+│   │   ├── Markdown/                 #   frontmatter, Markdig pipeline, link map, mermaid, banner
 │   │   ├── Confluence/               #   REST v2 client (+ v1 label/CQL endpoints), models
 │   │   ├── Publishing/               #   upsert pipeline, hashing, banner, attachments
-│   │   ├── Approval/                 #   approval state machine
+│   │   ├── Sync/                     #   label sync + the approval state machine of §8
 │   │   ├── Feedback/                 #   comment ingestion, inbox items, replies
-│   │   └── Drift/                    #   sources-glob matching, git diff mapping
+│   │   ├── Drift/                    #   sources-glob matching, git diff mapping
+│   │   ├── Dashboard/                #   the Documentation Status page of §6.5
+│   │   ├── Scaffolding/              #   `init`'s targets + `--adopt`
+│   │   ├── Status/                   #   §6.6 report model + doctor-lite probes
+│   │   ├── Acceptance/               #   the §6.7 conversion sweep over a wiki tree
+│   │   ├── Git/                      #   diff / rev-parse shell-outs
+│   │   └── Json/                     #   shared serializer options
 │   └── DocuMe.Cli/                   # dotnet tool `docume` (NuGet DocuMe.Cli)
-│       └── Commands/                 #   init, publish, sync, drift, dashboard, status
+│       └── Commands/                 #   init, publish, sync, drift, dashboard, status, convert
 ├── tests/
-│   ├── DocuMe.Core.Tests/            # unit + golden-file converter tests
-│   └── DocuMe.Integration.Tests/     # WireMock.Net Confluence; opt-in live sandbox tests
+│   ├── DocuMe.Core.Tests/            # unit + golden-file + WireMock.Net Confluence + CLI smoke
+│   └── golden/                       # the §7 converter contract: <case>.md → <case>.storage.xml
+├── .claude-plugin/marketplace.json   # this repo is itself a one-plugin marketplace (git-subdir source)
 ├── plugin/                           # Claude Code plugin "docume"
 │   ├── .claude-plugin/plugin.json
+│   ├── README.md                     #   paste-able marketplace entry + skill table
 │   └── skills/
 │       ├── docs-loop/SKILL.md        # generic generation engine
 │       ├── docs-refresh/SKILL.md
 │       └── docs-feedback/SKILL.md
 ├── actions/                          # composite GitHub Action (install pinned CLI + run)
 │   └── action.yml
-├── templates/                        # scaffolded by `docume init` into consumer repos
-│   ├── docume.json
-│   ├── docs/wiki/_meta/{STYLE.md,GAPS.md,state.json}
-│   ├── tools/render-mermaid.mjs      # beautiful-mermaid wrapper (from AurServices)
-│   └── workflows/{docs-drift.yml,docs-publish.yml,docs-sync.yml,docs-refresh.yml}
+├── templates/                        # embedded into DocuMe.Core, written out by `docume init`
+│   ├── tools/render-mermaid.mjs      # beautiful-mermaid wrapper
+│   └── workflows/{docs-drift.yml,docs-drift-pr.yml,docs-publish.yml,
+│                 docs-sync.yml,docs-refresh.yml,docs-feedback.yml}
+├── schema/docume.schema.json         # what every scaffolded docume.json points `$schema` at
 ├── docs/wiki/                        # DocuMe's own wiki — dogfood the tool on itself
-├── .github/workflows/                # build, test, release (NuGet + plugin tag)
+├── .github/workflows/                # build, test, validate both plugin manifests, release
 ├── README.md                         # install + quickstart + concepts
 └── CHANGELOG.md
 ```
+
+Three things the tree above deliberately does *not* say, each of which an earlier draft got wrong:
+
+- **One test project, not two.** WireMock.Net Confluence tests live in `DocuMe.Core.Tests` alongside the unit and golden tests; there is no `DocuMe.Integration.Tests`. Env-gated live-sandbox tests (rule §4.2) are still unbuilt — nothing in the suite talks to a real Confluence.
+- **Only two things under `templates/` are template *files*.** `docume.json`, `_meta/STYLE.md` and `_meta/state.json` are built in code (`Core/Scaffolding/`), because each is derived from the run's flags or the tree it finds. `_meta/GAPS.md` is not scaffolded at all — §9 step 3 creates it the first time a comment turns into an open question.
+- **`actions/action.yml` does not exist yet.** It is the one §12 promise no milestone in §14 owns; see the composite-action question in `tools/loop/state.json → blockers`.
 
 ---
 
@@ -139,7 +153,7 @@ docu-me/
 
 ```jsonc
 {
-  "$schema": "https://raw.githubusercontent.com/moberg/docu-me/main/schema/docume.schema.json",
+  "$schema": "https://raw.githubusercontent.com/moberghr/docu-me/main/schema/docume.schema.json",
   "confluence": {
     "baseUrl": "https://kvika.atlassian.net/wiki",
     "spaceKey": "AUR",
@@ -218,11 +232,14 @@ pageId: "123456"        # set by publish; may be pre-seeded for adopted pages
   "quotedText": "Loans are disbursed within 24 hours",   // inline comments only
   "body": "This is wrong — disbursement is instant since the Straumur integration.",
   "status": "new | fixed | rejected | question",
-  "resolution": null                                       // filled by /docs-feedback
+  "resolution": null,                                      // filled by /docs-feedback
+  "repliedAt": null                                        // set by `sync --reply`; the double-reply guard
 }
 ```
 
 Processed items move to `_meta/feedback/archive/`. Inbox is committed → auditable, works across machines.
+
+`repliedAt` is the field that makes §9 step 5 safe to re-run: `sync --reply` stamps it the moment an item's reply lands, and skips any item already carrying one. It is therefore also the thing `docs-publish.yml` has to commit — the stamp and the workflow only work as a pair, so a reply pass whose commit is lost will post every reply again on the next publish.
 
 ---
 
@@ -231,7 +248,18 @@ Processed items move to `_meta/feedback/archive/`. Inbox is committed → audita
 Global: `--config <path>` (default `./docume.json`), `--verbose`, `--json` (machine output), non-zero exit codes on failure (CI-friendly). All Confluence calls: retry w/ backoff, hard stop + clear message on 401/403 (token expiry — never retry blindly).
 
 ### 6.1 `docume init`
-Scaffolds a consumer repo: `docume.json` (interactive prompts or `--space`, `--base-url` flags), `docs/wiki/` skeleton with `_meta/STYLE.md` template, `tools/render-mermaid.mjs`, `.github/workflows/docs-*.yml`, `.gitignore` entries. Idempotent: never overwrites existing files (reports skips). `--adopt` mode for repos with an existing wiki (AurServices): builds `state.json` skeleton from the file tree + optionally seeds `pageId`s from a legacy map file.
+Scaffolds a consumer repo in **13 targets**: `docume.json` (from `--space`, `--base-url`), the wiki root page, `_meta/STYLE.md`, `_meta/state.json`, the six `.github/workflows/docs-*.yml` of §10, `.config/dotnet-tools.json` (the version pin of §12), the mermaid render script, and one `.gitignore` entry.
+
+Two paths in that list are **read from `docume.json`, not fixed**, so init respects a repo that already made its own choices: the wiki location comes from `wiki.root` (not hard-coded `docs/wiki/`) and the render script's destination from `mermaid.renderer` (not hard-coded `tools/render-mermaid.mjs`).
+
+The `.gitignore` target is **one entry** — `node_modules/`, which exists for the render script's dependencies — appended only when no equivalent spelling is already there.
+
+**Idempotence (rule §9.4) is three behaviours, not one:**
+- **create-or-skip** for every file DocuMe owns outright; a file that exists is never rewritten and is reported as a skip.
+- **merge** for the two files a consumer also owns: `.gitignore` (append the entry) and `.config/dotnet-tools.json` (add the `docume` pin, leave other tools alone).
+- **fill-in plus refusal** for `--adopt`: it seeds what it can and **exits 1** when it was asked to adopt and could not, so a consumer never reads exit 0 as "adopted".
+
+`--adopt` mode for repos with an existing wiki builds the `state.json` skeleton from the file tree and seeds `pageId`s from **two** sources: page frontmatter (§5.2's "pre-seeded for adopted pages") and a legacy map file when the run names one. **Frontmatter wins a disagreement** — it is a per-page annotation someone wrote deliberately, and the run reports every conflict it resolved that way. It does not write the wiki root page: a repo with an existing wiki has its own.
 
 ### 6.2 `docume publish [--changed-since <sha>] [--page <path>] [--dry-run] [--force] [--prune]`
 The core pipeline, per page (parents before children, depth-first):
@@ -239,10 +267,10 @@ The core pipeline, per page (parents before children, depth-first):
 2. Build the **link map** (file path → title/pageId) for the whole tree first; rewrite relative `.md` links to Confluence page links; rewrite/drop anchors per spike outcome (§13); linkify source refs to `repoBlobUrl@baselineSha` if configured.
 3. Render ```mermaid``` blocks → SVG via renderer → queue as attachments; replace block with `<ac:image><ri:attachment>`.
 4. Convert markdown → Confluence **storage format** via ConfluenceStorageRenderer (see §7).
-5. Compute `contentHash`. If unchanged vs state and not `--force` → skip (log). Else: upsert page (create if no `pageId`, else update by id — title changes are safe updates), upload changed attachments (hash-compared), inject the **banner** (§8) above the body.
-6. **Open-comment guard** (borrowed from md2conf's check-open mode): before updating a page that has unresolved inline comments, log a warning listing them — the update may orphan their text anchors. `--block-on-open-comments` turns the warning into a skip + non-zero exit for teams that want it. Default is warn-and-proceed: the feedback loop (§9) is the designed channel for open comments.
+5. Compute `contentHash`. If unchanged vs state and not `--force` → skip (log) — **unless the source tree now files the page under a different parent, which makes it a bodyless move**: the page is reparented without a new version being spent, since the body Confluence holds is still the right one. Else: upsert page (create if no `pageId`, else update by id — title changes are safe updates), upload changed attachments (hash-compared), inject the **banner** (§8) above the body.
+6. **Open-comment guard** (borrowed from md2conf's check-open mode): before updating a page that has unresolved inline comments, log a warning listing them — the update may orphan their text anchors. `--block-on-open-comments` turns the warning into a skip + non-zero exit for teams that want it; `--no-comment-check` skips the lookup entirely for teams that do not want to pay for it (the two contradict each other and are rejected together). Default is warn-and-proceed: the feedback loop (§9) is the designed channel for open comments.
 7. **Approval invalidation:** if `contentHash` changed and page was approved → remove `approved` label, set state `needs-review`, optionally post a footer comment "Content updated since approval — please re-review" (`--notify-reviewers`).
-8. Update `state.json` (pageId, version, hashes); write `lastPublishedSha`.
+8. Update `state.json` (pageId, version, hashes); write `lastPublishedSha`. **A failed publish still writes state, and the whole CI failure contract of §10 rests on that:** a page id earned by a create must survive the run that later died, or the next run creates the page again and Confluence rejects the duplicate title. State is persisted before anything is reported; the non-zero exit comes afterwards.
 Post-pass — **child-page ordering** (borrowed from md2conf): after all upserts, reconcile each parent's child order in Confluence to match source-tree order (numeric prefixes like `10-domains/` express intent) using minimal move operations; disable with `--no-reorder`.
 Orphans (state entries whose file is gone): report always; delete from Confluence only with `--prune` after interactive confirmation (never in CI).
 `--dry-run`: full conversion + diff summary (created/updated/skipped/orphans), zero writes. `--changed-since <sha>`: limit to files changed in `git diff --name-only <sha> -- <wikiRoot>` (plus link-map rebuild).
@@ -259,11 +287,20 @@ Default baseline: `state.baselineSha`; head: `HEAD`. `git diff --name-only` → 
 - `--mark`: add the `stale` label to affected pages in Confluence + set `stale: true` in state + refresh dashboard. **Labels, not body edits** — staleness marking must not bump page versions or disturb approval.
 Exit code 0 always (advisory), unless `--fail-on-drift` for teams that want blocking.
 
+Two glob spellings an author will reasonably write are normalized rather than silently matching nothing: a **trailing slash** gets `**` appended (`src/Loans/` means `src/Loans/**`), and a **leading slash** is stripped (`/src/Loans/**` is repo-relative like every other pattern). Backslashes become forward slashes. A rename shows up as both paths and both count — deleting a documented file is drift too.
+
 ### 6.5 `docume dashboard`
-Regenerates the "Documentation Status" Confluence page from state + live labels: coverage stats (approved / needs-review / stale counts, % approved), table per page (status, approver, date, staleness, open feedback count, link), legend for ⚠️ markers. Machine-owned page — full overwrite each run.
+Regenerates the "Documentation Status" Confluence page from state + live labels: coverage stats (approved / needs-review / stale counts, % approved), table per page (status, approver, date, staleness, open feedback count, link), legend for ⚠️ markers. Machine-owned page.
+
+**Deviation from "full overwrite each run", deliberate and recorded:** the write is skipped when the rendered body matches what is already there above the provenance line. The page is regenerated every run, but an unchanged dashboard does not bump a Confluence page version — the same no-churn reasoning as §6.4's labels-not-bodies rule. The dashboard page is not a `state.pages` entry and must never become one (rule §9.6).
 
 ### 6.6 `docume status`
 Local terminal report (Spectre table): same data as dashboard + config/auth sanity checks (`doctor`-lite: token valid? space reachable? node present? state consistent with file tree?).
+
+The mermaid prerequisite is **two independent checks**: Node answers its version, and the render script is looked for wherever `docume.json`'s `mermaid.renderer` points. Neither one sees whether `beautiful-mermaid` is actually installed — that is a question only a real render answers, and `status` renders nothing and writes nothing.
+
+### 6.7 `docume convert <wiki-root> [--accept <code>] [--render-mermaid]`
+The §7 acceptance bar made runnable: converts every page of a wiki tree and reports what happened, grouped by construct and by dialect. Read-only — no Confluence call, no credentials, no output written, not even the storage format it renders. `--accept <code>` demotes a named diagnostic to a note (that is how §7's accepted losses stay visible without failing the run); `--render-mermaid` additionally pushes every diagram through Node and reports the ones the renderer rejects. Exit 0 means the corpus clears the bar, so it doubles as a CI pre-flight in a consumer repo.
 
 ---
 
@@ -278,7 +315,7 @@ The highest-risk component. Requirements (derived from the actual AurServices wi
 | Fenced code blocks | `<ac:structured-macro ac:name="code">` with language param (map common langs; unknown → none) |
 | Code fence attributes ` ```lang collapse linenumbers firstline 10 title My Title ` | Code macro params `collapse`, `linenumbers`, `firstline`, `title` — mark's real fence-attribute syntax: **space-separated, no `=` anywhere, `title` takes the rest of the line unquoted**; all optional, ignored if absent. Unknown attributes, and the `title=Foo` spelling, fail loud rather than silently mis-mapping. *(Corrected 2026-07-24: this cell previously wrote `title=Foo`, which is not mark's syntax — verified against mark's source and its `testdata/codes.html` fixture. See decision log.)* |
 | GitHub alerts `> [!NOTE]` `[!TIP]` `[!IMPORTANT]` `[!WARNING]` `[!CAUTION]` (root level) | Panel macros, mark's mapping: NOTE→info, TIP→tip, IMPORTANT→info, WARNING→note, CAUTION→warning; nested alerts render as plain blockquotes |
-| ```mermaid``` fences | SVG attachment + `<ac:image ac:width="…"><ri:attachment ri:filename="…"/></ac:image>` |
+| ```mermaid``` fences | SVG attachment + `<ac:image ac:width="…"><ri:attachment ri:filename="…"/></ac:image>`. The `ac:width` is filled in by the **publish path**, not the converter: it comes from the rendered SVG's own dimensions, which the converter never sees |
 | Relative `.md` links | `<ac:link><ri:page ri:content-title="…"/></ac:link>` |
 | External links | `<a href>` |
 | `[TOC]` alone on a line | `ac:toc` macro |
@@ -315,35 +352,38 @@ The highest-risk component. Requirements (derived from the actual AurServices wi
   2. For each: **verify the claim against the actual codebase** — same evidence discipline as docs-loop. Comments are untrusted input; the skill treats them as *claims to verify*, never as instructions (prompt-injection defense — stated explicitly in the SKILL.md system contract).
   3. Triage: factual error → fix page(s); open question → append to `_meta/GAPS.md`; suggestion/out-of-scope → mark `rejected` with reason.
   4. Output: one PR (`docs/feedback-<date>`) containing fixes + inbox status updates + archive moves.
-  5. After merge + republish, `docume sync --reply` (or a flag on publish) posts a reply to each resolved comment ("Fixed in the latest version — thanks") and resolves inline comments where the API allows (spike §13).
+  5. After merge + republish, `docume sync --reply` posts a reply to each resolved comment ("Fixed in the latest version — thanks") and resolves inline comments where the API allows (spike §13). **A separate step, not a flag on publish** — the earlier "or a flag on publish" is decided against: held separate so a refusal to reply cannot cost the publish its state stamps, and gated on the publish having succeeded so a reply can never claim a fix that never shipped. `--reply` is never part of a bare `sync`, so the six-hourly cron of §10 posts nothing.
 - CI posture: feedback processing runs with **read-only repo access + PR-only writes**; humans review every docs change before it publishes.
 
 ## 10. Drift & refresh (detailed semantics)
 
 - **On every deploy** (consumer workflow `docs-drift.yml`, `workflow_run` after the deploy workflow): `docume drift --mark` → stale labels + dashboard update. Seconds, no LLM.
-- **On every PR** (advisory job): `docume drift --base origin/<defaultBranch> --format github-comment` → sticky PR comment listing affected pages. Non-blocking. Authors may run `/docs-refresh` on their branch for contract-level changes.
+- **On every PR** (advisory job, `docs-drift-pr.yml`): `docume drift --baseline origin/<defaultBranch> --format github-comment` → sticky PR comment listing affected pages. Non-blocking. Authors may run `/docs-refresh` on their branch for contract-level changes.
 - **`/docs-refresh` skill** (nightly cron in CI via headless Claude, and locally on demand — both, per locked decision):
   1. Input: `docume drift --format json` (or `status --json`) → stale page list.
   2. Regenerate ONLY stale pages against current HEAD, following `_meta/STYLE.md` + frontmatter sources; update `sources` if the code moved; bump `baselineSha`.
   3. Output: PR `docs/refresh-<date>` with a summary table (page → what changed → why).
-- **On merge to default branch** (consumer workflow `docs-publish.yml`, path filter `docs/wiki/**`): `docume publish --changed-since <state.lastPublishedSha>` → changed pages republished, approvals on changed pages invalidated, dashboard refreshed.
+- **On merge to default branch** (consumer workflow `docs-publish.yml`, path filter `docs/wiki/**`): `docume publish --changed-since <state.lastPublishedSha>` → changed pages republished, approvals on changed pages invalidated, dashboard refreshed, then §9 step 5's reply pass and the state/stamp carry. **Failure contract:** every `docume` step holds its exit code rather than failing the job on the spot, one step at the end turns any held failure into a red check *after* the state file is safe, and the reply is skipped outright when the publish failed.
 - **Cron** (`docs-sync.yml`, e.g. every 6h): `docume sync` + `docume dashboard`; opens/updates a `docs/sync` PR when state/inbox changed.
+- **Comment triage** (`docs-feedback.yml`): counts untriaged inbox items and runs the §9 skill when there is work.
+
+**`baselineSha` has no CLI writer, by design.** §6.4 reads it, §8's banner prints it and `status` reports it, but no `docume` command sets it: it records the commit the wiki was *generated* against, so only a generation pass (`/docs-loop`, `/docs-refresh`) is entitled to move it. A publish that bumped it would claim the pages were regenerated when they were only re-uploaded.
 
 ## 11. Claude Code plugin
 
-- `plugin/.claude-plugin/plugin.json` — name `docume`, exposes three skills; distributed through the existing Moberg marketplace (same as MTK).
-- **`docs-loop`** — the generic generation engine. Extraction task from the AurServices skill: split into (a) generic process — inventory, section taxonomy, verification rules ("every claim needs a code citation"), ⚠️ marker conventions, one-unit-per-run loop discipline, PROGRESS/GAPS bookkeeping — and (b) repo-specifics, which move to the consumer's `_meta/STYLE.md` + `docume.json` (domain list, tone, audience, structure). The skill reads both at start.
+- `plugin/.claude-plugin/plugin.json` — name `docume`. It **declares no `skills` field on purpose**: Claude Code scans `skills/`, so listing them in the manifest would be a second copy of the same truth that can drift. The three skills are the three directories. Distributed through the existing Moberg marketplace (same as MTK), with this repo's own `.claude-plugin/marketplace.json` as the git-subdir source.
+- **`docs-loop`** — the generic generation engine: (a) generic process — inventory, section taxonomy, verification rules ("every claim needs a code citation"), ⚠️ marker conventions, one-unit-per-run loop discipline, PROGRESS/GAPS bookkeeping — and (b) repo-specifics, which live in the consumer's `_meta/STYLE.md` + `docume.json` (domain list, tone, audience, structure). The skill reads both at start. *(Written generically rather than extracted from the AurServices skill: those files are deliberately not on the build machine — see §7's revision note.)* It opens **`docs/loop-<date>`**, extending that branch and its PR when it already exists rather than opening a second one, and takes `baselineSha` from the oldest generation sha still listed in `PROGRESS.md`, not from `HEAD`.
 - **`docs-refresh`**, **`docs-feedback`** — as specified in §9/§10. All three end with: run `docume status --json` and include it in the PR body.
 - Skills invoke the CLI via Bash (`docume …`); they never call the Confluence API themselves.
 - Headless CI usage: `claude -p "/docs-refresh" --permission-mode acceptEdits` in a workflow with `ANTHROPIC_API_KEY`; PR creation via `gh`.
 
 ## 12. Packaging, versioning, release
 
-- **Single version** across CLI, Core, plugin, action — one tag `vX.Y.Z` releases all (keeps compatibility reasoning trivial).
-- Release workflow: tag → build → test → pack → push NuGet (GitHub Packages; nuget.org when opened up) → plugin marketplace ref update.
-- Consumer pinning: repo-local `dotnet-tools.json` manifest (scaffolded by `init`) → `dotnet tool restore` in workflows; composite action `moberg/docu-me/actions@v1` wraps install+run.
-- README quickstart (the distribution story): `dotnet tool install DocuMe.Cli` → `claude plugin install docume` → `docume init` → secrets → `/docs-loop` → `docume publish`.
-- CHANGELOG.md + docs/wiki (dogfooded — DocuMe's own docs published with DocuMe).
+- **Single version** across CLI, Core, plugin, action — one tag `vX.Y.Z` releases all (keeps compatibility reasoning trivial). The number lives in **three files**, bumped in one commit: `Directory.Build.props` `<Version>`, `plugin/.claude-plugin/plugin.json` `version`, and the git-subdir `ref` in `plugin/README.md`. Enforced twice — by the test suite on every build, and by the release workflow's *first* step, which refuses a tag that disagrees with any of the three before the build runs.
+- Release workflow: tag → verify the single version → build → test → pack → push NuGet (GitHub Packages; nuget.org when opened up) → GitHub release. **It cannot update the plugin marketplace** — that marketplace is a different repository, so the "ref update" is a copy-paste and the release notes carry the exact git-subdir entry with `ref` already set to the tag.
+- Consumer pinning: repo-local `.config/dotnet-tools.json` manifest (scaffolded by `init`) → `dotnet tool restore` in workflows; composite action `moberg/docu-me/actions@v1` wraps install+run. The manifest pins the version of the tool that did the scaffolding, read off its own assembly — so `dotnet tool restore` in a consumer repo cannot succeed until a release has actually pushed that version to the feed.
+- README quickstart (the distribution story): add the GitHub Packages feed → `dotnet tool install --global DocuMe.Cli` → `/plugin marketplace add moberghr/docu-me` → `/plugin install docume@docume` → `docume init` → secrets → `/docs-loop` → `docume publish`. The plugin half is a slash command *inside* Claude Code, not a shell command, and the tool half needs the feed added first: GitHub Packages authenticates every read, including public ones.
+- CHANGELOG.md + docs/wiki (dogfooded — DocuMe's own docs published with DocuMe). The CHANGELOG exists; the published half needs the sandbox space and belongs to M2's gate.
 
 ## 13. Spikes & open questions (resolve in M1–M2, timebox each)
 
@@ -351,10 +391,11 @@ The highest-risk component. Requirements (derived from the actual AurServices wi
 |---|---|---|
 | S1 | Dapplo.Confluence: does it cover pages v2 + attachments + labels + CQL cleanly? | Thin custom client |
 | S2 | Anchor links in storage format with the new Confluence editor — do heading anchors survive? If not: try injecting explicit `ac:anchor` macros at headings (mark ships this as a built-in template) | Rewrite anchor links to plain page links + keep link text |
-| S3 | Label add/remove endpoint (v1 `content/{id}/label`) behavior on Cloud + can we get who added a label? | `approvedBy: "unknown"`; approval still works |
-| S4 | Inline-comment resolve + reply via API. Also: can inline-comment anchors survive a body update — mark's `--preserve-comments` re-attaches comment markers via Levenshtein matching of surrounding text; evaluate porting that (matters: feedback comments must not be orphaned by republish) | Footer-comment reply only; inline left for humans to resolve; open-comment guard (§6.2) warns before overwriting |
+| S3 | **SETTLED — the fallback is the answer.** Label add/remove on Cloud works; **who added a label is not reachable at all** (not on CQL search results, not on v1 `content/{id}/label`, not on v2 `/pages/{id}/labels`), so `approvedBy` is `"unknown"`. Filling it with the account DocuMe authenticates as would put a fabricated approver in an audit trail (§8), so it stays honest. The label itself is the gesture §8 keys on. | `approvedBy: "unknown"`; approval still works |
+| S4 | **API half SETTLED affirmatively** — inline-comment resolve *and* reply both work through the API. **Anchor survival across a body update is still open** and moves to M7, where real content and real comments exist: mark's `--preserve-comments` re-attaches markers via Levenshtein matching of surrounding text; evaluate porting it then. Until it is answered, §6.2's open-comment guard warns before overwriting. | Footer-comment reply only; inline left for humans to resolve; open-comment guard (§6.2) warns before overwriting |
 | S5 | Rate limits on ~80-page bulk publish (429 handling, needed delay) | Sequential publish w/ adaptive backoff; document expected duration |
 | S6 | Storage-format quirks: does Confluence rewrite our XHTML on save (breaking hash stability)? | Hash the *source-derived* content (pre-upload), never re-read body for hashing — design already assumes this |
+| S7 | **SETTLED.** Does the move API support §6.2's child-order post-pass without spending page versions? Yes: a move takes a target plus a position — `before` / `after` a sibling, or `append` as a child of the target — so sibling reordering and reparenting are the same call, and neither writes a body or bumps a version. That is what makes both the post-pass and step 5's bodyless move cheap. | Publish in tree order and accept whatever order Confluence shows |
 
 Known risks: unique-title-per-space collisions across unrelated trees in the same space (mitigate: validate + optional title prefix config); Confluence editor converting storage→ADF lossy on some macros (golden tests against a sandbox space in M2); Node dependency in CI images (document; check in `status`).
 
