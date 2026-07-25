@@ -49,6 +49,12 @@ public sealed record PlannedAttachment(
 /// </summary>
 /// <param name="Path">Wiki-root-relative markdown path — the <see cref="DocumeState.Pages"/> key.</param>
 /// <param name="Title">The resolved Confluence title (§6.2 step 1).</param>
+/// <param name="ParentPath">
+/// The markdown path of the page this one hangs under, or <c>null</c> for the tree root — which the
+/// write path files under <c>confluence.rootPageId</c>. From <see cref="PageHierarchy"/>; a path
+/// rather than a page id because a plan knows no ids, and the parent's id may not exist until the
+/// same run creates it.
+/// </param>
 /// <param name="Plan">The decision, from <see cref="PublishPlanner.PlanPage"/>.</param>
 /// <param name="UploadBody">
 /// The storage format a real run would upload: the converter's output with the §8 banner injected
@@ -66,6 +72,7 @@ public sealed record PlannedAttachment(
 public sealed record PlannedPage(
     string Path,
     string Title,
+    string? ParentPath,
     PagePublishPlan Plan,
     string? UploadBody,
     IReadOnlyList<PlannedAttachment> Attachments,

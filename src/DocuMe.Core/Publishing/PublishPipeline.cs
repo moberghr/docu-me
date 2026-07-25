@@ -94,12 +94,16 @@ public static class PublishPipeline
             DashboardTitle = config.Dashboard.Title,
         };
 
+        // Whole-tree, before the per-page loop, for the same reason as the link map: a page's parent
+        // is a fact about the tree, not about the page (§6.2, PageHierarchy).
+        var parents = PageHierarchy.Resolve(tree.Pages.Select(page => page.Path), config.Wiki.HomePage);
+
         var pages = new List<PlannedPage>();
         var failures = new List<PageConversionFailure>();
 
         foreach (var page in tree.Pages)
         {
-            var planned = PlanOne(tree, state, page, banner, options.Force, failures);
+            var planned = PlanOne(tree, state, page, parents[page.Path], banner, options.Force, failures);
             if (planned is not null)
             {
                 pages.Add(planned);
@@ -123,6 +127,7 @@ public static class PublishPipeline
         WikiTree tree,
         DocumeState state,
         WikiPage page,
+        string? parentPath,
         PageBanner banner,
         bool force,
         List<PageConversionFailure> failures)
@@ -202,6 +207,7 @@ public static class PublishPipeline
         return new PlannedPage(
             page.Path,
             page.Title,
+            parentPath,
             plan,
             plan.WritesBody ? banner.InjectInto(body) : null,
             [.. attachments.Values.OrderBy(attachment => attachment.Name, StringComparer.Ordinal)],

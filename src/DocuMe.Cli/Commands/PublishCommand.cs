@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Text.Json;
 using DocuMe.Core.Config;
+using DocuMe.Core.Confluence;
 using DocuMe.Core.Markdown;
 using DocuMe.Core.Publishing;
 using DocuMe.Core.State;
@@ -9,14 +10,15 @@ using Spectre.Console;
 namespace DocuMe.Cli.Commands;
 
 /// <summary>
-/// <c>docume publish</c> — PLAN.md §6.2. This build wires the <c>--dry-run</c> half: it loads the
-/// config, tree and state, converts every page, decides what a real run would do with it, and prints
-/// the plan. Nothing is uploaded and nothing is written, including <c>state.json</c>.
+/// <c>docume publish</c> — PLAN.md §6.2. Loads the config, tree and state, converts every page,
+/// decides what the run does with it, prints the plan, and — unless <c>--dry-run</c> — executes it:
+/// pages upserted parents-first, changed attachments uploaded, invalidated approvals revoked,
+/// <c>state.json</c> written.
 /// </summary>
 /// <remarks>
-/// The decision and reporting logic lives in <see cref="PublishPipeline"/> and
-/// <see cref="PublishReport"/> so tests drive it without System.CommandLine; this file is argument
-/// parsing, file resolution and Spectre output.
+/// The decision logic lives in <see cref="PublishPipeline"/> and the write path in
+/// <see cref="PublishExecutor"/>, so tests drive both without System.CommandLine; this file is
+/// argument parsing, file resolution and Spectre output.
 /// </remarks>
 internal static class PublishCommand
 {
@@ -51,6 +53,11 @@ internal static class PublishCommand
             Description = "Write into a space listed in confluence.protectedSpaces. One run only; "
                 + "there is no config value that grants this.",
         };
+        var treeOption = new Option<bool>("--tree")
+        {
+            Description = "Also print the page tree the run would build (parents resolved from the "
+                + "directory index pages).",
+        };
 
         var command = new Command(
             "publish",
@@ -61,24 +68,29 @@ internal static class PublishCommand
             dryRunOption,
             forceOption,
             allowProtectedSpaceOption,
+            treeOption,
         };
 
-        command.SetAction(parseResult => Run(
+        command.SetAction((parseResult, cancellationToken) => RunAsync(
             parseResult.GetValue(configOption)!,
             parseResult.GetValue(stateOption),
             parseResult.GetValue(dryRunOption),
             parseResult.GetValue(forceOption),
-            parseResult.GetValue(allowProtectedSpaceOption)));
+            parseResult.GetValue(allowProtectedSpaceOption),
+            parseResult.GetValue(treeOption),
+            cancellationToken));
 
         return command;
     }
 
-    private static int Run(
+    private static async Task<int> RunAsync(
         string configPath,
         string? statePath,
         bool dryRun,
         bool force,
-        bool allowProtectedSpace)
+        bool allowProtectedSpace,
+        bool printTree,
+        CancellationToken cancellationToken)
     {
         var fullConfigPath = Path.GetFullPath(configPath);
 
@@ -151,6 +163,11 @@ internal static class PublishCommand
 
         Render(report);
 
+        if (printTree)
+        {
+            RenderTree(report, config.Confluence.RootPageId);
+        }
+
         if (!report.CanPublish)
         {
             return 1;
@@ -161,14 +178,67 @@ internal static class PublishCommand
             return 0;
         }
 
-        // Said plainly rather than dressed up as success: the plan above is real, the upload is not
-        // built yet. §6.2's write half (upsert, attachment upload, labels, state write-back,
-        // --changed-since / --page / --prune) lands in the next slice.
+        return await PublishAsync(config, repoRoot, wikiRoot, resolvedStatePath, report, state, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The write half (§6.2 steps 5-8). Credentials come from the environment and nowhere else
+    /// (rule §1.1); every decision was already made by the plan printed above.
+    /// </summary>
+    private static async Task<int> PublishAsync(
+        DocumeConfig config,
+        string repoRoot,
+        string wikiRoot,
+        string statePath,
+        PublishReport report,
+        DocumeState state,
+        CancellationToken cancellationToken)
+    {
+        ConfluenceCredentials credentials;
+        try
+        {
+            credentials = ConfluenceCredentials.FromEnvironment();
+        }
+        catch (ConfluenceCredentialsException ex)
+        {
+            return Fail(ex.Message);
+        }
+
+        if (!Uri.TryCreate(config.Confluence.BaseUrl, UriKind.Absolute, out var baseUrl))
+        {
+            return Fail(
+                $"confluence.baseUrl '{config.Confluence.BaseUrl}' is not an absolute URL. It should look "
+                + "like https://your-site.atlassian.net/wiki (PLAN.md §5.1).");
+        }
+
+        using var client = ConfluenceClient.Create(new ConfluenceClientOptions { BaseUrl = baseUrl }, credentials);
+
+        var rendererPath = Path.GetFullPath(Path.Combine(repoRoot, config.Mermaid.Renderer));
+        var executor = new PublishExecutor(client, wikiRoot, new MermaidRenderer(rendererPath).RenderAsync);
+        var sha = await GitHead.TryReadAsync(repoRoot, cancellationToken).ConfigureAwait(false);
+
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine(
-            "[yellow]Writing to Confluence is not implemented yet — nothing was published.[/] "
-            + "Re-run with --dry-run to plan without this warning.");
-        return 1;
+            $"Publishing to [blue]{baseUrl.ToString().EscapeMarkup()}[/] as "
+            + $"[blue]{credentials.Email.EscapeMarkup()}[/]…");
+
+        var outcome = await executor
+            .ExecuteAsync(config, report, state, new PublishExecutionOptions { RepoSha = sha }, cancellationToken)
+            .ConfigureAwait(false);
+
+        // Persisted before anything is reported, and persisted even after a failure: a page id earned
+        // by a create must not be lost, or the next run creates the page again and Confluence rejects
+        // the duplicate title (§6.2 step 8).
+        if (outcome.StateChanged)
+        {
+            StateStore.Save(statePath, outcome.State);
+            AnsiConsole.MarkupLine($"State written: [blue]{statePath.EscapeMarkup()}[/]");
+        }
+
+        RenderOutcome(outcome, sha);
+
+        return outcome.Succeeded ? 0 : 1;
     }
 
     /// <summary>
@@ -320,6 +390,117 @@ internal static class PublishCommand
             $"[green]PLAN OK[/] — {report.Pages.Count} page(s) convert; "
             + $"{report.CreateCount + report.UpdateCount} body write(s), {report.UploadCount} upload(s). "
             + "Nothing was written.");
+    }
+
+    /// <summary>
+    /// The page tree the run would build (<see cref="PageHierarchy"/>), which is the shape a human
+    /// reviewing a bulk publish wants to check before it happens rather than after.
+    /// </summary>
+    private static void RenderTree(PublishReport report, string? rootPageId)
+    {
+        var root = rootPageId is { Length: > 0 } id
+            ? $"confluence.rootPageId {id}"
+            : "the space root (no confluence.rootPageId set)";
+
+        var tree = new Tree($"[grey]{root.EscapeMarkup()}[/]");
+        var nodes = new Dictionary<string, TreeNode>(StringComparer.Ordinal);
+
+        // report.Pages is tree order, so a parent is always added before the children that look it up.
+        foreach (var page in report.Pages)
+        {
+            var label = $"{page.Title.EscapeMarkup()} [grey]({page.Path.EscapeMarkup()})[/]";
+            var parent = page.ParentPath is { } parentPath && nodes.TryGetValue(parentPath, out var node)
+                ? node.AddNode(label)
+                : tree.AddNode(label);
+
+            nodes[page.Path] = parent;
+        }
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.Write(tree);
+    }
+
+    private static void RenderOutcome(PublishOutcome outcome, string? sha)
+    {
+        AnsiConsole.WriteLine();
+
+        var table = new Table().AddColumn("Result").AddColumn("Pages");
+        table.AddRow("[green]created[/]", outcome.CreatedCount.ToString());
+        table.AddRow("[yellow]updated[/]", outcome.UpdatedCount.ToString());
+        table.AddRow("[blue]attachments only[/]", outcome.AttachmentOnlyCount.ToString());
+        AnsiConsole.Write(table);
+
+        AnsiConsole.MarkupLine($"Attachments uploaded: {outcome.UploadedAttachmentCount}");
+
+        if (outcome.ApprovalsRevokedCount > 0)
+        {
+            AnsiConsole.MarkupLine(
+                $"[yellow]Approvals revoked: {outcome.ApprovalsRevokedCount}[/] "
+                + "(the `approved` label was removed and state moved to needs-review)");
+        }
+
+        if (sha is { Length: > 0 } && outcome.Succeeded)
+        {
+            AnsiConsole.MarkupLine($"[grey]lastPublishedSha: {sha.EscapeMarkup()}[/]");
+        }
+
+        foreach (var warning in outcome.Warnings.Take(PagesPerSection))
+        {
+            AnsiConsole.MarkupLine($"[yellow]•[/] {warning.EscapeMarkup()}");
+        }
+
+        if (outcome.Warnings.Count > PagesPerSection)
+        {
+            AnsiConsole.MarkupLine($"  [grey]… and {outcome.Warnings.Count - PagesPerSection} more warning(s)[/]");
+        }
+
+        RenderPageFailures(outcome);
+        RenderOutcomeVerdict(outcome);
+    }
+
+    private static void RenderPageFailures(PublishOutcome outcome)
+    {
+        if (outcome.Failures.Count == 0)
+        {
+            return;
+        }
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"[red]PAGES THAT FAILED[/] — {outcome.Failures.Count}");
+
+        foreach (var failure in outcome.Failures.Take(PagesPerSection))
+        {
+            AnsiConsole.MarkupLine($"  [red]•[/] {failure.Path.EscapeMarkup()}");
+            AnsiConsole.MarkupLine($"    [grey]{failure.Message.EscapeMarkup()}[/]");
+        }
+
+        if (outcome.Failures.Count > PagesPerSection)
+        {
+            AnsiConsole.MarkupLine($"  [grey]… and {outcome.Failures.Count - PagesPerSection} more page(s)[/]");
+        }
+    }
+
+    private static void RenderOutcomeVerdict(PublishOutcome outcome)
+    {
+        AnsiConsole.WriteLine();
+
+        if (outcome.StoppedBecause is { } stopped)
+        {
+            AnsiConsole.MarkupLine($"[red]STOPPED[/] — {stopped.EscapeMarkup()}");
+            return;
+        }
+
+        if (outcome.Failures.Count > 0)
+        {
+            AnsiConsole.MarkupLine(
+                $"[red]PARTIALLY PUBLISHED[/] — {outcome.Pages.Count} page(s) published, "
+                + $"{outcome.Failures.Count} failed. Re-run to retry the failures.");
+            return;
+        }
+
+        AnsiConsole.MarkupLine(
+            $"[green]PUBLISHED[/] — {outcome.Pages.Count} page(s) written, "
+            + $"{outcome.UploadedAttachmentCount} attachment(s) uploaded.");
     }
 
     private static void RenderPaths(IEnumerable<string> paths)
