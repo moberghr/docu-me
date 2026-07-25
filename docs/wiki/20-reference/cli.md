@@ -37,6 +37,12 @@ dotnet tool run docume -- drift --help    # one command's options
 | `dashboard` | the dashboard page | nothing |
 | `status` | no | nothing |
 
+Every write path in that table is gated on `confluence.protectedSpaces`: name a space there and
+`publish`, `dashboard`, `drift --mark` and `sync --reply` all refuse it. The first three carry
+`--allow-protected-space` to lift the refusal for one run without editing the list. `sync --reply`
+deliberately does not: a reply is a comment posted into a space this repo was told to stay out of, so
+there is no per-run override, and its read halves report the lock instead of refusing.
+
 Every command that reads `docume.json` takes `--config` (default `docume.json`), and its directory is
 the repo root that `wiki.root` and every `sources` glob resolve against. Every command that reads
 state takes `--state`, defaulting to `<wiki.root>/_meta/state.json`.
@@ -121,6 +127,7 @@ Reports which pages derive from code changed between two revisions.
 | `--fail-on-drift` | Exit 1 when any page is affected. Without it the command is advisory and exits 0 |
 | `--mark` | Add the `stale` label to affected pages, set `stale: true` in state, refresh the dashboard |
 | `--dry-run` | With `--mark`: report what would be labelled, write nothing. Needs no credentials |
+| `--allow-protected-space` | With `--mark`: label pages in a space listed in `confluence.protectedSpaces`, for one run |
 
 ## `docume dashboard`
 
@@ -130,6 +137,7 @@ Regenerates the status page from state plus the live labels.
 |---|---|
 | `--title` | Title of the dashboard page. Defaults to `dashboard.title` |
 | `--dry-run` | Print the storage format it would publish and write nothing |
+| `--allow-protected-space` | Publish the dashboard into a space listed in `confluence.protectedSpaces`, for one run |
 
 The labels are reconciled in memory here; `docume sync --labels` is what writes them into state.
 
