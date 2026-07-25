@@ -82,6 +82,18 @@ internal static class PublishCommand
                 + "Leaves the order in Confluence exactly as it is, for a team that arranges it by hand.",
         };
 
+        var blockOnOpenCommentsOption = new Option<bool>("--block-on-open-comments")
+        {
+            Description = "Leave a page as it is, and exit non-zero, when it has unresolved inline "
+                + "comments a body rewrite could strand. Default is to publish and warn. Has no effect on "
+                + "--dry-run: the check reads Confluence, which a dry run does not.",
+        };
+        var noCommentCheckOption = new Option<bool>("--no-comment-check")
+        {
+            Description = "Skip the read that looks for unresolved inline comments before rewriting a "
+                + "page (one extra read per page whose body changes; none for creates, skips or moves).",
+        };
+
         var command = new Command(
             "publish",
             "Convert the wiki and publish it to Confluence. --dry-run plans the run and writes nothing.")
@@ -96,6 +108,8 @@ internal static class PublishCommand
             pageOption,
             pruneOption,
             noReorderOption,
+            blockOnOpenCommentsOption,
+            noCommentCheckOption,
         };
 
         command.SetAction((parseResult, cancellationToken) => RunAsync(
@@ -109,6 +123,8 @@ internal static class PublishCommand
             parseResult.GetValue(pageOption) ?? [],
             parseResult.GetValue(pruneOption),
             parseResult.GetValue(noReorderOption),
+            parseResult.GetValue(blockOnOpenCommentsOption),
+            parseResult.GetValue(noCommentCheckOption),
             cancellationToken));
 
         return command;
@@ -125,6 +141,8 @@ internal static class PublishCommand
         string[] pagePaths,
         bool prune,
         bool noReorder,
+        bool blockOnOpenComments,
+        bool noCommentCheck,
         CancellationToken cancellationToken)
     {
         if (changedSince is { Length: > 0 } && pagePaths.Length > 0)
@@ -132,6 +150,16 @@ internal static class PublishCommand
             return Fail(
                 "--changed-since and --page cannot be combined: each one narrows the run in its own way, "
                 + "and guessing which you meant would be worse than asking. Pick one.");
+        }
+
+        if (blockOnOpenComments && noCommentCheck)
+        {
+            // Refused rather than resolved in either direction: one flag asks to hold pages back over
+            // comments, the other asks not to look for them, and a run that picked a winner would either
+            // publish over comments it promised to stop at or pay for a check it was told to skip.
+            return Fail(
+                "--block-on-open-comments and --no-comment-check contradict each other: blocking needs the "
+                + "check that --no-comment-check turns off. Drop one.");
         }
 
         var fullConfigPath = Path.GetFullPath(configPath);
@@ -255,11 +283,28 @@ internal static class PublishCommand
                 RenderPrunePlan(PrunePlanner.Plan(state, report.OrphanPages, report.Scope), dryRun: true);
             }
 
+            if (blockOnOpenComments)
+            {
+                // Said out loud rather than left to be assumed: a pipeline that ran only this command and
+                // saw it exit 0 would otherwise read the flag as a guarantee it never checked.
+                AnsiConsole.MarkupLine(
+                    "[yellow]--block-on-open-comments did nothing here:[/] finding unresolved comments "
+                    + "means reading Confluence, and --dry-run writes and reads nothing. It applies on the "
+                    + "real run.");
+            }
+
             return 0;
         }
 
+        var execution = new PublishExecutionOptions
+        {
+            Reorder = !noReorder,
+            CheckOpenComments = !noCommentCheck,
+            BlockOnOpenComments = blockOnOpenComments,
+        };
+
         return await PublishAsync(
-                config, repoRoot, wikiRoot, resolvedStatePath, report, state, prune, noReorder, cancellationToken)
+                config, repoRoot, wikiRoot, resolvedStatePath, report, state, prune, execution, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -305,7 +350,7 @@ internal static class PublishCommand
         PublishReport report,
         DocumeState state,
         bool prune,
-        bool noReorder,
+        PublishExecutionOptions execution,
         CancellationToken cancellationToken)
     {
         ConfluenceCredentials credentials;
@@ -337,12 +382,7 @@ internal static class PublishCommand
             + $"[blue]{credentials.Email.EscapeMarkup()}[/]…");
 
         var outcome = await executor
-            .ExecuteAsync(
-                config,
-                report,
-                state,
-                new PublishExecutionOptions { RepoSha = sha, Reorder = !noReorder },
-                cancellationToken)
+            .ExecuteAsync(config, report, state, execution with { RepoSha = sha }, cancellationToken)
             .ConfigureAwait(false);
 
         // Persisted before anything is reported, and persisted even after a failure: a page id earned

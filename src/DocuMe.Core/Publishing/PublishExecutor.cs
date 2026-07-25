@@ -49,6 +49,34 @@ public sealed record PublishExecutionOptions
     /// </para>
     /// </remarks>
     public bool Reorder { get; init; } = true;
+
+    /// <summary>
+    /// Whether to look for unresolved inline comments on a page before overwriting its body (§6.2 step 6).
+    /// <c>--no-comment-check</c> sets it false.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The check costs one read per page whose body this run rewrites, and nothing at all otherwise: a
+    /// page being created has no comments yet, a skipped page is not touched, and neither a move nor an
+    /// attachment-only publish changes the text a comment is anchored to.
+    /// </para>
+    /// <para>
+    /// On by default because §6.2 asks for the warning by default. Off is offered for the bulk case — a
+    /// full republish of an ~80-page wiki pays ~80 extra reads — and because this read has never run
+    /// against a real tenant, so a way to switch it off without a rebuild is worth having.
+    /// <see cref="BlockOnOpenComments"/> turns it back on regardless: blocking on a check that was
+    /// skipped would be a promise the run cannot keep.
+    /// </para>
+    /// </remarks>
+    public bool CheckOpenComments { get; init; } = true;
+
+    /// <summary>
+    /// Whether an unresolved inline comment holds its page back instead of warning about it (§6.2's
+    /// <c>--block-on-open-comments</c>). Off by default, which is what §6.2 specifies: see
+    /// <see cref="OpenCommentGuard"/> for why warn-and-proceed is the designed behavior rather than a
+    /// leniency.
+    /// </summary>
+    public bool BlockOnOpenComments { get; init; }
 }
 
 /// <summary>
@@ -234,7 +262,7 @@ public sealed class PublishExecutor
             try
             {
                 outcome = await PublishPageAsync(
-                        config, planned, state, spaceId, parentId, warnings, cancellationToken)
+                        config, planned, state, spaceId, parentId, options, warnings, cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (ConfluenceAuthenticationException ex)
@@ -330,6 +358,7 @@ public sealed class PublishExecutor
         DocumeState state,
         string spaceId,
         string? parentId,
+        PublishExecutionOptions options,
         List<string> warnings,
         CancellationToken cancellationToken)
     {
@@ -370,6 +399,21 @@ public sealed class PublishExecutor
         }
 
         var creating = plan.Action == PagePublishAction.Create || recreate;
+
+        // §6.2 step 6, and this early on purpose: a page that is about to be held back must not render a
+        // diagram or upload a byte first. Only a body rewrite can strand a comment's anchor — a create has
+        // no comments to strand, and a move or an attachment-only publish leaves the text alone.
+        if (!creating && plan.WritesBody && ChecksComments(options))
+        {
+            var refusal = await GuardOpenCommentsAsync(
+                    planned.Path, pageId!, options, warnings, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (refusal is not null)
+            {
+                return new PageOutcome(state, null, refusal);
+            }
+        }
 
         // A recreated page carries none of its old attachments, so the changed subset is not enough.
         var uploads = creating
@@ -487,6 +531,77 @@ public sealed class PublishExecutor
             new PagePublishResult(
                 planned.Path, planned.Title, plan.Action, pageId!, version, uploaded, revoked, recreate),
             null);
+    }
+
+    /// <summary>Whether this run reads a page's comments before rewriting it (§6.2 step 6).</summary>
+    /// <remarks>
+    /// Blocking implies checking, so the two flags cannot combine into a run that promises to hold pages
+    /// back and then never looks. The CLI rejects the contradictory command line outright; this makes the
+    /// safe reading the only reachable one for every other caller.
+    /// </remarks>
+    private static bool ChecksComments(PublishExecutionOptions options)
+        => options.CheckOpenComments || options.BlockOnOpenComments;
+
+    /// <summary>
+    /// The open-comment guard (§6.2 step 6): why this page must be left alone, or <c>null</c> to carry on
+    /// — adding a warning on the way when there were comments but the run was told to proceed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Executor-time, not plan-time, and that has a consequence worth stating.</strong> The check
+    /// needs the network, and <see cref="PublishPipeline.Plan"/> is pure by construction — which is what
+    /// makes <c>--dry-run</c> the real run minus its side effects. So a dry run cannot report open
+    /// comments at all, and the CLI says so rather than implying otherwise.
+    /// </para>
+    /// <para>
+    /// <strong>A comments read that fails does not fail the page — unless it was load-bearing.</strong>
+    /// Warning mode is advisory, so an endpoint that answers 404 or 500 costs a warning saying the check
+    /// did not happen and the page publishes; under <c>--block-on-open-comments</c> the caller asked for a
+    /// guarantee, and proceeding on an unread page would be exactly the silent failure the flag was passed
+    /// to prevent. An expired token is neither case: it propagates, and the run stops (rule §1.2).
+    /// </para>
+    /// </remarks>
+    private async Task<string?> GuardOpenCommentsAsync(
+        string path,
+        string pageId,
+        PublishExecutionOptions options,
+        List<string> warnings,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<ConfluenceInlineComment> comments;
+        try
+        {
+            comments = await _client.GetInlineCommentsAsync(pageId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ConfluenceException ex) when (ex is not ConfluenceAuthenticationException)
+        {
+            if (options.BlockOnOpenComments)
+            {
+                return "its inline comments could not be read, and --block-on-open-comments cannot be "
+                    + $"honored without them, so the page was left alone: {ex.Message}";
+            }
+
+            warnings.Add(
+                $"{path}: its inline comments could not be read, so nothing checked whether rewriting it "
+                + $"strands one ({ex.Message}). The page itself published.");
+
+            return null;
+        }
+
+        var unresolved = OpenCommentGuard.Unresolved(comments);
+        if (unresolved.Count == 0)
+        {
+            return null;
+        }
+
+        if (options.BlockOnOpenComments)
+        {
+            return OpenCommentGuard.Refusal(unresolved);
+        }
+
+        warnings.Add(OpenCommentGuard.Warning(path, unresolved));
+
+        return null;
     }
 
     /// <summary>

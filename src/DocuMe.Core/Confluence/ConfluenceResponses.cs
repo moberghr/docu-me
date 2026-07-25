@@ -65,6 +65,32 @@ internal sealed record VersionBulk(int? Number);
 internal sealed record ChildPageBulk(string? Id, string? Title, int? ChildPosition);
 
 /// <summary>
+/// The v2 inline-comment schema, narrowed to what the open-comment guard reads (PLAN.md §6.2 step 6).
+/// </summary>
+/// <remarks>
+/// <c>resolutionStatus</c> is the field the whole guard turns on, and Atlassian's published schema for
+/// this endpoint does not list it — it is documented only by the API's own behavior and by developer
+/// community reports (values seen: <c>open</c>, <c>resolved</c>, <c>dangling</c>). Hence nullable and
+/// hence never compared for equality against a closed set: see
+/// <see cref="ConfluenceInlineComment.IsResolved"/>.
+/// </remarks>
+internal sealed record InlineCommentBulk(
+    string? Id,
+    string? ResolutionStatus,
+    [property: JsonPropertyName("_links")] EntityLinks? Links);
+
+/// <summary>
+/// The subset of an entity's own <c>_links</c> block DocuMe reads: the browser URL, which is the one
+/// thing that turns a comment id in a terminal into something a human can open.
+/// </summary>
+/// <remarks>
+/// Distinct from <see cref="PaginationLinks"/> on purpose. They are the same JSON member on different
+/// objects — one belongs to a result set and answers "is the read finished", the other belongs to an
+/// entity and answers "where is it".
+/// </remarks>
+internal sealed record EntityLinks(string? Webui);
+
+/// <summary>
 /// The v1 <c>Content</c> schema, narrowed to what an attachment upload answers with. v1 marks only
 /// <c>type</c> and <c>status</c> required, so everything DocuMe reads is checked by the mapper.
 /// </summary>

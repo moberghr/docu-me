@@ -106,11 +106,12 @@ public sealed class ConfluenceClient : IDisposable
     private const string CursorParameter = "cursor";
 
     /// <summary>
-    /// How many pages of children one read will follow before treating the pagination as broken. A
-    /// backstop against a server that keeps handing back a cursor, not a real limit: at v2's smallest
-    /// documented page size this is still thousands of children under one parent.
+    /// How many pages of results one paginated read will follow before treating the pagination as broken.
+    /// A backstop against a server that keeps handing back a cursor, not a real limit: at v2's smallest
+    /// documented page size this is still thousands of children under one parent, or thousands of
+    /// comments on one page.
     /// </summary>
-    private const int ChildrenRequestLimit = 50;
+    private const int PagedRequestLimit = 50;
 
     /// <summary>
     /// Web defaults: camelCase, case-insensitive, and a number readable from a JSON string. The
@@ -272,15 +273,13 @@ public sealed class ConfluenceClient : IDisposable
     /// (<see cref="Publishing.ChildOrderPlanner"/>).
     /// </para>
     /// <para>
-    /// <strong>No <c>limit</c> is sent.</strong> The v2 schema documents the parameter but neither its
-    /// default nor its maximum, and a guessed value that turns out to be over the cap is a 400 on a
-    /// read the publish cannot do without. The documented cursor pagination is implemented instead, so
-    /// a parent with more children than one page holds costs an extra request rather than a failure.
-    /// </para>
-    /// <para>
     /// A missing page is <em>not</em> null here, unlike <see cref="FindPageByIdAsync"/>: the post-pass
     /// only ever asks about a parent it just wrote or read, so a 404 means the tree moved under the run
     /// and is worth reporting rather than reading as "no children".
+    /// </para>
+    /// <para>
+    /// No <c>limit</c> is sent and the cursor is followed to the end — see
+    /// <see cref="ReadPagedAsync{TWire,TModel}"/> for why.
     /// </para>
     /// </remarks>
     /// <param name="pageId">The parent page.</param>
@@ -289,7 +288,7 @@ public sealed class ConfluenceClient : IDisposable
     /// <exception cref="ConfluenceApiException">Any other non-success status, including a 404.</exception>
     /// <exception cref="ConfluenceProtocolException">
     /// The response body is not the documented shape, or the endpoint kept offering another page of
-    /// results past <see cref="ChildrenRequestLimit"/> requests.
+    /// results past <see cref="PagedRequestLimit"/> requests.
     /// </exception>
     public async Task<IReadOnlyList<ConfluenceChildPage>> GetChildPagesAsync(
         string pageId,
@@ -298,30 +297,66 @@ public sealed class ConfluenceClient : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
 
         var endpoint = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/children";
-        var children = new List<ConfluenceChildPage>();
-        var path = endpoint;
-
-        for (var request = 0; request < ChildrenRequestLimit; request++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var response = await ReadAsync<MultiEntityResult<ChildPageBulk>>(path, cancellationToken)
-                .ConfigureAwait(false);
-
-            children.AddRange(RequireResults(response, path).Select(child => MapChildPage(child, path)));
-
-            if (NextCursor(response.Links?.Next) is not { Length: > 0 } cursor)
-            {
-                return children;
-            }
-
-            path = $"{endpoint}?{CursorParameter}={Uri.EscapeDataString(cursor)}";
-        }
-
-        var overrun = $"it offered another page of children after {ChildrenRequestLimit} requests, which "
+        var overrun = $"it offered another page of children after {PagedRequestLimit} requests, which "
             + "is more children than a page tree has";
 
-        throw new ConfluenceProtocolException(endpoint, overrun);
+        return await ReadPagedAsync<ChildPageBulk, ConfluenceChildPage>(
+                endpoint,
+                MapChildPage,
+                overrun,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Lists a page's inline comments — the anchored ones, not the footer thread — following pagination
+    /// to the end. What the open-comment guard reads before overwriting a body (PLAN.md §6.2 step 6).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Every comment is returned, resolved ones included, and the caller filters.</strong> The
+    /// endpoint does document a server-side resolution filter, but it is not trustworthy: an Atlassian
+    /// developer-community report has <c>?resolution_status=open</c> answering comments whose own
+    /// <c>resolutionStatus</c> reads <c>resolved</c>, and even the parameter's spelling is disputed there
+    /// (underscore versus dash). A guard that silently over-reported would be noise, and one that
+    /// silently under-reported would be worse, so the decision is made here from the field each comment
+    /// carries (<see cref="ConfluenceInlineComment.IsResolved"/>).
+    /// </para>
+    /// <para>
+    /// <strong>No body is requested.</strong> Comment text is untrusted input (CLAUDE.md §0.2, rule
+    /// §1.3) and the guard quotes none of it — an id and a link are what a human needs to go read it.
+    /// The feedback ingestion in §6.3 does need bodies and the footer thread as well; that is where
+    /// <c>body-format</c> and a <c>footer-comments</c> read belong, sharing the pagination below.
+    /// </para>
+    /// <para>
+    /// A missing page fails rather than reading as "no comments", for the same reason
+    /// <see cref="GetChildPagesAsync"/> does: the only caller asks about a page it just read.
+    /// </para>
+    /// </remarks>
+    /// <param name="pageId">The page whose inline comments to read.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired or revoked.</exception>
+    /// <exception cref="ConfluenceApiException">Any other non-success status, including a 404.</exception>
+    /// <exception cref="ConfluenceProtocolException">
+    /// The response body is not the documented shape, or the endpoint kept offering another page of
+    /// results past <see cref="PagedRequestLimit"/> requests.
+    /// </exception>
+    public async Task<IReadOnlyList<ConfluenceInlineComment>> GetInlineCommentsAsync(
+        string pageId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
+
+        var endpoint = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/inline-comments";
+        var overrun = $"it offered another page of inline comments after {PagedRequestLimit} requests, "
+            + "which is more comments than one page collects";
+
+        return await ReadPagedAsync<InlineCommentBulk, ConfluenceInlineComment>(
+                endpoint,
+                MapInlineComment,
+                overrun,
+                cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -878,6 +913,62 @@ public sealed class ConfluenceClient : IDisposable
         return Deserialize<T>(path, body);
     }
 
+    /// <summary>
+    /// Reads a cursor-paginated v2 collection to the end, mapping each entity as it arrives.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>No <c>limit</c> is sent.</strong> The v2 schema documents the parameter for these
+    /// endpoints but neither its default nor its maximum, and a guessed value that turns out to be over
+    /// the cap is a 400 on a read the caller cannot do without. The documented cursor pagination is
+    /// followed instead, so a collection larger than one page costs an extra request rather than a
+    /// failure.
+    /// </para>
+    /// <para>
+    /// Running past <see cref="PagedRequestLimit"/> requests ends in a
+    /// <see cref="ConfluenceProtocolException"/> rather than a truncated list: at that point the
+    /// pagination is broken, and quietly returning what arrived so far is how a publish would act on
+    /// half an answer.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TWire">The wire shape of one entity, e.g. <see cref="ChildPageBulk"/>.</typeparam>
+    /// <typeparam name="TModel">The public shape the caller gets back.</typeparam>
+    /// <param name="endpoint">The path to read, with any endpoint-specific query already on it.</param>
+    /// <param name="map">Maps one entity, given the path to name in a protocol failure.</param>
+    /// <param name="overrunDetail">What to say when the cursor never runs out.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    private async Task<IReadOnlyList<TModel>> ReadPagedAsync<TWire, TModel>(
+        string endpoint,
+        Func<TWire, string, TModel> map,
+        string overrunDetail,
+        CancellationToken cancellationToken)
+    {
+        // An endpoint that already carries a query still has to be appended to, not overwritten.
+        var separator = endpoint.Contains('?', StringComparison.Ordinal) ? '&' : '?';
+        var entities = new List<TModel>();
+        var path = endpoint;
+
+        for (var request = 0; request < PagedRequestLimit; request++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var response = await ReadAsync<MultiEntityResult<TWire>>(path, cancellationToken)
+                .ConfigureAwait(false);
+
+            var page = path;
+            entities.AddRange(RequireResults(response, page).Select(entity => map(entity, page)));
+
+            if (NextCursor(response.Links?.Next) is not { Length: > 0 } cursor)
+            {
+                return entities;
+            }
+
+            path = $"{endpoint}{separator}{CursorParameter}={Uri.EscapeDataString(cursor)}";
+        }
+
+        throw new ConfluenceProtocolException(endpoint, overrunDetail);
+    }
+
     private async Task<TResponse> WriteAsync<TRequest, TResponse>(
         HttpMethod method,
         string path,
@@ -1009,6 +1100,18 @@ public sealed class ConfluenceClient : IDisposable
             Require(child.Id, "id", path),
             Require(child.Title, "title", path),
             child.ChildPosition);
+
+    /// <summary>
+    /// Maps one inline comment. Only the id is required: a comment with no <c>resolutionStatus</c> is
+    /// mapped as having none rather than failing the read, because the guard already treats an
+    /// unrecognized status as "not resolved" (<see cref="ConfluenceInlineComment"/>) — failing a publish
+    /// over a field Atlassian's own schema does not document would be the wrong trade.
+    /// </summary>
+    private static ConfluenceInlineComment MapInlineComment(InlineCommentBulk comment, string path)
+        => new(
+            Require(comment.Id, "id", path),
+            comment.ResolutionStatus,
+            comment.Links?.Webui);
 
     /// <summary>
     /// The <c>cursor</c> value out of a <c>_links.next</c> URL, or <c>null</c> when the read is done.

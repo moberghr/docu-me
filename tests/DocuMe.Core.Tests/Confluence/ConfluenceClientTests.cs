@@ -1114,6 +1114,91 @@ public sealed class ConfluenceClientTests
     }
 
     /// <summary>
+    /// The open-comment guard's read (PLAN.md §6.2 step 6). Resolution state is carried verbatim, and a
+    /// comment that arrives without one reads as unresolved rather than closed.
+    /// </summary>
+    [Fact]
+    public async Task Lists_a_pages_inline_comments_with_the_resolution_state_confluence_reports()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(InlineCommentsPath).UsingGet())
+            .RespondWith(Json(LastCommentsBody));
+
+        using var client = CreateClient(server);
+        var comments = await client.GetInlineCommentsAsync(PageId, TestContext.Current.CancellationToken);
+
+        comments.Select(comment => comment.Id).ShouldBe(["4002", "4003"]);
+        comments[0].ResolutionStatus.ShouldBe("resolved");
+        comments[0].IsResolved.ShouldBeTrue();
+        comments[0].WebUiLink.ShouldBe("/spaces/DOCUMESBX/pages/65601/Domain+model?focusedCommentId=4002");
+
+        // Atlassian's published schema for this endpoint does not document resolutionStatus at all, so a
+        // response without one is a case that has to have an answer: not resolved, never "closed".
+        comments[1].ResolutionStatus.ShouldBeNull();
+        comments[1].IsResolved.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// No query at all: no guessed <c>limit</c>, and — the one that matters — no server-side resolution
+    /// filter. An Atlassian developer-community report has <c>resolution_status=open</c> answering comments
+    /// whose own <c>resolutionStatus</c> reads <c>resolved</c>, so the filtering happens here, where it can
+    /// be trusted.
+    /// </summary>
+    [Fact]
+    public async Task Asks_for_every_comment_rather_than_trusting_the_resolution_filter()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(InlineCommentsPath).UsingGet())
+            .RespondWith(Json(LastCommentsBody));
+
+        using var client = CreateClient(server);
+        var comments = await client.GetInlineCommentsAsync(PageId, TestContext.Current.CancellationToken);
+
+        LastRequest(server).Query!.ShouldBeEmpty();
+
+        // The resolved one is returned, not dropped: deciding what counts is the guard's job.
+        comments.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Follows_the_cursor_through_a_page_with_more_comments_than_one_response_holds()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(InlineCommentsPath).UsingGet())
+            .RespondWith(Json(request => request.Query!.ContainsKey("cursor")
+                ? LastCommentsBody
+                : FirstCommentsBody));
+
+        using var client = CreateClient(server);
+        var comments = await client.GetInlineCommentsAsync(PageId, TestContext.Current.CancellationToken);
+
+        comments.Select(comment => comment.Id).ShouldBe(["4001", "4002", "4003"]);
+        server.LogEntries.Count.ShouldBe(2);
+    }
+
+    /// <summary>
+    /// A page that is gone fails rather than reading as "no comments": the guard only asks about a page it
+    /// just read, and a 404 answered as an empty list would publish over the comments it was checking for.
+    /// </summary>
+    [Fact]
+    public async Task A_page_that_is_gone_fails_rather_than_reading_as_having_no_comments()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(InlineCommentsPath).UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NotFound).WithBody("{}"));
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceApiException>(
+            () => client.GetInlineCommentsAsync(PageId, TestContext.Current.CancellationToken));
+
+        exception.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
     /// The reparent (PLAN.md §6.2): <c>append</c> files the page under the target. The whole request is
     /// its URL, which is the point of using this endpoint over a v2 body rewrite.
     /// </summary>
@@ -1397,6 +1482,38 @@ public sealed class ConfluenceClientTests
               "spaceId": "{{SpaceId}}", "childPosition": 7 },
             { "id": "111", "status": "current", "title": "Migrated page", "type": "page",
               "spaceId": "{{SpaceId}}", "childPosition": null }
+          ],
+          "_links": { "base": "https://example.atlassian.net/wiki" }
+        }
+        """;
+
+    private static string InlineCommentsPath => ApiPath($"pages/{PageId}/inline-comments");
+
+    /// <summary>A first page of inline comments that offers another.</summary>
+    private static string FirstCommentsBody =>
+        $$"""
+        {
+          "results": [
+            { "id": "4001", "status": "current", "title": "Re: Domain model", "pageId": "{{PageId}}",
+              "resolutionStatus": "open",
+              "_links": { "webui": "/spaces/DOCUMESBX/pages/{{PageId}}/Domain+model?focusedCommentId=4001" } }
+          ],
+          "_links": { "next": "/wiki/api/v2/pages/{{PageId}}/inline-comments?cursor=Y29tbWVudD0y" }
+        }
+        """;
+
+    /// <summary>
+    /// The last page: a resolved comment, and one that carries no <c>resolutionStatus</c> at all — the
+    /// shape Atlassian's published schema for this endpoint actually documents.
+    /// </summary>
+    private static string LastCommentsBody =>
+        $$"""
+        {
+          "results": [
+            { "id": "4002", "status": "current", "title": "Re: Domain model", "pageId": "{{PageId}}",
+              "resolutionStatus": "resolved",
+              "_links": { "webui": "/spaces/DOCUMESBX/pages/{{PageId}}/Domain+model?focusedCommentId=4002" } },
+            { "id": "4003", "status": "current", "title": "Re: Domain model", "pageId": "{{PageId}}" }
           ],
           "_links": { "base": "https://example.atlassian.net/wiki" }
         }

@@ -135,6 +135,39 @@ public enum ConfluencePageMovePosition
 public sealed record ConfluenceChildPage(string Id, string Title, int? ChildPosition);
 
 /// <summary>
+/// One inline comment on a page — anchored to a span of the stored body, which is what makes it
+/// fragile across a republish (PLAN.md §6.2 step 6).
+/// </summary>
+/// <param name="Id">The comment id, which is also what <c>focusedCommentId</c> in a link refers to.</param>
+/// <param name="ResolutionStatus">
+/// Confluence's own resolution state, verbatim and unparsed — <c>open</c>, <c>resolved</c> and
+/// <c>dangling</c> are the values reported in practice — or <c>null</c> when the response carried none.
+/// </param>
+/// <param name="WebUiLink">
+/// The comment's browser URL as Confluence composes it (site-relative), or <c>null</c>. Carried so a
+/// warning can point at the comment rather than quoting it.
+/// </param>
+public sealed record ConfluenceInlineComment(string Id, string? ResolutionStatus, string? WebUiLink)
+{
+    /// <summary>The one status that means a human has closed the comment.</summary>
+    private const string ResolvedStatus = "resolved";
+
+    /// <summary>
+    /// Whether Confluence considers the comment closed.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately "is it resolved" rather than "is it open", so that a missing status and a value this
+    /// client has never seen both read as <em>not</em> resolved. Both directions of a wrong guess are
+    /// available here and they are not symmetric: over-reporting costs a warning a human dismisses,
+    /// under-reporting silently drops the only notice that a republish is about to strand a reviewer's
+    /// question. A <c>dangling</c> comment counts as unresolved for the same reason — its anchor is
+    /// already lost, which is exactly what the guard exists to talk about.
+    /// </remarks>
+    public bool IsResolved =>
+        string.Equals(ResolutionStatus, ResolvedStatus, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
 /// A page to move within its space, without writing its body (PLAN.md §6.2: the reorganized-tree case
 /// and the child-page ordering post-pass).
 /// </summary>

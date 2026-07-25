@@ -46,6 +46,12 @@ public sealed class PublishExecutorTests : IDisposable
     private readonly List<string> _rendered = [];
 
     /// <summary>
+    /// The server <see cref="RepublishWithCommentsAsync"/> started, so a test that used it can still assert
+    /// on the requests it saw. Null for every test that starts its own.
+    /// </summary>
+    private WireMockServer? _server;
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="PublishExecutorTests"/> class with the fixture wiki
     /// a first publish sees: a home page with an image, and a child page with an image and a diagram.
     /// </summary>
@@ -80,7 +86,11 @@ public sealed class PublishExecutorTests : IDisposable
 
     private static string DiagramAttachment => MermaidAttachmentName.ForSource("graph TD\n  A --> B");
 
-    public void Dispose() => Directory.Delete(_dir, recursive: true);
+    public void Dispose()
+    {
+        _server?.Dispose();
+        Directory.Delete(_dir, recursive: true);
+    }
 
     [Fact]
     public async Task Creates_every_page_parents_first_and_records_what_it_published()
@@ -622,6 +632,7 @@ public sealed class PublishExecutorTests : IDisposable
         StubRead(server, version: 2);
         StubUpdate(server);
         StubMove(server, tree);
+        StubNoInlineComments(server);
 
         var second = await ExecuteAsync(server, first.State);
 
@@ -808,6 +819,7 @@ public sealed class PublishExecutorTests : IDisposable
         // A move endpoint that answers 200 and rearranges nothing: whatever the real reason would be, this
         // is what it looks like from here.
         StubMove(server);
+        StubNoInlineComments(server);
 
         var second = await ExecuteAsync(server, first.State);
 
@@ -870,6 +882,164 @@ public sealed class PublishExecutorTests : IDisposable
         outcome.StateChanged.ShouldBeFalse();
     }
 
+    /// <summary>
+    /// §6.2 step 6's default: the comment is named, the page publishes anyway. Warn-and-proceed is the
+    /// designed behavior — the feedback loop (§9) is what resolves comments, and it needs the republish it
+    /// would otherwise be blocked by (<see cref="OpenCommentGuard"/>).
+    /// </summary>
+    [Fact]
+    public async Task Warns_about_an_unresolved_inline_comment_and_publishes_the_page_anyway()
+    {
+        var second = await RepublishWithCommentsAsync(["4001:open", "4002:resolved"]);
+
+        second.Succeeded.ShouldBeTrue();
+        second.UpdatedCount.ShouldBe(1);
+
+        var warning = second.Warnings.ShouldHaveSingleItem();
+        warning.ShouldStartWith("README.md has 1 unresolved inline comment(s)");
+        warning.ShouldContain("4001 (open)");
+        warning.ShouldContain("focusedCommentId=4001");
+        warning.ShouldContain("--block-on-open-comments");
+
+        // The resolved one is not the guard's business, and naming it would train a reader to ignore this.
+        warning.ShouldNotContain("4002");
+    }
+
+    /// <summary>
+    /// <c>--block-on-open-comments</c>: the page is left exactly as Confluence holds it, and the run exits
+    /// non-zero. The refusal has to land before the write, not after it.
+    /// </summary>
+    [Fact]
+    public async Task Leaves_a_page_with_open_comments_alone_when_told_to_block()
+    {
+        var second = await RepublishWithCommentsAsync(["4001:open"], block: true);
+
+        second.Succeeded.ShouldBeFalse();
+        second.Pages.ShouldBeEmpty();
+
+        var failure = second.Failures.ShouldHaveSingleItem();
+        failure.Path.ShouldBe("README.md");
+        failure.Message.ShouldContain("--block-on-open-comments");
+        failure.Message.ShouldContain("4001 (open)");
+
+        // Nothing was written, so nothing may be recorded: a run that hashed the body it refused to
+        // publish would skip the page on every run after this one and never publish it at all.
+        second.StateChanged.ShouldBeFalse();
+        second.State.Pages["README.md"].PublishedVersion.ShouldBe(1);
+        Requests(_server!, "PUT", "/wiki/api/v2/pages/").ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A status this client has never seen, and a comment carrying none at all, both count as unresolved:
+    /// the only value that closes a comment is <c>resolved</c>, and guessing the other way would silently
+    /// drop the warning the guard exists to give (<see cref="ConfluenceInlineComment.IsResolved"/>).
+    /// </summary>
+    [Fact]
+    public async Task Treats_an_unknown_and_a_missing_resolution_status_as_unresolved()
+    {
+        var second = await RepublishWithCommentsAsync(["4001:dangling", "4002:", "4003:RESOLVED"]);
+
+        var warning = second.Warnings.ShouldHaveSingleItem();
+        warning.ShouldStartWith("README.md has 2 unresolved inline comment(s)");
+        warning.ShouldContain("4001 (dangling)");
+        warning.ShouldContain("4002 (no resolution status)");
+
+        // Case is Confluence's business, not a difference in meaning.
+        warning.ShouldNotContain("4003");
+    }
+
+    /// <summary>
+    /// A comments read that fails does not fail the page: the check is advisory by default, so what is
+    /// reported is that nothing checked — never silence, which would read as "no comments".
+    /// </summary>
+    [Fact]
+    public async Task Publishes_and_says_so_when_the_comments_read_fails()
+    {
+        var second = await RepublishWithCommentsAsync(comments: null);
+
+        second.Succeeded.ShouldBeTrue();
+        second.UpdatedCount.ShouldBe(1);
+
+        var warning = second.Warnings.ShouldHaveSingleItem();
+        warning.ShouldContain("could not be read");
+        warning.ShouldContain("The page itself published.");
+    }
+
+    /// <summary>
+    /// The same failed read under <c>--block-on-open-comments</c>: the caller asked for a guarantee, and
+    /// publishing a page whose comments went unread is the silent failure the flag was passed to prevent.
+    /// </summary>
+    [Fact]
+    public async Task Refuses_the_page_when_blocking_and_the_comments_cannot_be_read()
+    {
+        var second = await RepublishWithCommentsAsync(comments: null, block: true);
+
+        second.Succeeded.ShouldBeFalse();
+        second.Failures.ShouldHaveSingleItem().Message.ShouldContain("cannot be honored without them");
+        Requests(_server!, "PUT", "/wiki/api/v2/pages/").ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Not a single comments read on a first publish: a page that does not exist yet cannot carry a
+    /// comment, and §6.2 step 6 is about overwriting a body that already has one anchored into it.
+    /// </summary>
+    [Fact]
+    public async Task Reads_no_comments_when_every_page_is_being_created()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        StubNoChildren(server);
+
+        var outcome = await ExecuteAsync(server, new DocumeState());
+
+        outcome.Succeeded.ShouldBeTrue();
+        CommentReads(server).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// <c>--no-comment-check</c>: no read, no warning, and the page still publishes. The flag exists
+    /// because the check costs one read per rewritten page across a bulk republish
+    /// (<see cref="PublishExecutionOptions.CheckOpenComments"/>).
+    /// </summary>
+    [Fact]
+    public async Task Reads_no_comments_when_the_check_is_turned_off()
+    {
+        var second = await RepublishWithCommentsAsync(["4001:open"], check: false);
+
+        second.Succeeded.ShouldBeTrue();
+        second.UpdatedCount.ShouldBe(1);
+        second.Warnings.ShouldBeEmpty();
+        CommentReads(_server!).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A move spends no body write, so no comment anchor can be stranded and no read is worth paying for
+    /// (§6.2, <see cref="PagePublishAction.Move"/>).
+    /// </summary>
+    [Fact]
+    public async Task Reads_no_comments_for_a_page_the_tree_only_reparents()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        StubNoChildren(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+
+        server.ResetLogEntries();
+        StubRead(server, version: 1);
+        StubMove(server);
+
+        // Same body, different parent: exactly what PagePublishAction.Move exists for.
+        var moved = await ExecuteAsync(server, Reparent(first.State, "guides/setup.md", "777"), reorder: false);
+
+        moved.MovedCount.ShouldBe(1);
+        CommentReads(server).ShouldBeEmpty();
+    }
+
     private static DocumeConfig Config() => new()
     {
         Confluence = new ConfluenceConfig
@@ -915,6 +1085,12 @@ public sealed class PublishExecutorTests : IDisposable
         Requests(server, "PUT", "/wiki/rest/api/content/")
             .Select(request => request.Path)
             .Where(path => path.Contains("/move/", StringComparison.Ordinal))
+            .ToList();
+
+    /// <summary>The open-comment guard's reads — the cost the check adds, and what asserts it did not.</summary>
+    private static List<IRequestMessage> CommentReads(WireMockServer server) =>
+        Requests(server, "GET", "/wiki/api/v2/pages/")
+            .Where(request => request.Path.EndsWith("/inline-comments", StringComparison.Ordinal))
             .ToList();
 
     private static List<IRequestMessage> ChildReads(WireMockServer server) =>
@@ -1023,6 +1199,55 @@ public sealed class PublishExecutorTests : IDisposable
             .RespondWith(Json(_ => ChildrenBody(tree.Children)));
 
     /// <summary>
+    /// Answers the open-comment guard's read (§6.2 step 6), at a priority that beats the page-read
+    /// wildcard. Each entry is <c>id:resolutionStatus</c>; <c>id:</c> alone means the comment carried no
+    /// status at all, which the guard must not read as resolved.
+    /// </summary>
+    private static void StubInlineComments(WireMockServer server, params string[] comments) =>
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/inline-comments"))
+                .UsingGet())
+            .AtPriority(-1)
+            .RespondWith(Json(InlineCommentsBody(comments)));
+
+    /// <summary>
+    /// Answers the guard's read with no comments: the ordinary case, and what the tests that are not
+    /// about comments need so the read is a clean no-op rather than a protocol failure.
+    /// </summary>
+    private static void StubNoInlineComments(WireMockServer server) => StubInlineComments(server);
+
+    /// <summary>A comments endpoint that answers 404 — the read the guard cannot do without, failing.</summary>
+    private static void StubMissingInlineComments(WireMockServer server) =>
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/inline-comments"))
+                .UsingGet())
+            .AtPriority(-1)
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NotFound).WithBody("{}"));
+
+    private static string InlineCommentsBody(IReadOnlyList<string> comments)
+    {
+        var results = comments.Select(comment =>
+        {
+            var separator = comment.IndexOf(':', StringComparison.Ordinal);
+            var id = comment[..separator];
+            var status = comment[(separator + 1)..];
+            var resolution = status.Length == 0 ? "null" : JsonSerializer.Serialize(status);
+
+            return $$"""
+                {
+                  "id": "{{id}}", "status": "current", "title": "Re: Home", "pageId": "1001",
+                  "resolutionStatus": {{resolution}},
+                  "_links": { "webui": "/spaces/DOCUMESBX/pages/1001/Home?focusedCommentId={{id}}" }
+                }
+                """;
+        });
+
+        return $$"""{ "results": [{{string.Join(",", results)}}], "_links": {} }""";
+    }
+
+    /// <summary>
     /// Answers the children read with an empty list: the post-pass's no-op, for a test that is not about
     /// ordering but whose fixture happens to give a parent more than one child.
     /// </summary>
@@ -1129,6 +1354,53 @@ public sealed class PublishExecutorTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// Publishes the fixture, rewrites the home page so the next run overwrites a body, and runs again with
+    /// <paramref name="comments"/> as the inline comments Confluence answers for it.
+    /// </summary>
+    /// <param name="comments">
+    /// The comments, as <c>id:resolutionStatus</c> pairs (<see cref="StubInlineComments"/>), or
+    /// <c>null</c> to have the endpoint answer 404 — a comments read that fails.
+    /// </param>
+    /// <param name="block">Whether the run passes <c>--block-on-open-comments</c>.</param>
+    /// <param name="check">Whether the check runs at all; false is <c>--no-comment-check</c>.</param>
+    private async Task<PublishOutcome> RepublishWithCommentsAsync(
+        string[]? comments,
+        bool block = false,
+        bool check = true)
+    {
+        _server = WireMockServer.Start();
+        StubSpace(_server);
+        StubCreate(_server);
+        StubAttachmentUpload(_server);
+        StubNoChildren(_server);
+
+        var first = await ExecuteAsync(_server, new DocumeState());
+        first.Succeeded.ShouldBeTrue();
+
+        Write("README.md", "# Home\n\nRewritten, so this run overwrites a body somebody commented on.\n");
+        _server.ResetLogEntries();
+        StubRead(_server, version: 1);
+        StubUpdate(_server);
+
+        if (comments is null)
+        {
+            StubMissingInlineComments(_server);
+        }
+        else
+        {
+            StubInlineComments(_server, comments);
+        }
+
+        // reorder: false so the only warnings a test sees are the guard's — the post-pass has its own tests.
+        return await ExecuteAsync(
+            _server,
+            first.State,
+            reorder: false,
+            checkComments: check,
+            blockOnOpenComments: block);
+    }
+
     private async Task<PublishOutcome> ExecuteAsync(
         WireMockServer server,
         DocumeState state,
@@ -1137,7 +1409,9 @@ public sealed class PublishExecutorTests : IDisposable
         DiagramRenderer? renderer = null,
         Uri? baseUrl = null,
         PublishScope? scope = null,
-        bool reorder = true)
+        bool reorder = true,
+        bool checkComments = true,
+        bool blockOnOpenComments = false)
     {
         config ??= Config();
 
@@ -1158,12 +1432,15 @@ public sealed class PublishExecutorTests : IDisposable
         using var client = ConfluenceClient.Create(options, Credentials);
         var executor = new PublishExecutor(client, _dir, renderer ?? Render);
 
-        return await executor.ExecuteAsync(
-            config,
-            report,
-            state,
-            new PublishExecutionOptions { RepoSha = repoSha, Reorder = reorder },
-            TestContext.Current.CancellationToken);
+        var execution = new PublishExecutionOptions
+        {
+            RepoSha = repoSha,
+            Reorder = reorder,
+            CheckOpenComments = checkComments,
+            BlockOnOpenComments = blockOnOpenComments,
+        };
+
+        return await executor.ExecuteAsync(config, report, state, execution, TestContext.Current.CancellationToken);
     }
 
     private Task<MermaidDiagram> Render(string source, CancellationToken cancellationToken)
