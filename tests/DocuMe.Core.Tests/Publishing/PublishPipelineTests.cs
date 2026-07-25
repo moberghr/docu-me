@@ -340,7 +340,13 @@ public sealed class PublishPipelineTests : IDisposable
             state,
             "gone.md",
             new PublishedPage(
-                "page-gone", "Gone", null, "sha256:gone", 1, new Dictionary<string, string>(StringComparer.Ordinal)));
+                "page-gone",
+                "Gone",
+                null,
+                "sha256:gone",
+                1,
+                new Dictionary<string, string>(StringComparer.Ordinal),
+                new Dictionary<string, string>(StringComparer.Ordinal)));
 
         Write("README.md", "# Home\n\nRewritten, and [the guide](guides/setup.md) is still linked.\n");
         Write("guides/setup.md", "---\ntitle: Setup Guide\n---\n\n# Setup\n\nRewritten too.\n");
@@ -592,11 +598,21 @@ public sealed class PublishPipelineTests : IDisposable
             // with no parent — exactly what the executor writes for one.
             var parentId = page.ParentPath is { } parentPath ? PageIdFor(parentPath) : null;
 
+            // Diagram widths do not reach the plan: they go onto the body the write path uploads, after
+            // the hash (DiagramImageWidth), so nothing planned here depends on them.
+            var widths = new Dictionary<string, string>(StringComparer.Ordinal);
+
             state = StateUpdates.RecordPublish(
                 state,
                 page.Path,
                 new PublishedPage(
-                    PageIdFor(page.Path), page.Title, parentId, page.Plan.ContentHash, 1, attachments));
+                    PageIdFor(page.Path),
+                    page.Title,
+                    parentId,
+                    page.Plan.ContentHash,
+                    1,
+                    attachments,
+                    widths));
         }
 
         return StateUpdates.RecordLastPublishedSha(state, "abc1234");

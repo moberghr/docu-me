@@ -21,13 +21,17 @@ namespace DocuMe.Core.Markdown;
 /// <param name="SvgHeight">The <c>height</c> attribute of the SVG root element, verbatim.</param>
 /// <remarks>
 /// <para>
-/// <paramref name="SvgWidth"/> and <paramref name="SvgHeight"/> settle an open spec question:
-/// PLAN.md §7's mermaid row shows <c>&lt;ac:image ac:width="…"&gt;</c>, but the converter is a
-/// pure text transform that never renders, so it cannot know a width. The render script can,
-/// and does. Honoring §7's <c>ac:width</c> is therefore possible but not free: it needs
-/// <see cref="MermaidDiagramResolver"/> to carry a width alongside the filename, which changes
-/// the converter's seam and its goldens. Deferred to its own slice; the data is here so that
-/// slice needs no new investigation.
+/// <paramref name="SvgWidth"/> is what PLAN.md §7's <c>&lt;ac:image ac:width="…"&gt;</c> is measured
+/// from. The converter cannot do it — a pure text transform never renders, so it never knows a
+/// width — so the publish path adds the attribute to the body it uploads, after the §8 hash was
+/// taken over the converter's output. <see cref="Publishing.DiagramImageWidth"/> holds that step and
+/// the reasoning behind it.
+/// </para>
+/// <para>
+/// <paramref name="SvgHeight"/> is read but not published: <c>ac:height</c> is not in §7, and a
+/// height alongside a width is what distorts a diagram when Confluence would otherwise scale it
+/// proportionally. Kept because it costs one regex on a string already in hand, and a caller that
+/// wants to report a diagram's shape should not have to re-parse the SVG for half of it.
 /// </para>
 /// </remarks>
 public sealed record MermaidDiagram(

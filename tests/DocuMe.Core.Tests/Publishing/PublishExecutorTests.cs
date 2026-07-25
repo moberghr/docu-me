@@ -308,6 +308,106 @@ public sealed class PublishExecutorTests : IDisposable
             .ShouldBe(2);
     }
 
+    /// <summary>
+    /// §7's <c>ac:width</c>, added to the body at write time because it is a measurement of the rendered
+    /// SVG and the converter never renders (<see cref="DiagramImageWidth"/>). The goldens stay width-free.
+    /// </summary>
+    [Fact]
+    public async Task Publishes_the_rendered_diagram_width_on_the_image_and_remembers_it()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var outcome = await ExecuteAsync(server, new DocumeState());
+
+        var setup = Payload(Requests(server, "POST", "/wiki/api/v2/pages")[1]);
+        var body = setup.GetProperty("body").GetProperty("storage").GetProperty("value").GetString();
+        body.ShouldNotBeNull();
+        body.ShouldContain(
+            $"<ac:image ac:width=\"120\"><ri:attachment ri:filename=\"{DiagramAttachment}\"/></ac:image>");
+
+        // Remembered so the next body write reproduces the attribute without starting Node again.
+        outcome.State.Pages["guides/setup.md"].DiagramWidths[DiagramAttachment].ShouldBe("120");
+
+        // The logo is an author's image: its width is the markdown's business, not this step's (§7).
+        outcome.State.Pages["guides/setup.md"].DiagramWidths.ShouldNotContainKey(LogoAttachment);
+    }
+
+    /// <summary>
+    /// The reason the width is remembered in state at all. A text edit re-uploads no diagram, so this run
+    /// measures nothing — and a width that vanished because an unrelated paragraph changed would be worse
+    /// than never writing one.
+    /// </summary>
+    [Fact]
+    public async Task Keeps_a_diagrams_width_on_a_republish_that_re_renders_nothing()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        var pageId = PageId(first, "guides/setup.md");
+
+        Write(
+            "guides/setup.md",
+            SetupPage.Replace("# Setup", "# Setup\n\nA sentence no diagram cares about.", StringComparison.Ordinal));
+
+        server.ResetLogEntries();
+        StubRead(server, version: 4);
+        StubUpdate(server);
+
+        var second = await ExecuteAsync(server, first.State, checkComments: false);
+
+        second.Succeeded.ShouldBeTrue();
+        second.UpdatedCount.ShouldBe(1);
+        second.UploadedAttachmentCount.ShouldBe(0);
+
+        // One render for the whole test: the second run had nothing to measure and did not try.
+        _rendered.Count.ShouldBe(1);
+
+        var payload = Payload(Requests(server, "PUT", $"/wiki/api/v2/pages/{pageId}").Single());
+        var body = payload.GetProperty("body").GetProperty("storage").GetProperty("value").GetString();
+        body.ShouldNotBeNull();
+        body.ShouldContain(
+            $"<ac:image ac:width=\"120\"><ri:attachment ri:filename=\"{DiagramAttachment}\"/></ac:image>");
+
+        second.State.Pages["guides/setup.md"].DiagramWidths[DiagramAttachment].ShouldBe("120");
+    }
+
+    /// <summary>
+    /// The consequence of keeping <c>ac:width</c> out of <c>contentHash</c> (§8, rule §9.2), asserted so
+    /// nobody closes it by moving the injection into the hashed body: a diagram that renders to different
+    /// dimensions from an unchanged source republishes nothing, and the page keeps the width it has until
+    /// something else rewrites it. The alternative revokes every approval in the wiki on a renderer
+    /// upgrade.
+    /// </summary>
+    [Fact]
+    public async Task Republishes_nothing_when_only_a_diagrams_dimensions_changed()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        server.ResetLogEntries();
+
+        var second = await ExecuteAsync(
+            server,
+            first.State,
+            renderer: (source, _) =>
+                Task.FromResult(new MermaidDiagram(MermaidAttachmentName.ForSource(source), Svg, "999", "80")));
+
+        second.Succeeded.ShouldBeTrue();
+        second.Pages.ShouldBeEmpty();
+        second.StateChanged.ShouldBeFalse();
+        server.LogEntries.ShouldBeEmpty();
+        second.State.Pages["guides/setup.md"].DiagramWidths[DiagramAttachment].ShouldBe("120");
+    }
+
     [Fact]
     public async Task Creates_a_page_again_when_it_has_vanished_from_confluence_and_re_uploads_its_attachments()
     {

@@ -428,12 +428,19 @@ public sealed class PublishExecutor
             materialized.Add((name, content));
         }
 
+        // §7's ac:width, here and not in the plan: it is a measurement of a rendered SVG, and nothing is
+        // rendered until the loop above (DiagramImageWidth).
+        var widths = DiagramWidths(planned, current, materialized);
+        var body = planned.UploadBody is null
+            ? null
+            : DiagramImageWidth.Apply(planned.UploadBody, widths);
+
         int version;
         if (creating)
         {
             var created = await _client
                 .CreatePageAsync(
-                    new ConfluencePageDraft(spaceId, planned.Title, RequireBody(planned), parentId),
+                    new ConfluencePageDraft(spaceId, planned.Title, RequireBody(planned, body), parentId),
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -452,7 +459,7 @@ public sealed class PublishExecutor
             var updated = await _client
                 .UpdatePageAsync(
                     new ConfluencePageRevision(
-                        pageId!, planned.Title, RequireBody(planned), remoteVersion, parentId),
+                        pageId!, planned.Title, RequireBody(planned, body), remoteVersion, parentId),
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -522,7 +529,8 @@ public sealed class PublishExecutor
             parentId,
             plan.ContentHash,
             version,
-            AttachmentHashes(planned, materialized));
+            AttachmentHashes(planned, materialized),
+            widths);
 
         state = StateUpdates.RecordPublish(state, planned.Path, published);
 
@@ -823,10 +831,51 @@ public sealed class PublishExecutor
         return hashes;
     }
 
-    private static string RequireBody(PlannedPage planned) =>
-        planned.UploadBody
+    private static string RequireBody(PlannedPage planned, string? body) =>
+        body
         ?? throw new InvalidOperationException(
             $"{planned.Path} plans a body write but the plan carries no body to upload.");
+
+    /// <summary>
+    /// The <c>ac:width</c> to publish for every diagram this page references (§7): measured from the SVG
+    /// this run rendered, or carried forward from what state remembers publishing.
+    /// </summary>
+    /// <remarks>
+    /// The second source is what keeps the attribute stable. A publish renders only the diagrams it
+    /// uploads, so a text-only edit to a page holds no measurement for a diagram whose source did not
+    /// change — and rendering one just to measure it would make every text edit depend on a working Node
+    /// (<see cref="PageState.DiagramWidths"/>). Both sources go through
+    /// <see cref="DiagramImageWidth.Pixels"/> rather than only the fresh one, so nothing reaches the
+    /// published markup that is not a pixel count, including out of a hand-edited state file.
+    /// </remarks>
+    private static Dictionary<string, string> DiagramWidths(
+        PlannedPage planned,
+        PageState? current,
+        List<(string Name, AttachmentContent Content)> materialized)
+    {
+        var rendered = materialized.ToDictionary(
+            item => item.Name, item => item.Content, StringComparer.Ordinal);
+
+        var widths = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var attachment in planned.Attachments)
+        {
+            if (attachment.Kind != AttachmentKind.Diagram)
+            {
+                continue;
+            }
+
+            var measured = rendered.TryGetValue(attachment.Name, out var content)
+                ? content.SvgWidth
+                : current?.DiagramWidths.GetValueOrDefault(attachment.Name);
+
+            if (DiagramImageWidth.Pixels(measured) is { } pixels)
+            {
+                widths[attachment.Name] = pixels;
+            }
+        }
+
+        return widths;
+    }
 
     private static Dictionary<string, string> KnownPageIds(DocumeState state)
     {
@@ -1024,7 +1073,7 @@ public sealed class PublishExecutor
 
         var bytes = Encoding.UTF8.GetBytes(diagram.Svg);
 
-        return new AttachmentContent(bytes, ContentHash.OfBytes(bytes), SvgMediaType);
+        return new AttachmentContent(bytes, ContentHash.OfBytes(bytes), SvgMediaType, diagram.SvgWidth);
     }
 
     /// <summary>
@@ -1047,7 +1096,16 @@ public sealed class PublishExecutor
     }
 
     /// <summary>An attachment's bytes with the hash state will record and the media type to send.</summary>
-    private sealed record AttachmentContent(ReadOnlyMemory<byte> Bytes, string Hash, string ContentType);
+    /// <param name="SvgWidth">
+    /// For a rendered diagram, <see cref="MermaidDiagram.SvgWidth"/> — what §7's <c>ac:width</c> is
+    /// measured from (<see cref="DiagramImageWidth"/>). Null for an asset: an author's image carries its
+    /// width in the markdown, which is the converter's business.
+    /// </param>
+    private sealed record AttachmentContent(
+        ReadOnlyMemory<byte> Bytes,
+        string Hash,
+        string ContentType,
+        string? SvgWidth = null);
 
     /// <summary>One of a parent's children: the id a move needs, and the path a report names.</summary>
     private sealed record ChildEntry(string Path, string PageId);

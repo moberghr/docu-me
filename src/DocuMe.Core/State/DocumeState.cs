@@ -39,6 +39,31 @@ public sealed record PageState
     public IReadOnlyDictionary<string, string> Attachments { get; init; }
         = new Dictionary<string, string>();
 
+    /// <summary>
+    /// Diagram attachment filename → the pixel width last measured for it, which is the <c>ac:width</c>
+    /// its image carries in the published body (PLAN.md §7,
+    /// <see cref="Publishing.DiagramImageWidth"/>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Remembered rather than re-derived because the width comes from the rendered SVG, and a publish
+    /// renders only the diagrams whose bytes it uploads. Without this, editing a page's <em>text</em>
+    /// would republish its unchanged diagrams without their width — an attribute that appeared and
+    /// vanished depending on which unrelated edit came last, which is worse than never setting it.
+    /// Absent for a page last published by a DocuMe that did not write widths; such a page picks one up
+    /// the next time its diagram changes, or on a <c>--force</c>.
+    /// </para>
+    /// <para>
+    /// It is always the published width, never a newer measurement the page has not shown: a diagram is
+    /// re-rendered only by a run that also rewrites the body (a create, or the <c>--force</c> that
+    /// re-uploads everything), because a diagram whose source is unchanged is never in the upload set.
+    /// The flip side is the staleness <see cref="Publishing.DiagramImageWidth"/> describes — a renderer
+    /// that lays the same source out differently is not re-measured until a <c>--force</c> asks it to be.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> DiagramWidths { get; init; }
+        = new Dictionary<string, string>();
+
     public ApprovalState? Approval { get; init; }
 
     public bool Stale { get; init; }

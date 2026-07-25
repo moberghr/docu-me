@@ -13,13 +13,19 @@ namespace DocuMe.Core.State;
 /// not the uploaded subset: state records what the page has, and an unchanged attachment that was
 /// skipped is still attached.
 /// </param>
+/// <param name="DiagramWidths">
+/// Diagram attachment filename → the <c>ac:width</c> the published body carries for it
+/// (<see cref="PageState.DiagramWidths"/>). Positional rather than an optional property so a caller
+/// cannot forget it and silently erase what the last publish remembered.
+/// </param>
 public sealed record PublishedPage(
     string PageId,
     string Title,
     string? ParentPageId,
     string ContentHash,
     int PublishedVersion,
-    IReadOnlyDictionary<string, string> Attachments);
+    IReadOnlyDictionary<string, string> Attachments,
+    IReadOnlyDictionary<string, string> DiagramWidths);
 
 /// <summary>
 /// Pure transitions on <see cref="DocumeState"/> for the publish pipeline's bookkeeping
@@ -35,7 +41,8 @@ public static class StateUpdates
     /// </summary>
     /// <remarks>
     /// Publish owns <c>pageId</c>, <c>title</c>, <c>parentPageId</c>, <c>contentHash</c>,
-    /// <c>publishedVersion</c> and <c>attachments</c> and overwrites all six. It does not own
+    /// <c>publishedVersion</c>, <c>attachments</c> and <c>diagramWidths</c> and overwrites all seven.
+    /// It does not own
     /// <c>approval</c>, <c>stale</c> or <c>feedbackCursor</c> — those belong to <c>sync</c> (§6.3)
     /// and <c>drift</c> (§6.4) — so they are carried through untouched. Approval invalidation is a
     /// separate, explicit step: see <see cref="InvalidateApproval"/>.
@@ -56,6 +63,7 @@ public static class StateUpdates
             ContentHash = published.ContentHash,
             PublishedVersion = published.PublishedVersion,
             Attachments = new Dictionary<string, string>(published.Attachments, StringComparer.Ordinal),
+            DiagramWidths = new Dictionary<string, string>(published.DiagramWidths, StringComparer.Ordinal),
         };
 
         return WithPage(state, path, updated);

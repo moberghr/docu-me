@@ -13,7 +13,8 @@ public sealed class StateUpdatesTests
         ParentPageId: "999",
         ContentHash: "sha256:new",
         PublishedVersion: 7,
-        Attachments: new Dictionary<string, string> { ["diagram.svg"] = "sha256:d" });
+        Attachments: new Dictionary<string, string> { ["diagram.svg"] = "sha256:d" },
+        DiagramWidths: new Dictionary<string, string> { ["diagram.svg"] = "213" });
 
     private static DocumeState StateWith(PageState page) => new()
     {
@@ -77,6 +78,26 @@ public sealed class StateUpdatesTests
 
         page.Attachments.Count.ShouldBe(1);
         page.Attachments["diagram.svg"].ShouldBe("sha256:d");
+    }
+
+    /// <summary>
+    /// Widths are replaced wholesale like the attachment set, and for the same reason: a diagram the page
+    /// dropped must not leave a width behind that a later body write would inject into markup nothing
+    /// references (<c>DiagramImageWidth</c> throws on exactly that).
+    /// </summary>
+    [Fact]
+    public void RecordPublish_ReplacesDiagramWidthSet()
+    {
+        var existing = new PageState
+        {
+            PageId = "123456",
+            DiagramWidths = new Dictionary<string, string> { ["gone.svg"] = "88", ["diagram.svg"] = "120" },
+        };
+
+        var page = StateUpdates.RecordPublish(StateWith(existing), Path, Result).Pages[Path];
+
+        page.DiagramWidths.Count.ShouldBe(1);
+        page.DiagramWidths["diagram.svg"].ShouldBe("213");
     }
 
     [Fact]

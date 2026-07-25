@@ -1022,10 +1022,12 @@ internal sealed class FencedCodeBlockRenderer : MarkdownObjectRenderer<Confluenc
     /// for <c>![alt](file.svg)</c> alone on a line — <c>&lt;p&gt;</c> wrapping an
     /// <c>&lt;ac:image&gt;</c> wrapping an <c>&lt;ri:attachment&gt;</c> — because a mermaid
     /// fence <em>is</em> a standalone diagram and two spellings of the same thing would be
-    /// gratuitous. §7 line 281 additionally shows an <c>ac:width</c>, which is
-    /// <strong>omitted</strong>: measuring the rendered SVG means opening it, and this
-    /// converter never touches the filesystem. Confluence scales an attached SVG natively,
-    /// so an omitted width beats a fabricated one.
+    /// gratuitous. §7 additionally shows an <c>ac:width</c>, which is <strong>not written
+    /// here</strong>: measuring the rendered SVG means opening it, and this converter never
+    /// touches the filesystem. The publish path adds it to the body it uploads instead, over
+    /// exactly the element written below — see <see cref="Publishing.DiagramImageWidth"/>, which
+    /// also explains why the attribute stays out of the §8 content hash. So this method's
+    /// output, and every golden asserting it, is width-free by design.
     /// </para>
     /// <para>
     /// No <c>ac:alt</c> or <c>ac:title</c> either: a fence carries no alt text, and
