@@ -1199,6 +1199,166 @@ public sealed class ConfluenceClientTests
     }
 
     /// <summary>
+    /// Ingestion's footer read (PLAN.md §6.3's Comments bullet): the thread at the bottom of the page,
+    /// with its text. Unlike the guard's read above, this one asks for a body — and nothing but the body
+    /// format, so the resolution filter and the sort order stay this side's decisions.
+    /// </summary>
+    [Fact]
+    public async Task Reads_the_footer_thread_with_its_text()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(FooterCommentsPath).UsingGet())
+            .RespondWith(Json(FooterCommentsBody));
+
+        using var client = CreateClient(server);
+        var comments = await client.GetFooterCommentsAsync(PageId, TestContext.Current.CancellationToken);
+
+        LastRequest(server).Query!["body-format"].ShouldBe(["storage"]);
+        LastRequest(server).Query!.Keys.ShouldBe(["body-format"]);
+
+        comments.Count.ShouldBe(1);
+        comments[0].Id.ShouldBe("5001");
+        comments[0].Kind.ShouldBe(ConfluenceCommentKind.Footer);
+        comments[0].AuthorAccountId.ShouldBe("557058:jonas");
+        comments[0].CreatedAt.ShouldBe("2026-08-02T14:11:00.000Z");
+        comments[0].Body.ShouldBe("<p>Disbursement is instant since the Straumur integration.</p>");
+        comments[0].WebUiLink.ShouldBe("/spaces/DOCUMESBX/pages/65601/Domain+model?focusedCommentId=5001");
+
+        // A footer comment is anchored to nothing, and the endpoint carries no properties block at all.
+        comments[0].QuotedText.ShouldBeNull();
+        comments[0].IsResolved.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Ingestion's inline read: the same shape plus the two members only inline comments have — the
+    /// resolution status, and the page text the comment is anchored to (§5.4's <c>quotedText</c>).
+    /// </summary>
+    [Fact]
+    public async Task Reads_inline_comments_with_their_text_and_what_they_are_anchored_to()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(InlineCommentsPath).UsingGet())
+            .RespondWith(Json(InlineCommentBodiesBody));
+
+        using var client = CreateClient(server);
+        var comments = await client.GetInlineCommentsWithBodiesAsync(
+            PageId,
+            TestContext.Current.CancellationToken);
+
+        comments.Select(comment => comment.Id).ShouldBe(["6001", "6002"]);
+        comments[0].Kind.ShouldBe(ConfluenceCommentKind.Inline);
+        comments[0].QuotedText.ShouldBe("Loans are disbursed within 24 hours");
+        comments[0].Body.ShouldBe("<p>This is wrong.</p>");
+        comments[0].IsResolved.ShouldBeFalse();
+
+        // Resolved comments are returned like any other: what "resolved" means is decided on this side.
+        comments[1].ResolutionStatus.ShouldBe("resolved");
+        comments[1].IsResolved.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// The body format survives pagination. It is the first read on an endpoint that already carries a
+    /// query, so the cursor has to be appended rather than replace it — a second page fetched without
+    /// <c>body-format</c> would silently arrive with no comment text in it.
+    /// </summary>
+    [Fact]
+    public async Task Keeps_asking_for_the_body_when_it_follows_the_cursor()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(FooterCommentsPath).UsingGet())
+            .RespondWith(Json(request => request.Query!.ContainsKey("cursor")
+                ? FooterCommentsBody
+                : FirstFooterCommentsBody));
+
+        using var client = CreateClient(server);
+        var comments = await client.GetFooterCommentsAsync(PageId, TestContext.Current.CancellationToken);
+
+        comments.Select(comment => comment.Id).ShouldBe(["5000", "5001"]);
+
+        var second = server.LogEntries[1].RequestMessage;
+        second.ShouldNotBeNull();
+        second!.Query!["body-format"].ShouldBe(["storage"]);
+        second.Query!["cursor"].ShouldBe(["Y29tbWVudD0y"]);
+    }
+
+    /// <summary>
+    /// The account the client authenticates as — the one identity ingestion needs, to skip DocuMe's own
+    /// replies (§6.3). v1, because v2 has no user endpoints.
+    /// </summary>
+    [Fact]
+    public async Task Reads_the_account_it_authenticates_as()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath("/wiki/rest/api/user/current").UsingGet())
+            .RespondWith(Json(CurrentUserBody));
+
+        using var client = CreateClient(server);
+        var user = await client.GetCurrentUserAsync(TestContext.Current.CancellationToken);
+
+        user.AccountId.ShouldBe("557058:docume-bot");
+        user.DisplayName.ShouldBe("DocuMe");
+    }
+
+    /// <summary>An account id turned into a name — §5.4's <c>author</c>.</summary>
+    [Fact]
+    public async Task Reads_an_account_by_id()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath("/wiki/rest/api/user").UsingGet())
+            .RespondWith(Json(UserBody));
+
+        using var client = CreateClient(server);
+        var user = await client.FindUserAsync("557058:jonas", TestContext.Current.CancellationToken);
+
+        LastRequest(server).Query!["accountId"].ShouldBe(["557058:jonas"]);
+        user!.DisplayName.ShouldBe("Jónas");
+    }
+
+    /// <summary>
+    /// A deactivated, deleted or invisible account answers 404, and that is not a failure: ingestion
+    /// records the account id instead. Losing a reviewer's comment because their display name was
+    /// unavailable would be the wrong trade.
+    /// </summary>
+    [Fact]
+    public async Task Answers_null_for_an_account_confluence_will_not_name()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath("/wiki/rest/api/user").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NotFound).WithBody("{}"));
+
+        using var client = CreateClient(server);
+
+        (await client.FindUserAsync("557058:gone", TestContext.Current.CancellationToken)).ShouldBeNull();
+    }
+
+    /// <summary>
+    /// A 401 on the user lookup is still a hard stop (rule §1.2): an expired token is not a missing user,
+    /// and blind-retrying or shrugging it off would turn a credential problem into silently anonymous
+    /// feedback.
+    /// </summary>
+    [Fact]
+    public async Task Stops_dead_when_the_user_lookup_is_unauthorized()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath("/wiki/rest/api/user").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Unauthorized).WithBody("{}"));
+
+        using var client = CreateClient(server);
+
+        await Should.ThrowAsync<ConfluenceAuthenticationException>(
+            () => client.FindUserAsync("557058:jonas", TestContext.Current.CancellationToken));
+
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
+    /// <summary>
     /// The reparent (PLAN.md §6.2): <c>append</c> files the page under the target. The whole request is
     /// its URL, which is the point of using this endpoint over a v2 body rewrite.
     /// </summary>
@@ -1644,6 +1804,80 @@ public sealed class ConfluenceClientTests
             { "id": "4003", "status": "current", "title": "Re: Domain model", "pageId": "{{PageId}}" }
           ],
           "_links": { "base": "https://example.atlassian.net/wiki" }
+        }
+        """;
+
+    private static string FooterCommentsPath => ApiPath($"pages/{PageId}/footer-comments");
+
+    /// <summary>
+    /// One footer comment with its text, shaped like the v2 <c>PageCommentModel</c>: the author and the
+    /// creation time live on the comment's <em>version</em>, which is the only place Confluence puts them.
+    /// </summary>
+    private static string FooterCommentsBody =>
+        $$"""
+        {
+          "results": [
+            { "id": "5001", "status": "current", "title": "Re: Domain model", "pageId": "{{PageId}}",
+              "version": { "number": 1, "createdAt": "2026-08-02T14:11:00.000Z", "minorEdit": false,
+                           "authorId": "557058:jonas" },
+              "body": { "storage": { "representation": "storage",
+                        "value": "<p>Disbursement is instant since the Straumur integration.</p>" } },
+              "_links": { "webui": "/spaces/DOCUMESBX/pages/{{PageId}}/Domain+model?focusedCommentId=5001" } }
+          ],
+          "_links": { "base": "https://example.atlassian.net/wiki" }
+        }
+        """;
+
+    /// <summary>A first page of footer comments that offers another.</summary>
+    private static string FirstFooterCommentsBody =>
+        $$"""
+        {
+          "results": [
+            { "id": "5000", "status": "current", "title": "Re: Domain model", "pageId": "{{PageId}}",
+              "version": { "number": 1, "createdAt": "2026-08-01T09:00:00.000Z", "authorId": "557058:jonas" },
+              "body": { "storage": { "representation": "storage", "value": "<p>First.</p>" } } }
+          ],
+          "_links": { "next": "/wiki/api/v2/pages/{{PageId}}/footer-comments?body-format=storage&cursor=Y29tbWVudD0y" }
+        }
+        """;
+
+    /// <summary>
+    /// Two inline comments with bodies: one open with the text it is anchored to, one resolved. The
+    /// anchored text is <c>properties.inlineOriginalSelection</c>, which is §5.4's <c>quotedText</c>.
+    /// </summary>
+    private static string InlineCommentBodiesBody =>
+        $$"""
+        {
+          "results": [
+            { "id": "6001", "status": "current", "title": "Re: Domain model", "pageId": "{{PageId}}",
+              "resolutionStatus": "open",
+              "version": { "number": 1, "createdAt": "2026-08-02T14:11:00.000Z", "authorId": "557058:jonas" },
+              "body": { "storage": { "representation": "storage", "value": "<p>This is wrong.</p>" } },
+              "properties": { "inlineMarkerRef": "abc123",
+                              "inlineOriginalSelection": "Loans are disbursed within 24 hours" } },
+            { "id": "6002", "status": "current", "title": "Re: Domain model", "pageId": "{{PageId}}",
+              "resolutionStatus": "resolved",
+              "version": { "number": 1, "createdAt": "2026-08-02T15:00:00.000Z", "authorId": "557058:jonas" },
+              "body": { "storage": { "representation": "storage", "value": "<p>Handled.</p>" } } }
+          ],
+          "_links": { "base": "https://example.atlassian.net/wiki" }
+        }
+        """;
+
+    /// <summary>The v1 user shape. <c>email</c> is answered and deliberately not mapped.</summary>
+    private static string CurrentUserBody =>
+        """
+        {
+          "type": "known", "accountId": "557058:docume-bot", "accountType": "atlassian",
+          "email": "bot@example.com", "publicName": "DocuMe", "displayName": "DocuMe"
+        }
+        """;
+
+    private static string UserBody =>
+        """
+        {
+          "type": "known", "accountId": "557058:jonas", "accountType": "atlassian",
+          "email": "jonas@example.com", "publicName": "Jónas", "displayName": "Jónas"
         }
         """;
 

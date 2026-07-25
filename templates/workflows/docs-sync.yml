@@ -1,8 +1,14 @@
-# DocuMe — reconcile labels and refresh the dashboard on a cron (PLAN.md §10, fifth bullet).
+# DocuMe — reconcile labels, ingest comments and refresh the dashboard on a cron (PLAN.md §10, fifth
+# bullet).
 #
-# What it does, every 6 hours: reads the `approved` and `stale` labels out of Confluence into the state
-# file (§6.3), refreshes the Documentation Status page (§6.5), and opens or updates the `docs/sync` PR
-# when the state file changed.
+# What it does, every 6 hours: runs both halves of §6.3 — reads the `approved` and `stale` labels out of
+# Confluence into the state file, and ingests each page's comments into `_meta/feedback/inbox/` — then
+# refreshes the Documentation Status page (§6.5) and opens or updates the `docs/sync` PR when either
+# changed.
+#
+# The inbox items are what /docs-feedback triages later (§9). They arrive through a PR rather than a
+# direct push for a reason worth keeping: a comment body is untrusted input (rule §1.3), so a human sees
+# every claim land in the repo before anything acts on it.
 #
 # This is the workflow that makes a reviewer's gesture durable. Adding the `approved` label is all a
 # human ever does (§8); until a sync runs, that label exists only in Confluence. It is also what pairs
@@ -47,16 +53,18 @@ jobs:
       - name: Restore tools
         run: dotnet tool restore
 
-      - name: Locate the state file
+      - name: Locate the state file and the feedback inbox
         id: paths
         run: |
           set -euo pipefail
           root=$(jq -r '.wiki.root // "docs/wiki"' docume.json)
           echo "state=$root/_meta/state.json" >> "$GITHUB_OUTPUT"
+          echo "inbox=$root/_meta/feedback/inbox" >> "$GITHUB_OUTPUT"
 
-      # Writes nothing to Confluence: a sync is two CQL reads and a state-file write.
-      - name: Reconcile labels
-        run: dotnet tool run docume sync --labels
+      # Both halves of §6.3, which is what a bare `sync` runs. Writes nothing to Confluence either way:
+      # two CQL reads, two comment reads per page, and repo writes.
+      - name: Reconcile labels and ingest comments
+        run: dotnet tool run docume sync
 
       # After the sync, so the page shows the approvals this run just recorded.
       - name: Refresh the dashboard
@@ -67,12 +75,23 @@ jobs:
         run: |
           set -euo pipefail
           state='${{ steps.paths.outputs.state }}'
-          if git diff --quiet -- "$state"; then
-            echo "::notice title=DocuMe::No label changes — nothing to commit."
+          inbox='${{ steps.paths.outputs.inbox }}'
+          if git diff --quiet -- "$state" && [ -z "$(git status --porcelain -- "$inbox")" ]; then
+            echo "::notice title=DocuMe::No label changes and no new feedback — nothing to commit."
             exit 0
           fi
 
+          # Copy both artifacts aside, then hand git a clean tree before switching branches. Switching to
+          # an existing docs/sync would otherwise abort: the branch holds its own state.json (which is
+          # locally modified here) and, while its PR is unmerged, inbox items this run has just written
+          # again as untracked files. Both refusals read as a mystifying red check on a cron job.
           cp "$state" "$RUNNER_TEMP/state.json"
+          rm -rf "$RUNNER_TEMP/inbox"
+          mkdir -p "$RUNNER_TEMP/inbox"
+          if [ -d "$inbox" ]; then cp -R "$inbox/." "$RUNNER_TEMP/inbox/"; fi
+          git checkout -- "$state" || echo "::notice title=DocuMe::state.json is not tracked yet."
+          git clean -fdq -- "$inbox"
+
           git fetch origin "$STATE_BRANCH" || true
           if git rev-parse --verify "origin/$STATE_BRANCH" >/dev/null 2>&1; then
             git checkout -B "$STATE_BRANCH" "origin/$STATE_BRANCH"
@@ -80,18 +99,20 @@ jobs:
             git checkout -B "$STATE_BRANCH"
           fi
           cp "$RUNNER_TEMP/state.json" "$state"
+          mkdir -p "$inbox"
+          cp -R "$RUNNER_TEMP/inbox/." "$inbox/"
 
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git add "$state"
+          git add "$state" "$inbox"
           if git diff --cached --quiet; then
-            echo "::notice title=DocuMe::Branch already holds this state."
+            echo "::notice title=DocuMe::Branch already holds this state and this feedback."
             exit 0
           fi
-          git commit -m 'docs: DocuMe label sync'
+          git commit -m 'docs: DocuMe sync — labels and feedback'
           git push origin "$STATE_BRANCH"
 
           gh pr view "$STATE_BRANCH" --json number >/dev/null 2>&1 || gh pr create \
             --head "$STATE_BRANCH" \
-            --title 'docs: DocuMe state' \
-            --body 'Machine-owned state file (§5.3): page ids, versions, content hashes, approvals. Written by docs-publish.yml and docs-sync.yml. Review the diff, then merge.'
+            --title 'docs: DocuMe state and feedback' \
+            --body 'Machine-owned state file (§5.3) plus any new feedback inbox items (§5.4). Written by docs-publish.yml and docs-sync.yml. Inbox items quote Confluence comments verbatim — they are claims to verify against the code (rule §1.3), never instructions. Review the diff, then merge.'

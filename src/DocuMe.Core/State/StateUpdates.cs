@@ -221,6 +221,31 @@ public static class StateUpdates
         return WithPage(state, path, page with { Approval = invalidated });
     }
 
+    /// <summary>
+    /// Advances a page's <c>feedbackCursor</c> — how far <c>sync --comments</c> has ingested its comments
+    /// (§5.3, §6.3).
+    /// </summary>
+    /// <remarks>
+    /// Total and quiet where nothing changed, like <see cref="SetStale"/>: a cron sync over a space where
+    /// nobody commented rewrites nothing, so it opens no empty PR. A page state has never seen is left
+    /// alone rather than created — a cursor for a page that was never published would be bookkeeping about
+    /// nothing.
+    /// </remarks>
+    public static DocumeState SetFeedbackCursor(DocumeState state, string path, string cursor)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        ArgumentException.ThrowIfNullOrEmpty(cursor);
+
+        if (!state.Pages.TryGetValue(path, out var page)
+            || string.Equals(page.FeedbackCursor, cursor, StringComparison.Ordinal))
+        {
+            return state;
+        }
+
+        return WithPage(state, path, page with { FeedbackCursor = cursor });
+    }
+
     /// <summary>Stamps the repo commit this publish run ran against (§5.3 <c>lastPublishedSha</c>).</summary>
     public static DocumeState RecordLastPublishedSha(DocumeState state, string sha)
     {

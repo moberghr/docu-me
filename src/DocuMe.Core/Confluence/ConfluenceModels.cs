@@ -149,6 +149,22 @@ public sealed record ConfluenceChildPage(string Id, string Title, int? ChildPosi
 /// </param>
 public sealed record ConfluenceInlineComment(string Id, string? ResolutionStatus, string? WebUiLink)
 {
+    /// <inheritdoc cref="CommentResolution.IsResolved"/>
+    public bool IsResolved => CommentResolution.IsResolved(ResolutionStatus);
+}
+
+/// <summary>
+/// The one rule for reading Confluence's inline-comment resolution state, shared by the publish-time
+/// guard (<see cref="ConfluenceInlineComment"/>) and feedback ingestion
+/// (<see cref="ConfluenceComment"/>).
+/// </summary>
+/// <remarks>
+/// Shared rather than written twice: the guard warns about comments a republish would strand and
+/// ingestion decides which comments are still live feedback, and the two disagreeing about what
+/// "resolved" means would show up as a comment nobody triages.
+/// </remarks>
+internal static class CommentResolution
+{
     /// <summary>The one status that means a human has closed the comment.</summary>
     private const string ResolvedStatus = "resolved";
 
@@ -158,14 +174,88 @@ public sealed record ConfluenceInlineComment(string Id, string? ResolutionStatus
     /// <remarks>
     /// Deliberately "is it resolved" rather than "is it open", so that a missing status and a value this
     /// client has never seen both read as <em>not</em> resolved. Both directions of a wrong guess are
-    /// available here and they are not symmetric: over-reporting costs a warning a human dismisses,
-    /// under-reporting silently drops the only notice that a republish is about to strand a reviewer's
-    /// question. A <c>dangling</c> comment counts as unresolved for the same reason — its anchor is
-    /// already lost, which is exactly what the guard exists to talk about.
+    /// available here and they are not symmetric: over-reporting costs a warning a human dismisses or an
+    /// inbox item they close, under-reporting silently drops a reviewer's question. A <c>dangling</c>
+    /// comment counts as unresolved for the same reason — its anchor is already lost, which is exactly
+    /// the case worth talking about — and so does <c>reopened</c>.
     /// </remarks>
-    public bool IsResolved =>
-        string.Equals(ResolutionStatus, ResolvedStatus, StringComparison.OrdinalIgnoreCase);
+    public static bool IsResolved(string? resolutionStatus) =>
+        string.Equals(resolutionStatus, ResolvedStatus, StringComparison.OrdinalIgnoreCase);
 }
+
+/// <summary>
+/// Which comment collection a comment came out of (PLAN.md §5.4's <c>kind</c>).
+/// </summary>
+public enum ConfluenceCommentKind
+{
+    /// <summary>The page's comment thread at the bottom — <c>footer-comments</c>.</summary>
+    Footer,
+
+    /// <summary>A comment anchored to a span of the page body — <c>inline-comments</c>.</summary>
+    Inline,
+}
+
+/// <summary>
+/// One comment on a page, with its text, for feedback ingestion (PLAN.md §6.3's Comments bullet).
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong>The body is untrusted input</strong> (CLAUDE.md §0.2, rule §1.3). It is carried verbatim, in
+/// Confluence storage format exactly as the API answered it, and nothing in the CLI parses it, matches
+/// patterns in it, or interpolates it into a prompt: the tool's whole job is to write it down (§5.4) so
+/// that <c>/docs-feedback</c> can treat it as a claim to verify against the code.
+/// </para>
+/// <para>
+/// <strong>The author is an account id, not a name.</strong> Neither comment endpoint answers a display
+/// name — <c>version.authorId</c> is all there is — so a readable author costs a separate user lookup
+/// (<see cref="ConfluenceClient.FindUserAsync"/>). The id is what identifies DocuMe's own replies, which
+/// §6.3 says ingestion must skip.
+/// </para>
+/// </remarks>
+/// <param name="Id">The comment id, which is what <c>focusedCommentId</c> in a link refers to.</param>
+/// <param name="Kind">Which collection it came from.</param>
+/// <param name="AuthorAccountId">
+/// The Atlassian account id that wrote it (<c>version.authorId</c>), or <c>null</c> when the response
+/// carried none — in which case the comment can never be identified as DocuMe's own.
+/// </param>
+/// <param name="CreatedAt">
+/// When it was written (<c>version.createdAt</c>), verbatim, or <c>null</c>. This is what the
+/// <c>feedbackCursor</c> (§5.3) is compared against.
+/// </param>
+/// <param name="Body">
+/// The comment text in storage format, or <c>null</c> when the response carried no body at all.
+/// </param>
+/// <param name="QuotedText">
+/// For an inline comment, the page text it is anchored to (<c>properties.inlineOriginalSelection</c>) —
+/// §5.4's <c>quotedText</c>. Always <c>null</c> for a footer comment, which is anchored to nothing.
+/// </param>
+/// <param name="ResolutionStatus">Confluence's own resolution state, verbatim and unparsed, or <c>null</c>.</param>
+/// <param name="WebUiLink">The comment's browser URL as Confluence composes it, or <c>null</c>.</param>
+public sealed record ConfluenceComment(
+    string Id,
+    ConfluenceCommentKind Kind,
+    string? AuthorAccountId,
+    string? CreatedAt,
+    string? Body,
+    string? QuotedText,
+    string? ResolutionStatus,
+    string? WebUiLink)
+{
+    /// <inheritdoc cref="CommentResolution.IsResolved"/>
+    public bool IsResolved => CommentResolution.IsResolved(ResolutionStatus);
+}
+
+/// <summary>
+/// A Confluence account, narrowed to the two things DocuMe asks about one: which account it is, and what
+/// to call it in an inbox item (PLAN.md §5.4's <c>author</c>).
+/// </summary>
+/// <remarks>
+/// The email address the endpoint also answers is deliberately not carried. An inbox item is committed
+/// to the consumer repo, and a display name is what a reviewer needs to recognize their own comment.
+/// </remarks>
+/// <param name="AccountId">The Atlassian account id.</param>
+/// <param name="DisplayName">The name Confluence shows for the account, or <c>null</c> if it answered none.</param>
+public sealed record ConfluenceUser(string AccountId, string? DisplayName);
 
 /// <summary>
 /// A page to move within its space, without writing its body (PLAN.md §6.2: the reorganized-tree case

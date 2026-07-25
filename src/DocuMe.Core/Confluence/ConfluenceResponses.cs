@@ -55,7 +55,18 @@ internal sealed record PageBulk(
     VersionBulk? Version,
     BodyBulk? Body);
 
-internal sealed record VersionBulk(int? Number);
+/// <summary>
+/// The v2 <c>Version</c> schema, narrowed to the three members DocuMe reads. <c>createdAt</c> and
+/// <c>authorId</c> belong to a comment's version rather than a page's: they are when the comment was
+/// written and the account id that wrote it, which is all Confluence offers about a comment's author
+/// (see <see cref="ConfluenceComment"/>).
+/// </summary>
+/// <remarks>
+/// Optional rather than positional so the page and attachment reads, which ask for neither, keep
+/// mapping unchanged. Verified against Atlassian's own <c>openapi-v2.v3.json</c>, where <c>Version</c>
+/// carries <c>createdAt</c>, <c>message</c>, <c>number</c>, <c>minorEdit</c> and <c>authorId</c>.
+/// </remarks>
+internal sealed record VersionBulk(int? Number, string? CreatedAt = null, string? AuthorId = null);
 
 /// <summary>
 /// The v2 <c>ChildPage</c> schema, narrowed to what the child-order post-pass reads. It is a
@@ -68,16 +79,58 @@ internal sealed record ChildPageBulk(string? Id, string? Title, int? ChildPositi
 /// The v2 inline-comment schema, narrowed to what the open-comment guard reads (PLAN.md §6.2 step 6).
 /// </summary>
 /// <remarks>
-/// <c>resolutionStatus</c> is the field the whole guard turns on, and Atlassian's published schema for
-/// this endpoint does not list it — it is documented only by the API's own behavior and by developer
-/// community reports (values seen: <c>open</c>, <c>resolved</c>, <c>dangling</c>). Hence nullable and
-/// hence never compared for equality against a closed set: see
+/// <c>resolutionStatus</c> is the field the whole guard turns on. Atlassian's current OpenAPI document
+/// does list it (<c>InlineCommentResolutionStatus</c>: <c>open</c>, <c>reopened</c>, <c>resolved</c>,
+/// <c>dangling</c> — checked against <c>openapi-v2.v3.json</c> on 2026-07-25, correcting an earlier
+/// remark here that said it did not), but it stays nullable and is still never compared against a closed
+/// set: a value this client has never seen must read as unresolved rather than as a parse failure. See
 /// <see cref="ConfluenceInlineComment.IsResolved"/>.
 /// </remarks>
 internal sealed record InlineCommentBulk(
     string? Id,
     string? ResolutionStatus,
     [property: JsonPropertyName("_links")] EntityLinks? Links);
+
+/// <summary>
+/// The v2 <c>PageCommentModel</c> and <c>PageInlineCommentModel</c> schemas as one shape: what feedback
+/// ingestion reads (PLAN.md §6.3's Comments bullet, §5.4).
+/// </summary>
+/// <remarks>
+/// <para>
+/// One record for both endpoints because the footer schema is the inline schema minus two members —
+/// <c>resolutionStatus</c> and <c>properties</c>, which simply arrive null on a footer read. Kept
+/// separate from <see cref="InlineCommentBulk"/>, which is the open-comment guard's deliberately
+/// body-free shape (see <see cref="ConfluenceClient.GetInlineCommentsAsync"/>): the guard asks for no
+/// body because it quotes none, and widening it to share this record would start requesting comment
+/// text on every publish.
+/// </para>
+/// <para>
+/// <c>body</c> is only populated when the request asks for a representation, which is why both
+/// ingestion reads send <c>body-format=storage</c>.
+/// </para>
+/// </remarks>
+internal sealed record CommentBulk(
+    string? Id,
+    string? Title,
+    string? PageId,
+    VersionBulk? Version,
+    BodyBulk? Body,
+    string? ResolutionStatus,
+    InlineCommentPropertiesBulk? Properties,
+    [property: JsonPropertyName("_links")] EntityLinks? Links);
+
+/// <summary>
+/// The v2 <c>InlineCommentProperties</c> schema. <c>inlineOriginalSelection</c> is the page text the
+/// comment is anchored to — <c>quotedText</c> in §5.4's inbox item.
+/// </summary>
+internal sealed record InlineCommentPropertiesBulk(string? InlineMarkerRef, string? InlineOriginalSelection);
+
+/// <summary>
+/// The v1 user schema, narrowed to the two members DocuMe reads. Everything else it answers —
+/// <c>email</c> above all — is deliberately not mapped: an inbox item is a committed file (§5.4), and a
+/// reviewer's address does not belong in a repo.
+/// </summary>
+internal sealed record UserBulk(string? AccountId, string? DisplayName);
 
 /// <summary>
 /// The subset of an entity's own <c>_links</c> block DocuMe reads: the browser URL, which is the one

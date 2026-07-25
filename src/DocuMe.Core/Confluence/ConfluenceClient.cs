@@ -262,7 +262,8 @@ public sealed class ConfluenceClient : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
 
         var path = $"api/v2/pages/{Uri.EscapeDataString(pageId)}{BodyFormat(includeBody, first: true)}";
-        var page = await ReadOrNullWhenMissingAsync<PageBulk>(path, cancellationToken).ConfigureAwait(false);
+        var page = await ReadOrNullWhenMissingAsync<PageBulk>(path, ApiSurface.V2, cancellationToken)
+            .ConfigureAwait(false);
 
         return page is null ? null : MapPage(page, path);
     }
@@ -364,6 +365,167 @@ public sealed class ConfluenceClient : IDisposable
                 overrun,
                 cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Lists a page's footer comments — the thread at the bottom of the page — with their text, following
+    /// pagination to the end. Half of what feedback ingestion reads (PLAN.md §6.3's Comments bullet).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Bodies are requested here and nowhere else on the publish path.</strong>
+    /// <c>body-format=storage</c> is what populates <c>body.storage.value</c>; the open-comment guard
+    /// asks for no body at all (<see cref="GetInlineCommentsAsync"/>) because it quotes none. Comment text
+    /// is untrusted input the moment it arrives (CLAUDE.md §0.2, rule §1.3), and this client's whole
+    /// contribution to that rule is to carry it verbatim: no parsing, no stripping, no interpretation.
+    /// </para>
+    /// <para>
+    /// <strong>No <c>sort</c> and no <c>status</c> filter.</strong> Both are documented, and neither is
+    /// sent: ordering by creation date is what the ingestion planner does anyway (it has to, to move the
+    /// <c>feedbackCursor</c> correctly), and doing it here would make a correct cursor depend on the
+    /// server honoring a parameter this side cannot verify. Every comment the endpoint offers is returned
+    /// and the caller decides — the same division as the resolution filter above.
+    /// </para>
+    /// </remarks>
+    /// <param name="pageId">The page whose footer comments to read.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired or revoked.</exception>
+    /// <exception cref="ConfluenceApiException">Any other non-success status, including a 404.</exception>
+    /// <exception cref="ConfluenceProtocolException">
+    /// The response body is not the documented shape, or the endpoint kept offering another page of
+    /// results past <see cref="PagedRequestLimit"/> requests.
+    /// </exception>
+    public async Task<IReadOnlyList<ConfluenceComment>> GetFooterCommentsAsync(
+        string pageId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
+
+        var endpoint = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/footer-comments"
+            + BodyFormat(includeBody: true, first: true);
+
+        var overrun = $"it offered another page of footer comments after {PagedRequestLimit} requests, "
+            + "which is more comments than one page collects";
+
+        return await ReadPagedAsync<CommentBulk, ConfluenceComment>(
+                endpoint,
+                (comment, path) => MapComment(comment, path, ConfluenceCommentKind.Footer),
+                overrun,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Lists a page's inline comments <em>with</em> their text and the page text each one is anchored to.
+    /// The other half of what feedback ingestion reads (PLAN.md §6.3's Comments bullet, §5.4's
+    /// <c>quotedText</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Deliberately not the same read as <see cref="GetInlineCommentsAsync"/>.</strong> That one
+    /// serves the publish-time guard and requests no body on purpose; this one asks for
+    /// <c>body-format=storage</c> and reads <c>properties.inlineOriginalSelection</c>. Two reads of one
+    /// endpoint, because the publish path should not start fetching comment text it never uses, and
+    /// ingestion cannot do its job without it.
+    /// </para>
+    /// <para>
+    /// Resolved comments are returned like every other, for the reason
+    /// <see cref="GetInlineCommentsAsync"/> gives about the server-side filter: what "resolved" means is
+    /// decided from <see cref="ConfluenceComment.IsResolved"/>, on this side.
+    /// </para>
+    /// </remarks>
+    /// <param name="pageId">The page whose inline comments to read.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired or revoked.</exception>
+    /// <exception cref="ConfluenceApiException">Any other non-success status, including a 404.</exception>
+    /// <exception cref="ConfluenceProtocolException">
+    /// The response body is not the documented shape, or the endpoint kept offering another page of
+    /// results past <see cref="PagedRequestLimit"/> requests.
+    /// </exception>
+    public async Task<IReadOnlyList<ConfluenceComment>> GetInlineCommentsWithBodiesAsync(
+        string pageId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
+
+        var endpoint = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/inline-comments"
+            + BodyFormat(includeBody: true, first: true);
+
+        var overrun = $"it offered another page of inline comments after {PagedRequestLimit} requests, "
+            + "which is more comments than one page collects";
+
+        return await ReadPagedAsync<CommentBulk, ConfluenceComment>(
+                endpoint,
+                (comment, path) => MapComment(comment, path, ConfluenceCommentKind.Inline),
+                overrun,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reads the account this client authenticates as — which is how ingestion recognizes DocuMe's own
+    /// replies and skips them (PLAN.md §6.3: "Skips comments authored by the bot account").
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>v1, because v2 has no user endpoints at all</strong> — the "v1 only where v2 lacks" case §4
+    /// names. One request per sync run, not per page.
+    /// </para>
+    /// <para>
+    /// <strong>This is the one legitimate use of the authenticating account's identity.</strong> It names
+    /// whose comments to <em>ignore</em>. It must never be used the other way round, to fill in a human's
+    /// name: <see cref="Sync.LabelSyncPlanner.UnknownApprover"/> exists because DocuMe is not the reviewer,
+    /// and the same holds for a comment's author.
+    /// </para>
+    /// </remarks>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired or revoked.</exception>
+    /// <exception cref="ConfluenceApiException">Any other non-success status.</exception>
+    /// <exception cref="ConfluenceProtocolException">The response body is not the documented shape.</exception>
+    public async Task<ConfluenceUser> GetCurrentUserAsync(CancellationToken cancellationToken = default)
+    {
+        const string path = "rest/api/user/current";
+
+        var user = await ReadAsync<UserBulk>(path, ApiSurface.V1, cancellationToken).ConfigureAwait(false);
+
+        return MapUser(user, path);
+    }
+
+    /// <summary>
+    /// Reads one account by id, or <c>null</c> when Confluence does not answer for it. What turns a
+    /// comment's <c>version.authorId</c> into a name a reviewer recognizes (PLAN.md §5.4's <c>author</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Per account, not bulk.</strong> v1 does offer <c>/rest/api/user/bulk</c>, but its
+    /// <c>accountId</c> parameter is documented without an example of how several ids are spelled
+    /// (repeated parameter versus delimiter), and a guess that turns out wrong would either 400 or —
+    /// worse — silently answer for one id. The caller caches by account id, so the request count is the
+    /// number of distinct comment authors in a run, not the number of comments.
+    /// </para>
+    /// <para>
+    /// <strong>A 404 is not a failure.</strong> A deactivated or deleted account, or one this token cannot
+    /// see, answers 404; ingestion then records the account id itself rather than losing the comment.
+    /// Losing a reviewer's feedback because their display name was unavailable would be the wrong trade.
+    /// A 401/403 still throws, per rule §1.2 — that is a token problem, not a missing user.
+    /// </para>
+    /// </remarks>
+    /// <param name="accountId">The Atlassian account id, e.g. from <c>version.authorId</c>.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired or revoked.</exception>
+    /// <exception cref="ConfluenceApiException">Any other non-success status apart from 404.</exception>
+    /// <exception cref="ConfluenceProtocolException">The response body is not the documented shape.</exception>
+    public async Task<ConfluenceUser?> FindUserAsync(
+        string accountId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(accountId);
+
+        var path = $"rest/api/user?accountId={Uri.EscapeDataString(accountId)}";
+        var user = await ReadOrNullWhenMissingAsync<UserBulk>(path, ApiSurface.V1, cancellationToken)
+            .ConfigureAwait(false);
+
+        return user is null ? null : MapUser(user, path);
     }
 
     /// <summary>
@@ -985,14 +1147,17 @@ public sealed class ConfluenceClient : IDisposable
         return Deserialize<T>(path, body);
     }
 
-    private async Task<T?> ReadOrNullWhenMissingAsync<T>(string path, CancellationToken cancellationToken)
+    private async Task<T?> ReadOrNullWhenMissingAsync<T>(
+        string path,
+        ApiSurface surface,
+        CancellationToken cancellationToken)
         where T : class
     {
         var (statusCode, body) = await SendAsync(
                 HttpMethod.Get,
                 path,
                 content: null,
-                ApiSurface.V2,
+                surface,
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -1263,6 +1428,39 @@ public sealed class ConfluenceClient : IDisposable
             Require(comment.Id, "id", path),
             comment.ResolutionStatus,
             comment.Links?.Webui);
+
+    /// <summary>
+    /// Maps one comment for ingestion. Only the id is required, and everything else is passed through as
+    /// it arrived, <c>null</c> included.
+    /// </summary>
+    /// <remarks>
+    /// Nothing here is a protocol failure but a missing id, because the alternative is a sync that reads
+    /// nothing at all: a comment with no body, no author or no timestamp is a comment the ingestion
+    /// planner reports and skips, per page, while every other comment on every other page still lands.
+    /// <c>quotedText</c> comes from <c>properties.inlineOriginalSelection</c> and is absent by
+    /// construction on a footer read, which carries no <c>properties</c> block.
+    /// </remarks>
+    private static ConfluenceComment MapComment(
+        CommentBulk comment,
+        string path,
+        ConfluenceCommentKind kind)
+        => new(
+            Require(comment.Id, "id", path),
+            kind,
+            comment.Version?.AuthorId,
+            comment.Version?.CreatedAt,
+            comment.Body?.Storage?.Value,
+            comment.Properties?.InlineOriginalSelection,
+            comment.ResolutionStatus,
+            comment.Links?.Webui);
+
+    /// <summary>
+    /// Maps one account. The id is required — it is what the caller keys its cache and its bot check on —
+    /// and the display name is not, because an account without one is answered as such rather than failing
+    /// a read.
+    /// </summary>
+    private static ConfluenceUser MapUser(UserBulk user, string path)
+        => new(Require(user.AccountId, "accountId", path), user.DisplayName);
 
     /// <summary>
     /// The <c>cursor</c> value out of a <c>_links.next</c> URL, or <c>null</c> when the read is done.

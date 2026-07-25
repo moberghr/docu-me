@@ -244,6 +244,35 @@ public sealed class WorkflowTemplateTests
     }
 
     [Fact]
+    public void The_sync_template_commits_the_feedback_inbox_it_ingests()
+    {
+        const string name = "docs-sync.yml";
+        var runnable = Runnable(name).ToList();
+        var text = string.Join('\n', runnable);
+
+        // §6.3's default is both halves, and §9 makes this workflow the thing that commits the inbox
+        // items: "docume sync --comments → inbox items → committed via PR by the cron workflow". A
+        // template that ran the labels half alone would ingest comments nowhere, and one that ingested
+        // them without adding the directory would write them into a runner and throw them away — both
+        // failures being silence rather than a red check.
+        var sync = runnable
+            .Where(line => line.Contains("docume sync", StringComparison.Ordinal))
+            .ToList();
+
+        sync.ShouldNotBeEmpty($"{name} never runs a sync (§6.3).");
+        sync.ShouldNotContain(
+            line => line.Contains("--labels", StringComparison.Ordinal),
+            $"{name}: a bare `sync` runs both halves — pinning --labels drops comment ingestion (§6.3).");
+
+        text.ShouldContain(
+            "_meta/feedback/inbox",
+            customMessage: $"{name} must locate the inbox to commit it (§5.4).");
+        text.ShouldContain(
+            "git add \"$state\" \"$inbox\"",
+            customMessage: $"{name} must stage the inbox items alongside the state file (§9).");
+    }
+
+    [Fact]
     public void The_sticky_comment_marker_matches_the_one_the_CLI_writes()
     {
         var env = Mapping(Mapping(Mapping(Root("docs-drift-pr.yml"), "jobs"), "comment"), "env");
