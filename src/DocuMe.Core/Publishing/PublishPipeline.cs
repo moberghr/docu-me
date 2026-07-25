@@ -115,8 +115,14 @@ public static class PublishPipeline
         var pages = new List<PlannedPage>();
         var failures = new List<PageConversionFailure>();
 
-        foreach (var page in tree.Pages)
+        // Publish order, not path order: a page named 10-domains/README.md sorts before the README.md it
+        // hangs under, and the write path files a child under an id its parent's create produced
+        // (PageHierarchy.PublishOrder).
+        var byPath = tree.Pages.ToDictionary(page => page.Path, StringComparer.Ordinal);
+
+        foreach (var path in PageHierarchy.PublishOrder(parents))
         {
+            var page = byPath[path];
             state.Pages.TryGetValue(page.Path, out var current);
             var parentPath = parents[page.Path];
             var parentMoved = PageHierarchy.ParentMoved(

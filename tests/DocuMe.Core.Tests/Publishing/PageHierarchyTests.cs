@@ -178,6 +178,66 @@ public sealed class PageHierarchyTests
         PageHierarchy.ParentMoved(null, "README.md", new Dictionary<string, string>(), RootId).ShouldBeFalse();
     }
 
+    /// <summary>
+    /// The defect this exists to stop: a numeric-prefixed page sorts before the index page it hangs under
+    /// (<c>'1'</c> before <c>'R'</c>), so publishing in path order would try to file a child under a parent
+    /// the run has not created yet — on the very convention §6.2 names for expressing order.
+    /// </summary>
+    [Fact]
+    public void Publish_order_puts_a_parent_before_a_child_that_sorts_ahead_of_it()
+    {
+        var parents = PageHierarchy.Resolve([
+            "README.md",
+            "10-domains/README.md",
+            "10-domains/orders.md",
+            "20-guides/README.md",
+        ]);
+
+        PageHierarchy.PublishOrder(parents).ShouldBe([
+            "README.md",
+            "10-domains/README.md",
+            "10-domains/orders.md",
+            "20-guides/README.md",
+        ]);
+    }
+
+    /// <summary>
+    /// Depth-first, and siblings still in path order — which is what makes the numeric prefixes mean
+    /// something to the child-order post-pass (<see cref="ChildOrderPlanner"/>).
+    /// </summary>
+    [Fact]
+    public void Publish_order_walks_each_branch_to_the_bottom_with_siblings_in_path_order()
+    {
+        var parents = PageHierarchy.Resolve([
+            "README.md",
+            "b/README.md",
+            "b/c/README.md",
+            "b/c/deep.md",
+            "b/later.md",
+            "a-first.md",
+        ]);
+
+        PageHierarchy.PublishOrder(parents).ShouldBe([
+            "README.md",
+            "a-first.md",
+            "b/README.md",
+            "b/c/README.md",
+            "b/c/deep.md",
+            "b/later.md",
+        ]);
+    }
+
+    /// <summary>
+    /// A wiki with no root index page: every page is its own root, and none is lost.
+    /// </summary>
+    [Fact]
+    public void Publish_order_keeps_every_page_when_there_is_no_index_above_them()
+    {
+        var parents = PageHierarchy.Resolve(["beta.md", "alpha.md", "guides/setup.md"]);
+
+        PageHierarchy.PublishOrder(parents).ShouldBe(["alpha.md", "beta.md", "guides/setup.md"]);
+    }
+
     private static DocumeState State(params (string Path, string? PageId, string? ParentPageId)[] pages)
     {
         var entries = pages.ToDictionary(

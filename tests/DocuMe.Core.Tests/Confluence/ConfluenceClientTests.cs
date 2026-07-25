@@ -1002,6 +1002,118 @@ public sealed class ConfluenceClientTests
     }
 
     /// <summary>
+    /// The read the child-order post-pass diffs against (PLAN.md §6.2). The order the endpoint answers
+    /// with is the order the caller gets: <c>childPosition</c> is read but never sorted on, because it is
+    /// null on migrated pages and Confluence's own tree falls back to alphabetical for those.
+    /// </summary>
+    [Fact]
+    public async Task Lists_a_pages_children_in_the_order_confluence_answers_with()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ChildrenPath).UsingGet())
+            .RespondWith(Json(LastChildrenBody));
+
+        using var client = CreateClient(server);
+        var children = await client.GetChildPagesAsync(PageId, TestContext.Current.CancellationToken);
+
+        children.Select(child => child.Id).ShouldBe(["333", "111"]);
+        children[0].Title.ShouldBe("Guides");
+        children[0].ChildPosition.ShouldBe(7);
+
+        // A page migrated from Server has no position at all, which must read as absent rather than 0 —
+        // position 0 is the top of the list, and the difference would be a wrong order, not a missing one.
+        children[1].ChildPosition.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// v2 paginates with an opaque cursor, and a parent with more children than one page holds is
+    /// ordinary in an ~80-page wiki. The cursor is lifted out of <c>_links.next</c> and re-sent, rather
+    /// than the URL being followed as given: <c>next</c> carries the site's own <c>/wiki/</c> base
+    /// segment, which composing it against the client's base address would duplicate.
+    /// </summary>
+    [Fact]
+    public async Task Follows_the_cursor_until_confluence_stops_offering_one()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ChildrenPath).UsingGet())
+            .RespondWith(Json(request => request.Query!.ContainsKey("cursor")
+                ? LastChildrenBody
+                : FirstChildrenBody));
+
+        using var client = CreateClient(server);
+        var children = await client.GetChildPagesAsync(PageId, TestContext.Current.CancellationToken);
+
+        children.Select(child => child.Id).ShouldBe(["222", "333", "111"]);
+        server.LogEntries.Count.ShouldBe(2);
+
+        // The cursor arrives percent-encoded inside next and has to reach Confluence decoded-then-encoded
+        // once, not twice: a base64 cursor's '==' padding is exactly what a double-encode mangles.
+        var followed = server.LogEntries[1].RequestMessage;
+        followed.ShouldNotBeNull();
+        followed.Query!["cursor"].Single().ShouldBe("cGFnZT0y==");
+    }
+
+    /// <summary>
+    /// No <c>limit</c> is sent. The v2 schema documents the parameter but neither its default nor its
+    /// maximum, and a guessed value over the cap would be a 400 on a read the post-pass cannot do
+    /// without; pagination covers the same ground with no guess in it.
+    /// </summary>
+    [Fact]
+    public async Task Asks_for_children_without_guessing_a_page_size()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ChildrenPath).UsingGet())
+            .RespondWith(Json(LastChildrenBody));
+
+        using var client = CreateClient(server);
+        _ = await client.GetChildPagesAsync(PageId, TestContext.Current.CancellationToken);
+
+        LastRequest(server).Query!.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Unlike a page read, a missing parent is not <c>null</c> here: the post-pass only asks about a
+    /// parent it just wrote, so a 404 means the tree moved under the run and is worth saying.
+    /// </summary>
+    [Fact]
+    public async Task A_parent_that_is_gone_fails_rather_than_reading_as_childless()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ChildrenPath).UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NotFound).WithBody("{}"));
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceApiException>(
+            () => client.GetChildPagesAsync(PageId, TestContext.Current.CancellationToken));
+
+        exception.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// A server that keeps handing back a cursor would otherwise loop forever inside one publish. The
+    /// backstop is deliberately far above any real page tree, so hitting it means the pagination is
+    /// broken rather than the wiki being large.
+    /// </summary>
+    [Fact]
+    public async Task Stops_reading_children_when_the_cursor_never_runs_out()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ChildrenPath).UsingGet())
+            .RespondWith(Json(FirstChildrenBody));
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceProtocolException>(
+            () => client.GetChildPagesAsync(PageId, TestContext.Current.CancellationToken));
+
+        exception.Message.ShouldContain("more children than a page tree has");
+    }
+
+    /// <summary>
     /// The reparent (PLAN.md §6.2): <c>append</c> files the page under the target. The whole request is
     /// its URL, which is the point of using this endpoint over a v2 body rewrite.
     /// </summary>
@@ -1259,6 +1371,37 @@ public sealed class ConfluenceClientTests
 
     private static string MovePath(string position) => LegacyPath($"move/{position}/{TargetPageId}");
 
+    private static string ChildrenPath => ApiPath($"pages/{PageId}/children");
+
+    /// <summary>
+    /// A first page of children that offers another. The cursor carries base64 padding, percent-encoded
+    /// the way Confluence writes it into <c>_links.next</c>.
+    /// </summary>
+    private static string FirstChildrenBody =>
+        $$"""
+        {
+          "results": [
+            { "id": "222", "status": "current", "title": "Domains", "type": "page",
+              "spaceId": "{{SpaceId}}", "childPosition": 3 }
+          ],
+          "_links": { "next": "/wiki/api/v2/pages/{{PageId}}/children?cursor=cGFnZT0y%3D%3D&limit=25" }
+        }
+        """;
+
+    /// <summary>The last page: results, and a <c>_links</c> block with no <c>next</c> in it.</summary>
+    private static string LastChildrenBody =>
+        $$"""
+        {
+          "results": [
+            { "id": "333", "status": "current", "title": "Guides", "type": "page",
+              "spaceId": "{{SpaceId}}", "childPosition": 7 },
+            { "id": "111", "status": "current", "title": "Migrated page", "type": "page",
+              "spaceId": "{{SpaceId}}", "childPosition": null }
+          ],
+          "_links": { "base": "https://example.atlassian.net/wiki" }
+        }
+        """;
+
     private static IRequestMessage LastRequest(WireMockServer server)
     {
         var request = server.LogEntries.Single().RequestMessage;
@@ -1302,6 +1445,13 @@ public sealed class ConfluenceClientTests
     }
 
     private static IResponseBuilder Json(string body)
+        => Response.Create()
+            .WithStatusCode(HttpStatusCode.OK)
+            .WithHeader("Content-Type", "application/json")
+            .WithBody(body);
+
+    /// <summary>A response that depends on the request — one endpoint answering two pages of results.</summary>
+    private static IResponseBuilder Json(Func<IRequestMessage, string> body)
         => Response.Create()
             .WithStatusCode(HttpStatusCode.OK)
             .WithHeader("Content-Type", "application/json")

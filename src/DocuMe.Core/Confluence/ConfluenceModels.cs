@@ -116,6 +116,25 @@ public enum ConfluencePageMovePosition
 }
 
 /// <summary>
+/// One child of a page, as much of it as the child-order post-pass needs (PLAN.md §6.2).
+/// </summary>
+/// <param name="Id">The child page's id — what a move names, and the key the post-pass diffs on.</param>
+/// <param name="Title">The child's title, carried so a report can name a page a human recognizes.</param>
+/// <param name="ChildPosition">
+/// Confluence's own position value, or <c>null</c>.
+/// </param>
+/// <remarks>
+/// <strong><see cref="ChildPosition"/> is deliberately not the ordering key.</strong> It is absent on
+/// pages migrated from Confluence Server and on the children of a page that was deleted, and
+/// Confluence's own page tree falls back to alphabetical order for those — so a run that sorted by it
+/// would compute its diff against an order nobody sees. The order the endpoint lists children in is
+/// what the post-pass treats as observed truth, and it verifies the result rather than trusting it
+/// (<see cref="ConfluenceClient.GetChildPagesAsync"/>). The value is read anyway because it is the
+/// one number a human debugging a wrong order in a real space will ask for.
+/// </remarks>
+public sealed record ConfluenceChildPage(string Id, string Title, int? ChildPosition);
+
+/// <summary>
 /// A page to move within its space, without writing its body (PLAN.md §6.2: the reorganized-tree case
 /// and the child-page ordering post-pass).
 /// </summary>

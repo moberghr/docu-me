@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace DocuMe.Core.Confluence;
 
 /// <summary>
@@ -26,7 +28,22 @@ namespace DocuMe.Core.Confluence;
 /// schemas wrap their results in the same <c>results</c> member. The extra members v1 adds
 /// (<c>start</c>, <c>limit</c>, <c>size</c>) are simply not read.
 /// </remarks>
-internal sealed record MultiEntityResult<T>(IReadOnlyList<T>? Results);
+/// <typeparam name="T">The wire shape of one entity, e.g. <see cref="PageBulk"/>.</typeparam>
+/// <param name="Results">The entities themselves.</param>
+/// <param name="Links">
+/// v2's <c>_links</c> block, whose <c>next</c> member is how a read that has more to say says so
+/// (<see cref="ConfluenceClient.GetChildPagesAsync"/>). Optional because every other read DocuMe
+/// performs asks for one entity and can never be paginated.
+/// </param>
+internal sealed record MultiEntityResult<T>(
+    IReadOnlyList<T>? Results,
+    [property: JsonPropertyName("_links")] PaginationLinks? Links = null);
+
+/// <summary>
+/// The subset of a v2 <c>_links</c> block that decides whether a read is finished: the relative URL
+/// of the next page of results, absent on the last one.
+/// </summary>
+internal sealed record PaginationLinks(string? Next);
 
 internal sealed record SpaceBulk(string? Id, string? Key, string? Name);
 
@@ -39,6 +56,13 @@ internal sealed record PageBulk(
     BodyBulk? Body);
 
 internal sealed record VersionBulk(int? Number);
+
+/// <summary>
+/// The v2 <c>ChildPage</c> schema, narrowed to what the child-order post-pass reads. It is a
+/// deliberately thin shape — the endpoint answers no version and no parent id, which is why the
+/// post-pass reorders by id and never tries to write from what it read.
+/// </summary>
+internal sealed record ChildPageBulk(string? Id, string? Title, int? ChildPosition);
 
 /// <summary>
 /// The v1 <c>Content</c> schema, narrowed to what an attachment upload answers with. v1 marks only

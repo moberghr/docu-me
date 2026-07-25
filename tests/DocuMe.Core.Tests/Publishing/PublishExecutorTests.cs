@@ -281,9 +281,14 @@ public sealed class PublishExecutorTests : IDisposable
         StubCreate(server);
         StubAttachmentUpload(server);
 
+        // Two pages now hang under the home page, which brings the child-order post-pass into a test that
+        // is not about it.
+        StubNoChildren(server);
+
         var outcome = await ExecuteAsync(server, new DocumeState());
 
         outcome.Succeeded.ShouldBeTrue();
+        outcome.Warnings.ShouldBeEmpty();
         _rendered.Count.ShouldBe(1);
 
         outcome.State.Pages["guides/deploy.md"].Attachments.ShouldContainKey(DiagramAttachment);
@@ -581,6 +586,273 @@ public sealed class PublishExecutorTests : IDisposable
     }
 
     /// <summary>
+    /// The post-pass §6.2 asks for: after every upsert, each parent's children are put back into
+    /// source-tree order with the fewest moves that get there. The tree order here is the path order, so
+    /// the numeric prefixes express the intent.
+    /// </summary>
+    [Fact]
+    public async Task Puts_a_parents_children_back_into_source_tree_order()
+    {
+        Siblings();
+
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var tree = new ChildTree();
+        StubChildren(server, tree);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+
+        first.Failures.ShouldBeEmpty();
+        first.Succeeded.ShouldBeTrue();
+        first.Reorders.ShouldBeEmpty();
+
+        var domains = PageId(first, "10-domains.md");
+        var guides = PageId(first, "20-guides.md");
+        var setup = PageId(first, "guides/setup.md");
+
+        // As if somebody had dragged the pages around in the browser: the content is fine, the order is
+        // backwards (rule §9.1 — the repo is the source of truth).
+        tree.Holds(setup, guides, domains);
+
+        Write("README.md", "# Home\n\nRewritten, so this run writes something.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 2);
+        StubUpdate(server);
+        StubMove(server, tree);
+
+        var second = await ExecuteAsync(server, first.State);
+
+        second.Succeeded.ShouldBeTrue();
+        second.Warnings.ShouldBeEmpty();
+        second.ReorderedCount.ShouldBe(2);
+
+        var reorder = second.Reorders.ShouldHaveSingleItem();
+        reorder.ParentPath.ShouldBe("README.md");
+        reorder.ParentPageId.ShouldBe(PageId(second, "README.md"));
+        reorder.MovedPaths.ShouldBe(["10-domains.md", "20-guides.md"]);
+
+        // Minimal: the page already in the right relative place is left alone, and the two moves anchor
+        // on siblings the earlier one placed.
+        Moves(server).ShouldBe([
+            $"/wiki/rest/api/content/{domains}/move/before/{setup}",
+            $"/wiki/rest/api/content/{guides}/move/after/{domains}",
+        ]);
+
+        tree.Children.ShouldBe([domains, guides, setup]);
+
+        // A reorder writes no body and spends no version, so state is untouched by it (§5.3, §9.2).
+        second.State.Pages["guides/setup.md"].PublishedVersion.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// The answer on every run of a settled wiki: one read per parent with more than one child, and not a
+    /// single move. A pass that churned the tree every run would notify a reviewer for nothing.
+    /// </summary>
+    [Fact]
+    public async Task Sends_no_move_when_confluence_already_lists_the_children_in_tree_order()
+    {
+        Siblings();
+
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var tree = new ChildTree();
+        StubChildren(server, tree);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        tree.Holds(
+            PageId(first, "10-domains.md"), PageId(first, "20-guides.md"), PageId(first, "guides/setup.md"));
+
+        Write("README.md", "# Home\n\nRewritten, so this run writes something.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 2);
+        StubUpdate(server);
+        StubMove(server, tree);
+
+        var second = await ExecuteAsync(server, first.State);
+
+        second.Succeeded.ShouldBeTrue();
+        second.Reorders.ShouldBeEmpty();
+        Moves(server).ShouldBeEmpty();
+
+        // Read once to find out, and not a second time: the verification read only happens after moves.
+        ChildReads(server).Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task No_reorder_leaves_the_child_order_untouched_and_reads_nothing()
+    {
+        Siblings();
+
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var tree = new ChildTree();
+        StubChildren(server, tree);
+        StubMove(server, tree);
+
+        var outcome = await ExecuteAsync(server, new DocumeState(), reorder: false);
+
+        outcome.Succeeded.ShouldBeTrue();
+        outcome.Reorders.ShouldBeEmpty();
+        ChildReads(server).ShouldBeEmpty();
+        Moves(server).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A run that wrote nothing moved nothing either, so a settled wiki pays no reads to be told its order
+    /// is fine (<see cref="PublishExecutionOptions.Reorder"/>).
+    /// </summary>
+    [Fact]
+    public async Task Skips_the_post_pass_entirely_when_the_run_writes_nothing()
+    {
+        Siblings();
+
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var tree = new ChildTree();
+        StubChildren(server, tree);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        tree.Holds(PageId(first, "guides/setup.md"), PageId(first, "10-domains.md"));
+        server.ResetLogEntries();
+
+        var second = await ExecuteAsync(server, first.State);
+
+        second.Pages.ShouldBeEmpty();
+        second.Reorders.ShouldBeEmpty();
+        server.LogEntries.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Atlassian's own caution, and the one way this pass could do damage: <c>before</c>/<c>after</c>
+    /// against a top-level target moves the page to the top of the SPACE, where it vanishes from the page
+    /// tree. Without <c>confluence.rootPageId</c> the pages at the top of the wiki have no parent page, so
+    /// the pass refuses and says why instead of guessing an anchor.
+    /// </summary>
+    [Fact]
+    public async Task Refuses_to_order_the_top_of_the_wiki_when_no_root_page_is_configured()
+    {
+        File.Delete(Materialize("README.md"));
+        Write("alpha.md", "# Alpha\n\nNo index page above it.\n");
+        Write("beta.md", "# Beta\n\nNo index page above it either.\n");
+
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var tree = new ChildTree();
+        StubChildren(server, tree);
+        StubMove(server, tree);
+
+        var rootless = new DocumeConfig
+        {
+            Confluence = new ConfluenceConfig
+            {
+                BaseUrl = "https://example.atlassian.net/wiki",
+                SpaceKey = SpaceKey,
+            },
+        };
+
+        var outcome = await ExecuteAsync(server, new DocumeState(), rootless);
+
+        outcome.Succeeded.ShouldBeTrue();
+        outcome.Reorders.ShouldBeEmpty();
+
+        var warning = outcome.Warnings.ShouldHaveSingleItem();
+        warning.ShouldContain("confluence.rootPageId");
+        warning.ShouldContain("out of the page tree");
+
+        Moves(server).ShouldBeEmpty();
+        ChildReads(server).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// The diff is computed against an order Atlassian documents no guarantee for, so the result is
+    /// verified rather than assumed. A tree that still disagrees afterwards is said out loud — on the
+    /// first real space, instead of a wrong order nobody looked at.
+    /// </summary>
+    [Fact]
+    public async Task Says_so_when_the_order_still_disagrees_after_the_moves()
+    {
+        Siblings();
+
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var tree = new ChildTree();
+        StubChildren(server, tree);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        tree.Holds(
+            PageId(first, "guides/setup.md"), PageId(first, "20-guides.md"), PageId(first, "10-domains.md"));
+
+        Write("README.md", "# Home\n\nRewritten, so this run writes something.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 2);
+        StubUpdate(server);
+
+        // A move endpoint that answers 200 and rearranges nothing: whatever the real reason would be, this
+        // is what it looks like from here.
+        StubMove(server);
+
+        var second = await ExecuteAsync(server, first.State);
+
+        // The pages and their content published; only a position is wrong, so the run is still a success.
+        second.Succeeded.ShouldBeTrue();
+        second.Reorders.ShouldHaveSingleItem();
+
+        var warning = second.Warnings.ShouldHaveSingleItem();
+        warning.ShouldContain("still lists them");
+        warning.ShouldContain("--no-reorder");
+    }
+
+    /// <summary>
+    /// A children read that fails is a warning, not a failure: the pages are published and correct, and
+    /// what is wrong is the order of a menu. Failing the command would tell CI a good publish was broken.
+    /// </summary>
+    [Fact]
+    public async Task Reports_a_child_order_it_could_not_read_without_failing_the_publish()
+    {
+        Siblings();
+
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/children"))
+                .UsingGet())
+            .AtPriority(-1)
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NotFound).WithBody("{}"));
+
+        var outcome = await ExecuteAsync(server, new DocumeState());
+
+        outcome.Succeeded.ShouldBeTrue();
+        outcome.CreatedCount.ShouldBe(4);
+        outcome.Reorders.ShouldBeEmpty();
+
+        var warning = outcome.Warnings.ShouldHaveSingleItem();
+        warning.ShouldContain("README.md");
+        warning.ShouldContain("left alone");
+    }
+
+    /// <summary>
     /// A wrong base URL or a Confluence outage must read as a sentence, not a stack trace — and must
     /// still return the state accumulated so far. Caught by the first CLI smoke run of the write path.
     /// </summary>
@@ -637,6 +909,18 @@ public sealed class PublishExecutorTests : IDisposable
 
     private static string PageId(PublishOutcome outcome, string path) =>
         outcome.State.Pages[path].PageId!;
+
+    /// <summary>The v1 move requests the run sent, in order — the post-pass's whole output.</summary>
+    private static List<string> Moves(WireMockServer server) =>
+        Requests(server, "PUT", "/wiki/rest/api/content/")
+            .Select(request => request.Path)
+            .Where(path => path.Contains("/move/", StringComparison.Ordinal))
+            .ToList();
+
+    private static List<IRequestMessage> ChildReads(WireMockServer server) =>
+        Requests(server, "GET", "/wiki/api/v2/pages/")
+            .Where(request => request.Path.EndsWith("/children", StringComparison.Ordinal))
+            .ToList();
 
     private static List<IRequestMessage> Requests(WireMockServer server, string method, string pathPrefix) =>
         server.LogEntries
@@ -709,15 +993,59 @@ public sealed class PublishExecutorTests : IDisposable
 
     /// <summary>
     /// Answers the v1 bodyless move with the id the endpoint echoes, read back out of the request path
-    /// so a run that moved the wrong page cannot pass.
+    /// so a run that moved the wrong page cannot pass. With a <paramref name="tree"/>, the move also
+    /// rearranges it, so a later children read answers what these moves actually did.
     /// </summary>
-    private static void StubMove(WireMockServer server) =>
+    private static void StubMove(WireMockServer server, ChildTree? tree = null) =>
         server
             .Given(Request.Create()
                 .WithPath(new WildcardMatcher("/wiki/rest/api/content/*/move/*/*"))
                 .UsingPut())
             .RespondWith(Json(request =>
-                $$"""{ "pageId": {{JsonSerializer.Serialize(request.Path.Split('/')[5])}} }"""));
+            {
+                // /wiki/rest/api/content/{pageId}/move/{position}/{targetId}
+                var segments = request.Path.Split('/');
+                tree?.Move(segments[5], segments[7], segments[8]);
+
+                return $$"""{ "pageId": {{JsonSerializer.Serialize(segments[5])}} }""";
+            }));
+
+    /// <summary>
+    /// Answers the v2 children read from <paramref name="tree"/>, at a priority that beats the
+    /// page-read wildcard (which would otherwise match this path too).
+    /// </summary>
+    private static void StubChildren(WireMockServer server, ChildTree tree) =>
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/children"))
+                .UsingGet())
+            .AtPriority(-1)
+            .RespondWith(Json(_ => ChildrenBody(tree.Children)));
+
+    /// <summary>
+    /// Answers the children read with an empty list: the post-pass's no-op, for a test that is not about
+    /// ordering but whose fixture happens to give a parent more than one child.
+    /// </summary>
+    private static void StubNoChildren(WireMockServer server) =>
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/children"))
+                .UsingGet())
+            .AtPriority(-1)
+            .RespondWith(Json(ChildrenBody([])));
+
+    private static string ChildrenBody(IReadOnlyList<string> children)
+    {
+        var results = children.Select((id, index) => $$"""
+            {
+              "id": "{{id}}", "status": "current", "title": "child {{index.ToString(CultureInfo.InvariantCulture)}}",
+              "type": "page", "spaceId": "{{SpaceId}}",
+              "childPosition": {{index.ToString(CultureInfo.InvariantCulture)}}
+            }
+            """);
+
+        return $$"""{ "results": [{{string.Join(",", results)}}], "_links": {} }""";
+    }
 
     private static void StubAttachmentUpload(WireMockServer server) =>
         server
@@ -762,6 +1090,45 @@ public sealed class PublishExecutorTests : IDisposable
         .WithHeader("Content-Type", "application/json")
         .WithBody(body);
 
+    /// <summary>
+    /// One parent's child list as Confluence would hold it, rearranged by the same before/after semantics
+    /// the real endpoint documents. Lets a test assert the tree the post-pass left behind, not just the
+    /// requests it sent — and it is what the post-pass's own verification read answers from.
+    /// </summary>
+    private sealed class ChildTree
+    {
+        private readonly List<string> _children = [];
+
+        public IReadOnlyList<string> Children => _children;
+
+        public void Holds(params string[] pageIds)
+        {
+            _children.Clear();
+            _children.AddRange(pageIds);
+        }
+
+        public void Move(string pageId, string position, string targetId)
+        {
+            if (!_children.Remove(pageId))
+            {
+                return;
+            }
+
+            // `append` reparents, so the page leaves this list; the tests that exercise it hold one
+            // parent, and putting it back at the end is the closest this simulation gets.
+            var target = _children.IndexOf(targetId);
+            if (target < 0)
+            {
+                _children.Add(pageId);
+                return;
+            }
+
+            _children.Insert(
+                string.Equals(position, "after", StringComparison.Ordinal) ? target + 1 : target,
+                pageId);
+        }
+    }
+
     private async Task<PublishOutcome> ExecuteAsync(
         WireMockServer server,
         DocumeState state,
@@ -769,7 +1136,8 @@ public sealed class PublishExecutorTests : IDisposable
         string? repoSha = null,
         DiagramRenderer? renderer = null,
         Uri? baseUrl = null,
-        PublishScope? scope = null)
+        PublishScope? scope = null,
+        bool reorder = true)
     {
         config ??= Config();
 
@@ -794,7 +1162,7 @@ public sealed class PublishExecutorTests : IDisposable
             config,
             report,
             state,
-            new PublishExecutionOptions { RepoSha = repoSha },
+            new PublishExecutionOptions { RepoSha = repoSha, Reorder = reorder },
             TestContext.Current.CancellationToken);
     }
 
@@ -804,6 +1172,17 @@ public sealed class PublishExecutorTests : IDisposable
         _rendered.Add(source);
 
         return Task.FromResult(new MermaidDiagram(MermaidAttachmentName.ForSource(source), Svg, "120", "80"));
+    }
+
+    /// <summary>
+    /// Gives the home page two more children, so its child list has an order worth reconciling. Numeric
+    /// prefixes on purpose: they are how §6.2 expects a repo to express the order it wants, and ordinal
+    /// path order is what the tree walk produces.
+    /// </summary>
+    private void Siblings()
+    {
+        Write("10-domains.md", "# Domains\n\nFirst, by tree order.\n");
+        Write("20-guides.md", "# Guides index\n\nSecond, by tree order.\n");
     }
 
     private void Write(string relativePath, string content) =>

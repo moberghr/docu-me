@@ -70,7 +70,19 @@ public sealed record PublishOutcome(
     IReadOnlyList<string> Warnings,
     string? StoppedBecause)
 {
+    /// <summary>
+    /// The parents whose child order the post-pass reconciled (§6.2). Empty when every parent's children
+    /// were already in tree order, when the run wrote nothing, when <c>--no-reorder</c> turned the pass
+    /// off, or when the run stopped before reaching it.
+    /// </summary>
+    public IReadOnlyList<ChildReorder> Reorders { get; init; } = [];
+
     /// <summary>True when every planned page was published and nothing cut the run short.</summary>
+    /// <remarks>
+    /// A child order the post-pass could not reconcile does not fail a run: the pages and their content
+    /// published, and it is reported in <see cref="Warnings"/>
+    /// (<see cref="PublishExecutionOptions.Reorder"/>).
+    /// </remarks>
     public bool Succeeded => Failures.Count == 0 && StoppedBecause is null;
 
     /// <summary>Pages created (§6.2 step 5), including the recreates.</summary>
@@ -86,6 +98,13 @@ public sealed record PublishOutcome(
 
     /// <summary>Pages repositioned in the page tree without a body write (§6.2).</summary>
     public int MovedCount => Pages.Count(page => page.Action == PagePublishAction.Move);
+
+    /// <summary>
+    /// Child moves the ordering post-pass issued across the run. Counted apart from
+    /// <see cref="MovedCount"/> because the two answer different questions: that one is "pages the tree
+    /// reparented", this one is "siblings put back in order".
+    /// </summary>
+    public int ReorderedCount => Reorders.Sum(reorder => reorder.MovedPaths.Count);
 
     /// <summary>Attachment uploads across the run.</summary>
     public int UploadedAttachmentCount => Pages.Sum(page => page.UploadedAttachments.Count);

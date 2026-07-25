@@ -76,6 +76,11 @@ internal static class PublishCommand
             Description = "After publishing, delete the orphan pages (state entries whose markdown file "
                 + "is gone) from Confluence. Asks first, needs a terminal, refuses to run in CI.",
         };
+        var noReorderOption = new Option<bool>("--no-reorder")
+        {
+            Description = "Skip the post-pass that puts each parent's children in source-tree order. "
+                + "Leaves the order in Confluence exactly as it is, for a team that arranges it by hand.",
+        };
 
         var command = new Command(
             "publish",
@@ -90,6 +95,7 @@ internal static class PublishCommand
             changedSinceOption,
             pageOption,
             pruneOption,
+            noReorderOption,
         };
 
         command.SetAction((parseResult, cancellationToken) => RunAsync(
@@ -102,6 +108,7 @@ internal static class PublishCommand
             parseResult.GetValue(changedSinceOption),
             parseResult.GetValue(pageOption) ?? [],
             parseResult.GetValue(pruneOption),
+            parseResult.GetValue(noReorderOption),
             cancellationToken));
 
         return command;
@@ -117,6 +124,7 @@ internal static class PublishCommand
         string? changedSince,
         string[] pagePaths,
         bool prune,
+        bool noReorder,
         CancellationToken cancellationToken)
     {
         if (changedSince is { Length: > 0 } && pagePaths.Length > 0)
@@ -251,7 +259,7 @@ internal static class PublishCommand
         }
 
         return await PublishAsync(
-                config, repoRoot, wikiRoot, resolvedStatePath, report, state, prune, cancellationToken)
+                config, repoRoot, wikiRoot, resolvedStatePath, report, state, prune, noReorder, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -297,6 +305,7 @@ internal static class PublishCommand
         PublishReport report,
         DocumeState state,
         bool prune,
+        bool noReorder,
         CancellationToken cancellationToken)
     {
         ConfluenceCredentials credentials;
@@ -328,7 +337,12 @@ internal static class PublishCommand
             + $"[blue]{credentials.Email.EscapeMarkup()}[/]…");
 
         var outcome = await executor
-            .ExecuteAsync(config, report, state, new PublishExecutionOptions { RepoSha = sha }, cancellationToken)
+            .ExecuteAsync(
+                config,
+                report,
+                state,
+                new PublishExecutionOptions { RepoSha = sha, Reorder = !noReorder },
+                cancellationToken)
             .ConfigureAwait(false);
 
         // Persisted before anything is reported, and persisted even after a failure: a page id earned
@@ -801,6 +815,8 @@ internal static class PublishCommand
 
         AnsiConsole.MarkupLine($"Attachments uploaded: {outcome.UploadedAttachmentCount}");
 
+        RenderReorders(outcome);
+
         if (outcome.ApprovalsRevokedCount > 0)
         {
             AnsiConsole.MarkupLine(
@@ -825,6 +841,35 @@ internal static class PublishCommand
 
         RenderPageFailures(outcome);
         RenderOutcomeVerdict(outcome);
+    }
+
+    /// <summary>
+    /// What the child-order post-pass moved (§6.2), printed only when it moved something: on a settled
+    /// wiki it does nothing, and a line saying so every run would be noise.
+    /// </summary>
+    private static void RenderReorders(PublishOutcome outcome)
+    {
+        if (outcome.Reorders.Count == 0)
+        {
+            return;
+        }
+
+        AnsiConsole.MarkupLine(
+            $"Child order reconciled: [aqua]{outcome.ReorderedCount}[/] page(s) moved under "
+            + $"{outcome.Reorders.Count} parent(s)");
+
+        foreach (var reorder in outcome.Reorders.Take(PagesPerSection))
+        {
+            var parent = reorder.ParentPath ?? "(top of the wiki)";
+            AnsiConsole.MarkupLine(
+                $"  [grey]{parent.EscapeMarkup()} → {string.Join(", ", reorder.MovedPaths).EscapeMarkup()}[/]");
+        }
+
+        if (outcome.Reorders.Count > PagesPerSection)
+        {
+            AnsiConsole.MarkupLine(
+                $"  [grey]… and {outcome.Reorders.Count - PagesPerSection} more parent(s)[/]");
+        }
     }
 
     private static void RenderPageFailures(PublishOutcome outcome)

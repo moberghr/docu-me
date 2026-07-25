@@ -27,6 +27,28 @@ public sealed record PublishExecutionOptions
     /// "the wiki is published at this commit" is false if any page failed.
     /// </summary>
     public string? RepoSha { get; init; }
+
+    /// <summary>
+    /// Whether to reconcile each parent's child order once the pages are written (§6.2's post-pass).
+    /// <c>--no-reorder</c> sets it false.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A run that wrote nothing skips the pass regardless: no page was created and none was moved, so no
+    /// position changed, and a settled wiki should not pay a read per parent to be told so. The cost of
+    /// that shortcut is narrow and deliberate — a tree somebody reordered by hand in Confluence stays
+    /// reordered until the next run that writes something.
+    /// </para>
+    /// <para>
+    /// It is <em>not</em> narrowed by <see cref="PublishOptions.Scope"/>, unlike every page write. Child
+    /// order is a property of a whole sibling set, so reconciling only the scoped subset would be a
+    /// different order than the tree asks for; and the pass writes no bodies and cannot revoke an
+    /// approval (§9.2, the same reason a reparent is cheap), so the usual reason a scope holds a page
+    /// back does not apply. A run that inserts one page in CI is exactly the case the post-pass exists
+    /// for.
+    /// </para>
+    /// </remarks>
+    public bool Reorder { get; init; } = true;
 }
 
 /// <summary>
@@ -116,9 +138,13 @@ public sealed class PublishExecutor
         var results = new List<PagePublishResult>();
         var failures = new List<PagePublishFailure>();
         var warnings = new List<string>();
+        var reorders = new List<ChildReorder>();
 
         PublishOutcome Outcome(string? stoppedBecause) => new(
-            state, !ReferenceEquals(state, original), results, failures, warnings, stoppedBecause);
+            state, !ReferenceEquals(state, original), results, failures, warnings, stoppedBecause)
+        {
+            Reorders = reorders,
+        };
 
         // The guard REPORTS a refusal rather than throwing (PublishGuard), so a write path that never
         // looks is precisely the failure mode it exists to prevent (CLAUDE.md §0.1, rule §1.4).
@@ -276,6 +302,17 @@ public sealed class PublishExecutor
             var result = outcome.Result!;
             results.Add(result);
             pageIds[planned.Path] = result.PageId;
+        }
+
+        // The post-pass, after every upsert and after nothing else: it needs every child's final page
+        // id, and the id of a page created moments ago does not exist until its create returns (§6.2,
+        // "after all upserts"). Unreachable from the early returns above on purpose — a run that
+        // stopped on an expired token or a dead connection has no business issuing more requests.
+        if (options.Reorder && writes > 0)
+        {
+            await ReconcileChildOrderAsync(
+                    report, pageIds, config.Confluence.RootPageId, reorders, warnings, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         if (failures.Count == 0 && options.RepoSha is { Length: > 0 } sha)
@@ -450,6 +487,193 @@ public sealed class PublishExecutor
             new PagePublishResult(
                 planned.Path, planned.Title, plan.Action, pageId!, version, uploaded, revoked, recreate),
             null);
+    }
+
+    /// <summary>
+    /// Reconciles every parent's child order with the source tree (§6.2's post-pass), one read and as
+    /// few moves per parent as <see cref="ChildOrderPlanner"/> can manage.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Trouble here is a warning, not a failure.</strong> The pages are published by the time
+    /// this runs and their content is correct; what is wrong is the order of a menu. Reporting it and
+    /// exiting zero is the honest reading, and the next run reconciles what this one could not — where
+    /// failing the command would tell CI that a correct publish was broken. It is reported by name
+    /// either way, never swallowed.
+    /// </para>
+    /// <para>
+    /// Nothing here touches state: a position is not in §5.3, which is what lets the pass be skipped,
+    /// retried, or turned off without the next run planning differently.
+    /// </para>
+    /// </remarks>
+    private async Task ReconcileChildOrderAsync(
+        PublishReport report,
+        Dictionary<string, string> pageIds,
+        string? rootPageId,
+        List<ChildReorder> reorders,
+        List<string> warnings,
+        CancellationToken cancellationToken)
+    {
+        var groups = GroupChildren(report, pageIds, rootPageId, warnings);
+
+        foreach (var group in groups)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                await ReconcileAsync(group, reorders, warnings, cancellationToken).ConfigureAwait(false);
+            }
+            catch (ConfluenceAuthenticationException ex)
+            {
+                // Same rule as the page loop (rule §1.2): never retried, never worked around, and the
+                // remaining parents would refuse identically.
+                warnings.Add(
+                    $"child order was left alone from {group.ParentName} onwards: {ex.Message} The pages "
+                    + "themselves are published.");
+                return;
+            }
+            catch (HttpRequestException ex)
+            {
+                warnings.Add($"child order was left alone from {group.ParentName} onwards: {Unreachable(ex)}");
+                return;
+            }
+            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                warnings.Add($"child order was left alone from {group.ParentName} onwards: {TimedOut(ex)}");
+                return;
+            }
+            catch (ConfluenceException ex)
+            {
+                // One parent's own problem — a page moved out from under the run, a permission that
+                // covers the pages but not the tree — so the rest of the wiki still gets ordered.
+                warnings.Add($"the child order under {group.ParentName} was left alone: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task ReconcileAsync(
+        ChildGroup group,
+        List<ChildReorder> reorders,
+        List<string> warnings,
+        CancellationToken cancellationToken)
+    {
+        var desired = group.Children.Select(child => child.PageId).ToList();
+        var observed = await _client.GetChildPagesAsync(group.ParentPageId, cancellationToken)
+            .ConfigureAwait(false);
+
+        var moves = ChildOrderPlanner.Plan(desired, [.. observed.Select(child => child.Id)]);
+        if (moves.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var move in moves)
+        {
+            // In the planned order, which is load-bearing: each move anchors on a sibling an earlier
+            // one placed (ChildOrderPlanner.Plan).
+            await _client
+                .MovePageAsync(new ConfluencePageMove(move.PageId, move.Position, move.TargetId), cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        var paths = group.Children.ToDictionary(child => child.PageId, child => child.Path, StringComparer.Ordinal);
+        reorders.Add(new ChildReorder(
+            group.ParentPath,
+            group.ParentPageId,
+            [.. moves.Select(move => paths[move.PageId])]));
+
+        // Verified rather than assumed, because the diff was computed against an order Atlassian
+        // documents no guarantee for (ConfluenceClient.GetChildPagesAsync). If the assumption is wrong
+        // this is the sentence that says so, on the first real space, instead of a tree quietly in the
+        // wrong order — and it costs one read per parent that actually needed moving.
+        var settled = await _client.GetChildPagesAsync(group.ParentPageId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (ChildOrderPlanner.Plan(desired, [.. settled.Select(child => child.Id)]).Count > 0)
+        {
+            warnings.Add(
+                $"the children of {group.ParentName} were reordered with {moves.Count} move(s), but "
+                + "Confluence still lists them in an order the source tree does not ask for. The pages "
+                + "and their content are published; only the position in the page tree is wrong. Re-run "
+                + "to try again, or set the order by hand and publish with --no-reorder.");
+        }
+    }
+
+    /// <summary>
+    /// Every parent whose children the post-pass could reorder, in tree order, each carrying its
+    /// children in the order the source tree wants them.
+    /// </summary>
+    /// <remarks>
+    /// Built from <see cref="PublishReport.Pages"/>, which is tree order — so a numeric prefix like
+    /// <c>10-domains/</c> expresses the intent §6.2 asks the post-pass to honor, with no separate
+    /// sorting rule to keep in step with the walk. Skipped and scope-excluded pages are included
+    /// deliberately: a page this run did not write is still one of its parent's children, and leaving it
+    /// out would compute the order of a list that does not exist.
+    /// </remarks>
+    private static List<ChildGroup> GroupChildren(
+        PublishReport report,
+        Dictionary<string, string> pageIds,
+        string? rootPageId,
+        List<string> warnings)
+    {
+        var groups = new List<ChildGroup>();
+        var byParentId = new Dictionary<string, ChildGroup>(StringComparer.Ordinal);
+        var unanchored = new List<string>();
+
+        foreach (var planned in report.Pages)
+        {
+            if (!pageIds.TryGetValue(planned.Path, out var pageId))
+            {
+                // Never published, or published and then lost to a failure: it has no id to move.
+                continue;
+            }
+
+            if (!TryResolveParentId(planned, pageIds, rootPageId, out var parentId))
+            {
+                continue;
+            }
+
+            if (parentId is not { Length: > 0 } parent)
+            {
+                unanchored.Add(planned.Path);
+                continue;
+            }
+
+            if (!byParentId.TryGetValue(parent, out var group))
+            {
+                group = new ChildGroup(planned.ParentPath, parent, []);
+                byParentId[parent] = group;
+                groups.Add(group);
+            }
+
+            // Two paths claiming one page id is a corrupt state file rather than a tree
+            // (PageHierarchy.PathsByPageId says the same). The first one wins, deterministically: a page
+            // cannot be ordered against itself, and throwing here would turn a bad state file into a
+            // crash after every page had already published.
+            if (group.Children.All(child => !string.Equals(child.PageId, pageId, StringComparison.Ordinal)))
+            {
+                group.Children.Add(new ChildEntry(planned.Path, pageId));
+            }
+        }
+
+        if (unanchored.Count > 1)
+        {
+            // Atlassian's own caution, and the one way this pass could do real damage: `before`/`after`
+            // against a top-level target moves the page to the top level of the SPACE, where it does not
+            // appear in the page tree at all. With no confluence.rootPageId there is no parent page whose
+            // children these are, so there is no target that is certainly not top-level — and the pass
+            // refuses rather than guessing, exactly as the reparent does.
+            warnings.Add(
+                $"the order of the {unanchored.Count} pages at the top of the wiki was left alone: no "
+                + "confluence.rootPageId is set in docume.json, so they have no parent page whose children "
+                + "they are, and positioning them relative to each other risks moving them out of the page "
+                + "tree entirely. Set confluence.rootPageId to have the order reconciled.");
+        }
+
+        // One child cannot be out of order, and a read per parent to prove it is a read wasted on
+        // every page of a deep, narrow wiki.
+        return [.. groups.Where(group => group.Children.Count > 1)];
     }
 
     /// <summary>
@@ -709,6 +933,18 @@ public sealed class PublishExecutor
 
     /// <summary>An attachment's bytes with the hash state will record and the media type to send.</summary>
     private sealed record AttachmentContent(ReadOnlyMemory<byte> Bytes, string Hash, string ContentType);
+
+    /// <summary>One of a parent's children: the id a move needs, and the path a report names.</summary>
+    private sealed record ChildEntry(string Path, string PageId);
+
+    /// <summary>
+    /// One parent and the children the source tree files under it, in the order it wants them.
+    /// </summary>
+    private sealed record ChildGroup(string? ParentPath, string ParentPageId, List<ChildEntry> Children)
+    {
+        /// <summary>The parent as a message names it: its path, or where it sits when it has none.</summary>
+        public string ParentName => ParentPath ?? "the top of the wiki";
+    }
 
     /// <summary>
     /// One page's result: the new state plus either what happened or why it did not. A record rather

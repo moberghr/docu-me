@@ -102,6 +102,16 @@ public sealed class ConfluenceClient : IDisposable
     /// <summary>The namespace an ordinary, human-visible Confluence label lives in.</summary>
     private const string GlobalLabelPrefix = "global";
 
+    /// <summary>The v2 query parameter that asks for the next page of a paginated read.</summary>
+    private const string CursorParameter = "cursor";
+
+    /// <summary>
+    /// How many pages of children one read will follow before treating the pagination as broken. A
+    /// backstop against a server that keeps handing back a cursor, not a real limit: at v2's smallest
+    /// documented page size this is still thousands of children under one parent.
+    /// </summary>
+    private const int ChildrenRequestLimit = 50;
+
     /// <summary>
     /// Web defaults: camelCase, case-insensitive, and a number readable from a JSON string. The
     /// last one is deliberate slack — a version arriving as <c>"3"</c> instead of <c>3</c> is not
@@ -247,6 +257,71 @@ public sealed class ConfluenceClient : IDisposable
         var page = await ReadOrNullWhenMissingAsync<PageBulk>(path, cancellationToken).ConfigureAwait(false);
 
         return page is null ? null : MapPage(page, path);
+    }
+
+    /// <summary>
+    /// Lists a page's child pages in the order Confluence answers with, following pagination to the
+    /// end. What the child-order post-pass diffs the source-tree order against (PLAN.md §6.2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The response order is taken as the observed order</strong> — not
+    /// <see cref="ConfluenceChildPage.ChildPosition"/>, which is nullable in real spaces (see that
+    /// member's own remarks). Atlassian documents no ordering guarantee for this endpoint either way,
+    /// so the caller verifies the tree after reordering it rather than trusting either signal
+    /// (<see cref="Publishing.ChildOrderPlanner"/>).
+    /// </para>
+    /// <para>
+    /// <strong>No <c>limit</c> is sent.</strong> The v2 schema documents the parameter but neither its
+    /// default nor its maximum, and a guessed value that turns out to be over the cap is a 400 on a
+    /// read the publish cannot do without. The documented cursor pagination is implemented instead, so
+    /// a parent with more children than one page holds costs an extra request rather than a failure.
+    /// </para>
+    /// <para>
+    /// A missing page is <em>not</em> null here, unlike <see cref="FindPageByIdAsync"/>: the post-pass
+    /// only ever asks about a parent it just wrote or read, so a 404 means the tree moved under the run
+    /// and is worth reporting rather than reading as "no children".
+    /// </para>
+    /// </remarks>
+    /// <param name="pageId">The parent page.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired or revoked.</exception>
+    /// <exception cref="ConfluenceApiException">Any other non-success status, including a 404.</exception>
+    /// <exception cref="ConfluenceProtocolException">
+    /// The response body is not the documented shape, or the endpoint kept offering another page of
+    /// results past <see cref="ChildrenRequestLimit"/> requests.
+    /// </exception>
+    public async Task<IReadOnlyList<ConfluenceChildPage>> GetChildPagesAsync(
+        string pageId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
+
+        var endpoint = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/children";
+        var children = new List<ConfluenceChildPage>();
+        var path = endpoint;
+
+        for (var request = 0; request < ChildrenRequestLimit; request++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var response = await ReadAsync<MultiEntityResult<ChildPageBulk>>(path, cancellationToken)
+                .ConfigureAwait(false);
+
+            children.AddRange(RequireResults(response, path).Select(child => MapChildPage(child, path)));
+
+            if (NextCursor(response.Links?.Next) is not { Length: > 0 } cursor)
+            {
+                return children;
+            }
+
+            path = $"{endpoint}?{CursorParameter}={Uri.EscapeDataString(cursor)}";
+        }
+
+        var overrun = $"it offered another page of children after {ChildrenRequestLimit} requests, which "
+            + "is more children than a page tree has";
+
+        throw new ConfluenceProtocolException(endpoint, overrun);
     }
 
     /// <summary>
@@ -928,6 +1003,48 @@ public sealed class ConfluenceClient : IDisposable
             page.ParentId,
             page.Version?.Number ?? throw new ConfluenceProtocolException(path, MissingVersionDetail),
             page.Body?.Storage?.Value);
+
+    private static ConfluenceChildPage MapChildPage(ChildPageBulk child, string path)
+        => new(
+            Require(child.Id, "id", path),
+            Require(child.Title, "title", path),
+            child.ChildPosition);
+
+    /// <summary>
+    /// The <c>cursor</c> value out of a <c>_links.next</c> URL, or <c>null</c> when the read is done.
+    /// </summary>
+    /// <remarks>
+    /// The cursor is lifted out and re-sent on a path this client builds, rather than following
+    /// <c>next</c> as given. <c>next</c> arrives host-relative and includes the deployment's own base
+    /// segment (<c>/wiki/…</c>), which <see cref="HttpClient.BaseAddress"/> composition would then
+    /// duplicate or drop depending on how the site is mounted; the cursor is the only part of it that
+    /// carries information this client does not already have.
+    /// </remarks>
+    private static string? NextCursor(string? next)
+    {
+        if (next is not { Length: > 0 })
+        {
+            return null;
+        }
+
+        var query = next.IndexOf('?', StringComparison.Ordinal);
+        if (query < 0)
+        {
+            return null;
+        }
+
+        foreach (var pair in next[(query + 1)..].Split('&'))
+        {
+            var separator = pair.IndexOf('=', StringComparison.Ordinal);
+            if (separator > 0
+                && string.Equals(pair[..separator], CursorParameter, StringComparison.Ordinal))
+            {
+                return Uri.UnescapeDataString(pair[(separator + 1)..]);
+            }
+        }
+
+        return null;
+    }
 
     private static ConfluenceAttachment MapAttachment(ContentBulk attachment, string path)
         => new(

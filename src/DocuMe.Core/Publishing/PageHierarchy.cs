@@ -77,6 +77,86 @@ public static class PageHierarchy
     }
 
     /// <summary>
+    /// The pages in publish order: every page after the page it hangs under, siblings in path order
+    /// (PLAN.md §6.2, "parents before children, depth-first").
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Path order is not publish order,</strong> which is the whole reason this exists. A page
+    /// is filed under an index page somewhere above it, and a name can perfectly well sort before that
+    /// index: <c>10-domains/README.md</c> comes before <c>README.md</c> ordinally, because <c>'1'</c>
+    /// comes before <c>'R'</c>. Publishing in path order would then try to file a child under a parent
+    /// this run has not created yet, and the child fails for want of an id — on exactly the
+    /// numeric-prefix convention §6.2 names as the way a repo expresses the order it wants.
+    /// </para>
+    /// <para>
+    /// Siblings keep their path order, so the numeric prefixes still say what they mean; it is only the
+    /// parent that is hoisted above them.
+    /// </para>
+    /// </remarks>
+    /// <param name="parents">Path → parent path, from <see cref="Resolve"/>.</param>
+    public static IReadOnlyList<string> PublishOrder(IReadOnlyDictionary<string, string?> parents)
+    {
+        ArgumentNullException.ThrowIfNull(parents);
+
+        var childrenByParent = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var roots = new List<string>();
+
+        foreach (var (path, parent) in parents.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            if (parent is null)
+            {
+                roots.Add(path);
+                continue;
+            }
+
+            if (!childrenByParent.TryGetValue(parent, out var siblings))
+            {
+                siblings = [];
+                childrenByParent[parent] = siblings;
+            }
+
+            siblings.Add(path);
+        }
+
+        var ordered = new List<string>(parents.Count);
+        var pending = new Stack<string>(Enumerable.Reverse(roots));
+
+        while (pending.Count > 0)
+        {
+            var path = pending.Pop();
+            ordered.Add(path);
+
+            if (!childrenByParent.TryGetValue(path, out var children))
+            {
+                continue;
+            }
+
+            // Pushed backwards so the first child is popped first: depth-first, siblings in path order.
+            for (var index = children.Count - 1; index >= 0; index--)
+            {
+                pending.Push(children[index]);
+            }
+        }
+
+        if (ordered.Count == parents.Count)
+        {
+            return ordered;
+        }
+
+        // Unreachable by construction — a parent is always an index page strictly above its child, so the
+        // graph cannot cycle and every page is reachable from a root. Appended rather than trusted anyway:
+        // a page silently dropped here is a page the publish never mentions again, which is far worse than
+        // a page published in an order somebody has to look at.
+        var seen = ordered.ToHashSet(StringComparer.Ordinal);
+        ordered.AddRange(parents.Keys
+            .Where(path => !seen.Contains(path))
+            .OrderBy(path => path, StringComparer.Ordinal));
+
+        return ordered;
+    }
+
+    /// <summary>
     /// Page id → wiki path for every page state has published: the reverse of what
     /// <see cref="DocumeState.Pages"/> stores, and what lets a recorded <c>parentPageId</c> be read
     /// back as a path.
