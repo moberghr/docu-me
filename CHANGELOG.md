@@ -23,8 +23,10 @@ First release. Everything below is new, so it is grouped by what it does rather 
 - `docume convert <wiki-root>` converts every page and reports failures and degradations without publishing.
 - `docume publish` runs the pipeline: link map, mermaid attachments, storage-format conversion, content
   hashing, upsert, approval banner, open-comment guard, approval invalidation, orphan report, and a
-  child-order pass that makes Confluence match the source tree. With `--dry-run`, `--changed-since`,
-  `--page`, `--force`, `--no-reorder`, `--block-on-open-comments` and `--prune`.
+  child-order pass that makes Confluence match the source tree. With `--dry-run`, `--tree`,
+  `--changed-since`, `--page`, `--force`, `--no-reorder`, `--block-on-open-comments`,
+  `--no-comment-check`, `--prune` and `--allow-protected-space` — the one way into a space listed in
+  `confluence.protectedSpaces`, good for a single run, with no config value that grants it standing.
 - `docume sync` reconciles the `approved` and `stale` labels into state, ingests page and inline comments
   into the feedback inbox behind a per-page cursor, and with `--reply` posts answers and resolves the inline
   comments it answered.
@@ -87,10 +89,23 @@ First release. Everything below is new, so it is grouped by what it does rather 
 - A release workflow that fires on a `vX.Y.Z` tag: verify, restore, build, test, pack, push to GitHub
   Packages, cut the release. The verify step refuses the release unless the tag matches all three files
   carrying the version, and it runs first because a package on a feed cannot be unpublished.
+- A composite action, `moberghr/docu-me/actions@v0`, for a consumer writing a docs job of their own: it
+  installs the SDK, adds the feed, restores the pinned CLI, provisions the mermaid renderer when the run
+  is a publish that needs one, and invokes `docume` with the arguments given. It names no DocuMe version
+  itself — `.config/dotnet-tools.json` decides that — which is why it can float on a major ref. The
+  release workflow's last step moves that ref, so `@v0` tracks the newest 0.x and `@v1` goes live at
+  1.0.0; `@v0.1.0` is there for a consumer who wants no float at all. The six shipped templates call
+  `dotnet tool restore` and `dotnet tool run docume` directly and do not go through it.
 - Central Package Management, a pinned SDK, the four Moberg house analyzer packs as errors, and xUnit v3 on
   the Microsoft Testing Platform.
 
 ### Not in this release
 
-- The composite GitHub Action wrapping install-and-run. The shipped workflow templates call
-  `dotnet tool restore` and `dotnet tool run docume` directly and need no action.
+- The entry in the Moberg plugin marketplace. §11 distributes the plugin from there eventually, but that
+  marketplace lives in another repository and the entry has to be added by hand; until it is, this
+  repository is its own marketplace and `/plugin marketplace add moberghr/docu-me` is the install.
+- Validation against a large real wiki. The converter's contract is the hand-reviewed golden corpus,
+  which proves it does not regress but cannot discover a markdown dialect nobody predicted. Running it
+  over an existing wiki of some size, and finding out how much of it needs a shim, is deliberately still
+  ahead: a construct the renderer does not recognise fails its page by name rather than mis-converting
+  it quietly, so that discovery is late by design rather than dangerous.
