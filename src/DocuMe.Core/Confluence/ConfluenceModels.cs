@@ -85,6 +85,52 @@ public sealed record ConfluencePageRevision(
     string? VersionMessage = null);
 
 /// <summary>
+/// Where a move puts a page relative to its target, spelled as v1's three <c>position</c> values.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <see cref="Append"/> is the reparent: "move the page to be a child of the target", in Atlassian's
+/// words. <see cref="Before"/> and <see cref="After"/> are the sibling reorder — they file the page
+/// under the <em>target's</em> parent, at a position relative to the target, which is what §6.2's
+/// child-page ordering post-pass needs.
+/// </para>
+/// <para>
+/// <strong>The caution is Atlassian's own and it is load-bearing:</strong> never use
+/// <see cref="Before"/> or <see cref="After"/> when the target is a top-level page, because that
+/// moves the page to the top level of the space, where it does not appear in the page tree at all.
+/// The client cannot enforce this — it would need a read to know what is top-level — so the caller
+/// owns it. DocuMe's tree always hangs under <c>confluence.rootPageId</c> (§5.1), so a reorder
+/// reorders the children of a known parent and never touches top-level siblings.
+/// </para>
+/// </remarks>
+public enum ConfluencePageMovePosition
+{
+    /// <summary>Under the target's parent, immediately before the target.</summary>
+    Before,
+
+    /// <summary>Under the target's parent, immediately after the target.</summary>
+    After,
+
+    /// <summary>A child of the target — the reparent.</summary>
+    Append,
+}
+
+/// <summary>
+/// A page to move within its space, without writing its body (PLAN.md §6.2: the reorganized-tree case
+/// and the child-page ordering post-pass).
+/// </summary>
+/// <param name="PageId">The page to move, from <c>_meta/state.json</c> (PLAN.md §5.3).</param>
+/// <param name="Position">Where to put it relative to <paramref name="TargetId"/>.</param>
+/// <param name="TargetId">
+/// The page the move is relative to: the new parent for <see cref="ConfluencePageMovePosition.Append"/>,
+/// the new sibling for the other two.
+/// </param>
+public sealed record ConfluencePageMove(
+    string PageId,
+    ConfluencePageMovePosition Position,
+    string TargetId);
+
+/// <summary>
 /// A file to publish alongside a page: a rendered mermaid diagram or a repo image (PLAN.md §6.2
 /// step 5).
 /// </summary>

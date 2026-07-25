@@ -46,6 +46,13 @@ internal sealed record VersionBulk(int? Number);
 /// </summary>
 internal sealed record ContentBulk(string? Id, string? Title, VersionBulk? Version);
 
+/// <summary>
+/// The whole documented body of a successful v1 move: the id of the page that moved. Read rather than
+/// ignored for the same reason every other write maps its response — a 200 answering something other
+/// than the documented shape is worth a loud failure, not a shrug.
+/// </summary>
+internal sealed record ContentMoveResponse(string? PageId);
+
 /// <summary>The v1 <c>Label</c> schema, whose four members are all required.</summary>
 internal sealed record LabelBulk(string? Prefix, string? Name, string? Id, string? Label);
 

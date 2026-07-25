@@ -23,6 +23,10 @@ public sealed class ConfluenceClientTests
     private const string ApiToken = "very-secret-token";
     private const string SpaceId = "98304";
     private const string PageId = "65601";
+
+    /// <summary>The page a move is relative to: a new parent, or a sibling to sit beside.</summary>
+    private const string TargetPageId = "77889";
+
     private const string FilePart = "file";
 
     /// <summary>Flattened the way PLAN.md §7 names an attachment: underscores, and longer than a filename.</summary>
@@ -998,6 +1002,172 @@ public sealed class ConfluenceClientTests
     }
 
     /// <summary>
+    /// The reparent (PLAN.md §6.2): <c>append</c> files the page under the target. The whole request is
+    /// its URL, which is the point of using this endpoint over a v2 body rewrite.
+    /// </summary>
+    [Fact]
+    public async Task Moves_a_page_under_a_new_parent_with_the_v1_append_verb()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(MovePath("append")).UsingPut())
+            .RespondWith(Json($$"""{"pageId":"{{PageId}}"}"""));
+
+        using var client = CreateClient(server);
+        var moved = await client.MovePageAsync(
+            new ConfluencePageMove(PageId, ConfluencePageMovePosition.Append, TargetPageId),
+            TestContext.Current.CancellationToken);
+
+        moved.ShouldBe(PageId);
+
+        var request = LastRequest(server);
+        request.Method.ShouldBe("PUT");
+        request.Path.ShouldBe(MovePath("append"));
+        request.Headers!["X-Atlassian-Token"].Single().ShouldBe("nocheck");
+    }
+
+    /// <summary>
+    /// The three positions v1 documents. <c>append</c> reparents; <c>before</c>/<c>after</c> reorder
+    /// siblings, which is what §6.2's child-page ordering post-pass is built from.
+    /// </summary>
+    [Theory]
+    [InlineData(ConfluencePageMovePosition.Before, "before")]
+    [InlineData(ConfluencePageMovePosition.After, "after")]
+    [InlineData(ConfluencePageMovePosition.Append, "append")]
+    public async Task Spells_each_position_as_its_own_path_segment(
+        ConfluencePageMovePosition position,
+        string segment)
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(MovePath(segment)).UsingPut())
+            .RespondWith(Json($$"""{"pageId":"{{PageId}}"}"""));
+
+        using var client = CreateClient(server);
+        _ = await client.MovePageAsync(
+            new ConfluencePageMove(PageId, position, TargetPageId),
+            TestContext.Current.CancellationToken);
+
+        LastRequest(server).Path.ShouldBe(MovePath(segment));
+    }
+
+    /// <summary>
+    /// The finding the move design rests on (§8, rule §9.2): this endpoint carries no request body and
+    /// so no version number, which is what keeps a reparent from spending a page version the way a v2
+    /// body rewrite would. If Atlassian ever starts wanting a version here, this is the test that says
+    /// so rather than a silently churned page history.
+    /// </summary>
+    [Fact]
+    public async Task A_move_sends_no_body_and_so_no_version_number()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(MovePath("append")).UsingPut())
+            .RespondWith(Json($$"""{"pageId":"{{PageId}}"}"""));
+
+        using var client = CreateClient(server);
+        _ = await client.MovePageAsync(
+            new ConfluencePageMove(PageId, ConfluencePageMovePosition.Append, TargetPageId),
+            TestContext.Current.CancellationToken);
+
+        var request = LastRequest(server);
+        request.Body.ShouldBeNullOrEmpty();
+        request.Query!.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A page whose target vanished and a page that vanished itself arrive as the same 404, so the
+    /// message has to name both ids for the caller to tell a re-plan from a recreate.
+    /// </summary>
+    [Fact]
+    public async Task A_missing_page_or_target_surfaces_as_a_404_naming_both()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(MovePath("append")).UsingPut())
+            .RespondWith(Response.Create()
+                .WithStatusCode(HttpStatusCode.NotFound)
+                .WithBody("""{"message":"No content found with id"}"""));
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceApiException>(
+            () => client.MovePageAsync(
+                new ConfluencePageMove(PageId, ConfluencePageMovePosition.Append, TargetPageId),
+                TestContext.Current.CancellationToken));
+
+        exception.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+
+        var operation = exception.Operation;
+        operation.ShouldNotBeNull();
+        operation.ShouldContain(PageId);
+        operation.ShouldContain(TargetPageId);
+        operation.ShouldContain("under");
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Moving needs edit permission on both pages, so a token that published happily can still be
+    /// refused — and a refusal must stop the run rather than be retried (rule §1.2).
+    /// </summary>
+    [Fact]
+    public async Task A_token_that_cannot_move_stops_rather_than_retrying()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(MovePath("append")).UsingPut())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Forbidden));
+
+        using var client = CreateClient(server);
+        _ = await Should.ThrowAsync<ConfluenceAuthenticationException>(
+            () => client.MovePageAsync(
+                new ConfluencePageMove(PageId, ConfluencePageMovePosition.Append, TargetPageId),
+                TestContext.Current.CancellationToken));
+
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// A page resolved as its own parent is a caller bug with no documented Confluence behavior, so it
+    /// fails before the wire rather than being sent and interpreted.
+    /// </summary>
+    [Fact]
+    public async Task Moving_a_page_relative_to_itself_never_reaches_the_wire()
+    {
+        using var server = WireMockServer.Start();
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ArgumentException>(
+            () => client.MovePageAsync(
+                new ConfluencePageMove(PageId, ConfluencePageMovePosition.Append, PageId),
+                TestContext.Current.CancellationToken));
+
+        exception.Message.ShouldContain(PageId);
+        server.LogEntries.Count.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// A 200 answering something other than the documented <c>{"pageId": …}</c> means the endpoint
+    /// changed under us, which is worth failing loudly over rather than reporting a move that may not
+    /// have happened.
+    /// </summary>
+    [Fact]
+    public async Task A_move_response_without_a_page_id_fails_loud()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(MovePath("append")).UsingPut())
+            .RespondWith(Json("""{"id":"65601"}"""));
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceProtocolException>(
+            () => client.MovePageAsync(
+                new ConfluencePageMove(PageId, ConfluencePageMovePosition.Append, TargetPageId),
+                TestContext.Current.CancellationToken));
+
+        exception.Message.ShouldContain("pageId");
+    }
+
+    /// <summary>
     /// The delete half of <c>--prune</c> (PLAN.md §6.2 "Orphans"). Trash, not purge: a bare
     /// <c>DELETE</c> is recoverable from the space trash, and <c>?purge=true</c> is the one thing this
     /// client must never send, because a machine that permanently deletes pages has no undo.
@@ -1086,6 +1256,8 @@ public sealed class ConfluenceClientTests
     private static string AttachmentPath => LegacyPath("child/attachment");
 
     private static string LabelPath => LegacyPath("label");
+
+    private static string MovePath(string position) => LegacyPath($"move/{position}/{TargetPageId}");
 
     private static IRequestMessage LastRequest(WireMockServer server)
     {

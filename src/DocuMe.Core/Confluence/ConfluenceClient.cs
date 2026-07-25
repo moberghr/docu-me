@@ -338,6 +338,74 @@ public sealed class ConfluenceClient : IDisposable
     }
 
     /// <summary>
+    /// Moves a page within its space — reparents it or reorders it among its siblings — without
+    /// writing its body (PLAN.md §6.2: a reorganized wiki tree, and the child-page ordering post-pass).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The one v1 endpoint here that v2 has no counterpart for at all. v2's page update accepts a
+    /// <c>parentId</c>, so a reparent <em>can</em> be expressed as
+    /// <see cref="UpdatePageAsync"/> — but only by sending the body back with it, which spends a page
+    /// version for a change that touched no content. This endpoint is the cheap one: no request body,
+    /// no version number, one PUT. Shipped March 2020, documented under v1 "Content — children and
+    /// descendants", not deprecated, and it needs <c>write:page:confluence</c> — the same scope the
+    /// publish already uses.
+    /// </para>
+    /// <para>
+    /// <strong>Why the no-version-number part matters (§8, rule §9.2).</strong> The endpoint takes no
+    /// version and answers none, so unlike every other write in this client it is outside Confluence's
+    /// optimistic-lock contract: there is no version to send, therefore nothing to increment. That is
+    /// what makes a move safe to run against an approved page — and it is belt-and-braces anyway,
+    /// because DocuMe keys approval invalidation off <c>contentHash</c>, which is body-only, so even a
+    /// version bump could not revoke an approval here. Taken from the endpoint's documented shape plus
+    /// Atlassian's own statement that a moved page keeps its full history; no sandbox run has confirmed
+    /// it yet, so callers should re-read a moved page rather than assume its version, exactly as the
+    /// update path already does.
+    /// </para>
+    /// <para>
+    /// <strong>A 404 does not say which id was wrong.</strong> The page being gone and the target being
+    /// gone arrive identically, which is a real case for DocuMe: a stale <c>state.json</c> can name
+    /// either. So the operation names both ids and lets the caller decide — a moved-away target is a
+    /// re-plan, a vanished page is a recreate.
+    /// </para>
+    /// </remarks>
+    /// <param name="move">The page, the position, and the page it is relative to.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The moved page's id, as the endpoint echoes it.</returns>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired, or read-but-not-edit permission.</exception>
+    /// <exception cref="ConfluenceApiException">
+    /// Any other non-success status, including a page or target that does not exist (404).
+    /// </exception>
+    /// <exception cref="ConfluenceProtocolException">The response body is not the documented shape.</exception>
+    public async Task<string> MovePageAsync(
+        ConfluencePageMove move,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(move);
+        Validate(move, nameof(move));
+
+        var (segment, relation) = MoveWords(move.Position, nameof(move));
+        var path = $"rest/api/content/{Uri.EscapeDataString(move.PageId)}"
+            + $"/move/{segment}/{Uri.EscapeDataString(move.TargetId)}";
+        var operation = $"moving page {move.PageId} {relation} page {move.TargetId}";
+
+        // No content: the position and the target are the whole request, both in the path.
+        var (statusCode, body) = await SendAsync(
+                HttpMethod.Put,
+                path,
+                content: null,
+                ApiSurface.V1,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        ThrowIfFailed(path, statusCode, body, operation);
+
+        var moved = Deserialize<ContentMoveResponse>(path, body);
+
+        return Require(moved.PageId, "pageId", path);
+    }
+
+    /// <summary>
     /// Moves a page to the space trash — the one destructive verb in the tool, and the delete half of a
     /// confirmed <c>--prune</c> (PLAN.md §6.2 "Orphans", rule §9.6).
     /// </summary>
@@ -595,6 +663,22 @@ public sealed class ConfluenceClient : IDisposable
         }
     }
 
+    private static void Validate(ConfluencePageMove move, string parameterName)
+    {
+        RequireField(move.PageId, "page id", parameterName);
+        RequireField(move.TargetId, "target page id", parameterName);
+
+        // Confluence documents no behavior for a page moved relative to itself, and no wiki tree ever
+        // asks for one: it means the caller's parent lookup returned the page it was resolving.
+        if (string.Equals(move.PageId, move.TargetId, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"Page {move.PageId} cannot be moved relative to itself. A tree that asks for this has "
+                + "resolved a page as its own parent or sibling.",
+                parameterName);
+        }
+    }
+
     private static void Validate(ConfluenceAttachmentUpload upload, string parameterName)
     {
         RequireField(upload.PageId, "page id", parameterName);
@@ -613,6 +697,24 @@ public sealed class ConfluenceClient : IDisposable
                 parameterName);
         }
     }
+
+    /// <summary>
+    /// The URL segment v1 spells a position as, paired with the preposition an error message reads
+    /// with. One switch rather than two, so a failure can never describe a move as something other than
+    /// what was sent.
+    /// </summary>
+    private static (string Segment, string Relation) MoveWords(
+        ConfluencePageMovePosition position,
+        string parameterName) => position switch
+        {
+            ConfluencePageMovePosition.Before => ("before", "before"),
+            ConfluencePageMovePosition.After => ("after", "after"),
+            ConfluencePageMovePosition.Append => ("append", "under"),
+            _ => throw new ArgumentOutOfRangeException(
+                parameterName,
+                position,
+                "A move position is one of before, after or append — the three v1 documents."),
+        };
 
     private static void ValidateLabels(IReadOnlyList<string> labels, string parameterName)
     {
