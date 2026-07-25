@@ -1,0 +1,97 @@
+# DocuMe — reconcile labels and refresh the dashboard on a cron (PLAN.md §10, fifth bullet).
+#
+# What it does, every 6 hours: reads the `approved` and `stale` labels out of Confluence into the state
+# file (§6.3), refreshes the Documentation Status page (§6.5), and opens or updates the `docs/sync` PR
+# when the state file changed.
+#
+# This is the workflow that makes a reviewer's gesture durable. Adding the `approved` label is all a
+# human ever does (§8); until a sync runs, that label exists only in Confluence. It is also what pairs
+# with docs-drift.yml: the drift job writes stale labels and throws its state write away, and this job
+# reads them back — including a label a reviewer removed by hand, which clears the flag again.
+#
+# Keeping the pair on a cron is what keeps `docume dashboard` at a fixed point: the dashboard skips its
+# write when the rendered body is unchanged, and an approval that state does not know about is
+# re-derived with this run's timestamp every time, so a repo that never syncs spends a page version per
+# dashboard run.
+name: docs-sync
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+# Shared with docs-publish.yml — see the note there.
+concurrency:
+  group: docume-state
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      DOCUME_CONFLUENCE_EMAIL: ${{ secrets.DOCUME_CONFLUENCE_EMAIL }}
+      DOCUME_CONFLUENCE_TOKEN: ${{ secrets.DOCUME_CONFLUENCE_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      STATE_BRANCH: docs/sync
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Locate the state file
+        id: paths
+        run: |
+          set -euo pipefail
+          root=$(jq -r '.wiki.root // "docs/wiki"' docume.json)
+          echo "state=$root/_meta/state.json" >> "$GITHUB_OUTPUT"
+
+      # Writes nothing to Confluence: a sync is two CQL reads and a state-file write.
+      - name: Reconcile labels
+        run: dotnet tool run docume sync --labels
+
+      # After the sync, so the page shows the approvals this run just recorded.
+      - name: Refresh the dashboard
+        run: dotnet tool run docume dashboard
+
+      # Committing is deliberately not the CLI's job (§6.3's closing line) — this is that job.
+      - name: Open or update the docs/sync PR
+        run: |
+          set -euo pipefail
+          state='${{ steps.paths.outputs.state }}'
+          if git diff --quiet -- "$state"; then
+            echo "::notice title=DocuMe::No label changes — nothing to commit."
+            exit 0
+          fi
+
+          cp "$state" "$RUNNER_TEMP/state.json"
+          git fetch origin "$STATE_BRANCH" || true
+          if git rev-parse --verify "origin/$STATE_BRANCH" >/dev/null 2>&1; then
+            git checkout -B "$STATE_BRANCH" "origin/$STATE_BRANCH"
+          else
+            git checkout -B "$STATE_BRANCH"
+          fi
+          cp "$RUNNER_TEMP/state.json" "$state"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add "$state"
+          if git diff --cached --quiet; then
+            echo "::notice title=DocuMe::Branch already holds this state."
+            exit 0
+          fi
+          git commit -m 'docs: DocuMe label sync'
+          git push origin "$STATE_BRANCH"
+
+          gh pr view "$STATE_BRANCH" --json number >/dev/null 2>&1 || gh pr create \
+            --head "$STATE_BRANCH" \
+            --title 'docs: DocuMe state' \
+            --body 'Machine-owned state file (§5.3): page ids, versions, content hashes, approvals. Written by docs-publish.yml and docs-sync.yml. Review the diff, then merge.'

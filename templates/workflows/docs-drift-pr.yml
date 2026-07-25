@@ -1,0 +1,78 @@
+# DocuMe — advisory drift comment on every pull request (PLAN.md §10, second bullet).
+#
+# What it does: reports which wiki pages derive from code this PR touches, as ONE sticky comment that
+# is edited in place on every push. Non-blocking by design — no `--fail-on-drift` here.
+#
+# It is a separate file from docs-drift.yml for one reason worth keeping: this job needs NO Confluence
+# credentials. The drift report is a `git diff` plus a glob match, nothing else, so the workflow that
+# runs on every contributor's branch never has the publishing token in its environment. Least
+# privilege, not tidiness.
+name: docs-drift-pr
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      COMMENT_FILE: ${{ runner.temp }}/docume-drift.md
+      # The marker `docume drift --format github-comment` writes as the body's first line
+      # (DriftComment.Marker). It is how this job finds its own previous comment; change it here only
+      # if you have changed it in DocuMe.
+      MARKER: '<!-- docume:drift -->'
+    steps:
+      # fetch-depth: 0 for the merge base below. With the default depth-1 clone `git merge-base` has
+      # nothing to work with.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore tools
+        run: dotnet tool restore
+
+      # The merge base, not the base branch tip. `docume drift` diffs the two revisions it is given,
+      # so passing origin/<base> directly would attribute every commit merged into the base since this
+      # branch started to this PR, and the comment would list pages the author never touched.
+      # (The PR's real base ref beats docume.json's drift.defaultBranch here — that setting is for
+      # local runs, where there is no PR to ask.)
+      - name: Report drift
+        run: |
+          set -euo pipefail
+          base=$(git merge-base "origin/${{ github.event.pull_request.base.ref }}" HEAD)
+          dotnet tool run docume drift --baseline "$base" --format github-comment > "$COMMENT_FILE"
+
+      # One comment, edited forever. `gh pr comment --edit-last` is close but edits the last comment
+      # this actor made whatever it says, which on a busy PR is somebody else's thread; matching on the
+      # marker is the honest version. A job that posted a new comment per push is the failure mode §10
+      # wrote "sticky" to avoid.
+      #
+      # Fork PRs get a read-only GITHUB_TOKEN, so the comment would 403. Skipped with a warning rather
+      # than failing a contributor's check over an advisory note.
+      - name: Post or update the sticky comment
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          existing=$(gh api --paginate "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            --jq ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -n 1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$existing" \
+              -F "body=@$COMMENT_FILE"
+          else
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file "$COMMENT_FILE"
+          fi
+
+      - name: Fork PR — comment skipped
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "::warning title=DocuMe::A fork PR gets a read-only token, so the drift comment was \
+          not posted. The report is in the step log above."

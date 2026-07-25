@@ -1,0 +1,122 @@
+# DocuMe — republish changed pages on merge to the default branch (PLAN.md §10, fourth bullet).
+#
+# What it does: publishes only the pages touched since the last publish, lets §6.2 step 7 invalidate
+# the approvals on the pages whose content changed, refreshes the Documentation Status page, and
+# carries the machine-owned state file back into the repo through the `docs/sync` PR.
+#
+# EDIT BEFORE USE: `branches:` must name your default branch, and `paths:` your wiki root if it is not
+# docs/wiki.
+#
+# `--prune` is deliberately absent and must stay absent: orphan deletion needs interactive
+# confirmation and never runs in CI (§6.2, rule §9.6). `docume publish --prune` refuses in a
+# non-interactive session anyway, so a template that passed it would be written against a refusal.
+name: docs-publish
+
+on:
+  push:
+    branches: [main] # <- your default branch
+    paths:
+      - 'docs/wiki/**'
+
+# Shared with docs-sync.yml: both workflows commit the state file to the same branch, and two runs
+# pushing to it at once would make one of them lose. Not cancel-in-progress — a publish that is half
+# way through writing pages must finish.
+concurrency:
+  group: docume-state
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      DOCUME_CONFLUENCE_EMAIL: ${{ secrets.DOCUME_CONFLUENCE_EMAIL }}
+      DOCUME_CONFLUENCE_TOKEN: ${{ secrets.DOCUME_CONFLUENCE_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      STATE_BRANCH: docs/sync
+    steps:
+      # fetch-depth: 0 because --changed-since resolves a sha from an earlier publish, which a
+      # depth-1 clone does not have.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Locate the state file
+        id: paths
+        run: |
+          set -euo pipefail
+          root=$(jq -r '.wiki.root // "docs/wiki"' docume.json)
+          state="$root/_meta/state.json"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          echo "sha=$(jq -r '.lastPublishedSha // empty' "$state")" >> "$GITHUB_OUTPUT"
+
+      # No lastPublishedSha means nothing has ever been published from this repo, so there is no
+      # "changed" to narrow to and the whole tree is the correct scope. Unchanged pages are skipped by
+      # contentHash either way (§6.2 step 5), so the full run is cheap after the first one.
+      - name: Publish changed pages
+        run: |
+          set -euo pipefail
+          since='${{ steps.paths.outputs.sha }}'
+          if [ -n "$since" ]; then
+            dotnet tool run docume publish --changed-since "$since"
+          else
+            echo "::notice title=DocuMe::No lastPublishedSha in state — publishing the whole tree."
+            dotnet tool run docume publish
+          fi
+
+      - name: Refresh the dashboard
+        run: dotnet tool run docume dashboard
+
+      # The state write is not optional bookkeeping: it holds the pageId of every page and the sha the
+      # next --changed-since narrows against. Lose it and the next run has no id for a page it created,
+      # so it creates a second one.
+      #
+      # It goes through a PR because direct pushes to a protected default branch do not work in this
+      # org (§6.3's closing line). If yours lets the actions bot push, replace this step with a commit
+      # and push to the default branch — one fewer PR to merge.
+      #
+      # If the docs/sync branch is behind and holds approvals this state file does not, they come back
+      # on the next `docume sync`: approvals are reconstructible from the live labels, pageIds are not.
+      # Merge the PR promptly and the window closes.
+      - name: Carry the state file into the docs/sync PR
+        run: |
+          set -euo pipefail
+          state='${{ steps.paths.outputs.state }}'
+          if git diff --quiet -- "$state"; then
+            echo "::notice title=DocuMe::State unchanged — no PR needed."
+            exit 0
+          fi
+
+          cp "$state" "$RUNNER_TEMP/state.json"
+          git fetch origin "$STATE_BRANCH" || true
+          if git rev-parse --verify "origin/$STATE_BRANCH" >/dev/null 2>&1; then
+            git checkout -B "$STATE_BRANCH" "origin/$STATE_BRANCH"
+          else
+            git checkout -B "$STATE_BRANCH"
+          fi
+          cp "$RUNNER_TEMP/state.json" "$state"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add "$state"
+          if git diff --cached --quiet; then
+            echo "::notice title=DocuMe::Branch already holds this state."
+            exit 0
+          fi
+          git commit -m "docs: DocuMe state after publishing ${GITHUB_SHA:0:7}"
+          git push origin "$STATE_BRANCH"
+
+          gh pr view "$STATE_BRANCH" --json number >/dev/null 2>&1 || gh pr create \
+            --head "$STATE_BRANCH" \
+            --title 'docs: DocuMe state' \
+            --body 'Machine-owned state file (§5.3): page ids, versions, content hashes, approvals. Written by docs-publish.yml and docs-sync.yml. Review the diff, then merge.'

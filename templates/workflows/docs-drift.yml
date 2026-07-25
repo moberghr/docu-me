@@ -1,0 +1,72 @@
+# DocuMe — stale marking after a deploy (PLAN.md §10, first bullet).
+#
+# What it does: `docume drift --mark` diffs the wiki's baseline against the deployed commit, adds the
+# `stale` label to every affected page, and refreshes the Documentation Status page. Seconds, no LLM.
+#
+# EDIT BEFORE USE: the `workflows:` list below must name YOUR deploy workflow, exactly as its `name:`
+# field spells it. A name that matches nothing never triggers, and GitHub reports no error for it.
+#
+# Labels, never page bodies: marking must not bump a page version, because that would disturb the
+# approval history §8 keeps for audit.
+name: docs-drift
+
+on:
+  workflow_run:
+    workflows: ["Deploy"] # <- your deploy workflow's `name:`
+    types: [completed]
+
+# The state write this job makes is deliberately thrown away — see the note on the drift step.
+permissions:
+  contents: read
+
+jobs:
+  mark:
+    # A failed deploy did not change what is running, so nothing drifted.
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    env:
+      DOCUME_CONFLUENCE_EMAIL: ${{ secrets.DOCUME_CONFLUENCE_EMAIL }}
+      DOCUME_CONFLUENCE_TOKEN: ${{ secrets.DOCUME_CONFLUENCE_TOKEN }}
+    steps:
+      # `workflow_run` checks out the default branch unless told otherwise, and the commit that was
+      # deployed is the only one this job may report on. fetch-depth: 0 because the baseline is an
+      # arbitrary older sha — a shallow clone cannot resolve it and `docume drift` fails loud rather
+      # than reporting zero drift.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # §12: consumers pin the tool version in .config/dotnet-tools.json, so every workflow restores
+      # the manifest instead of installing a floating latest.
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Read the wiki baseline
+        id: baseline
+        run: |
+          set -euo pipefail
+          root=$(jq -r '.wiki.root // "docs/wiki"' docume.json)
+          state="$root/_meta/state.json"
+          sha=$(jq -r '.baselineSha // empty' "$state")
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # Not-yet-configured, not a failure: baselineSha is stamped by the generation pass
+      # (/docs-loop, /docs-refresh), so a wiki that has never been generated has nothing to diff
+      # from. Warned rather than skipped silently, and warned rather than failing every deploy.
+      - name: No baseline yet
+        if: steps.baseline.outputs.sha == ''
+        run: |
+          echo "::warning title=DocuMe::baselineSha is empty in the state file, so drift cannot be \
+          computed. It is stamped by /docs-loop or /docs-refresh; run one and merge its PR."
+
+      # The `stale: true` this writes into state.json is NOT committed, on purpose. The label in
+      # Confluence is the durable fact; docs-sync.yml reconciles the flag back out of the live labels
+      # every 6h (§6.3), and a second machine commit racing the sync PR would buy nothing.
+      - name: Mark stale pages
+        if: steps.baseline.outputs.sha != ''
+        run: dotnet tool run docume drift --baseline "${{ steps.baseline.outputs.sha }}" --mark
