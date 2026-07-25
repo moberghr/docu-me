@@ -70,14 +70,123 @@ public static class StateUpdates
     }
 
     /// <summary>
-    /// Moves an approved page to <see cref="ApprovalStatus.NeedsReview"/> after a content change,
-    /// preserving the approval that was invalidated as a history entry (§6.2 step 7, §8).
+    /// Records an observed <c>approved</c> label against <paramref name="path"/> — the state half of
+    /// <c>sync --labels</c> (PLAN.md §6.3, §8).
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <strong>Total, and idempotent where it matters.</strong> A path state has never seen comes back
+    /// unchanged rather than created: <c>sync</c> reconciles labels onto pages state already knows,
+    /// keyed by page id, and a label on a page DocuMe does not manage is something to report, not to
+    /// invent an entry for. Re-recording the same version is the caller's decision to skip
+    /// (<see cref="Sync.LabelSyncPlanner"/>) — this function does what it is told, so a caller may
+    /// deliberately restamp.
+    /// </para>
+    /// <para>
+    /// <strong>An approval it displaces goes to history first.</strong> §8 keeps approval history for
+    /// audit, and the case that would otherwise lose one is real: a page approved at v5 whose author
+    /// edited it in a browser is observed at v7 with the label still on, so the record moves to v7 and
+    /// the v5 approval survives only here. Only a genuine approval is archived — a
+    /// <see cref="ApprovalStatus.NeedsReview"/> record has no approval fields left to keep, and its own
+    /// history already holds whatever <see cref="InvalidateApproval"/> retired.
+    /// </para>
+    /// </remarks>
+    /// <param name="state">The state to transform.</param>
+    /// <param name="path">Wiki-relative markdown path of the page.</param>
+    /// <param name="by">
+    /// Who approved, which is <c>"unknown"</c> whenever Confluence will not say — see
+    /// <see cref="Sync.LabelSyncPlanner.UnknownApprover"/> (§13 S3). Never the authenticating account:
+    /// the reviewer and the bot are different people.
+    /// </param>
+    /// <param name="at">When the label was observed, ISO-8601, supplied by the caller so the transform
+    /// stays pure and testable without a clock.</param>
+    /// <param name="version">
+    /// The page version current at observation time (§8), or <c>null</c> when the observation could not
+    /// establish one. Recorded as-is rather than defaulted to
+    /// <see cref="PageState.PublishedVersion"/>, which is a different fact.
+    /// </param>
+    public static DocumeState RecordApproval(
+        DocumeState state,
+        string path,
+        string by,
+        string at,
+        int? version)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        ArgumentException.ThrowIfNullOrEmpty(by);
+        ArgumentException.ThrowIfNullOrEmpty(at);
+
+        if (!state.Pages.TryGetValue(path, out var page))
+        {
+            return state;
+        }
+
+        var previous = page.Approval;
+        var history = new List<ApprovalHistoryEntry>(previous?.History ?? []);
+
+        if (string.Equals(previous?.Status, ApprovalStatus.Approved, StringComparison.Ordinal))
+        {
+            history.Add(new ApprovalHistoryEntry
+            {
+                By = previous!.ApprovedBy,
+                At = previous.ApprovedAt,
+                Version = previous.ApprovedVersion,
+            });
+        }
+
+        var approval = new ApprovalState
+        {
+            Status = ApprovalStatus.Approved,
+            ApprovedBy = by,
+            ApprovedAt = at,
+            ApprovedVersion = version,
+            History = history,
+        };
+
+        return WithPage(state, path, page with { Approval = approval });
+    }
+
+    /// <summary>
+    /// Sets or clears a page's <c>stale</c> flag — the state half of the <c>stale</c> label, observed by
+    /// <c>sync --labels</c> (§6.3) and written by <c>drift --mark</c> (§6.4).
+    /// </summary>
+    /// <remarks>
+    /// Total, and a no-op when the flag already reads that way: <c>sync</c> runs on a cron and commits
+    /// through a PR (§6.3), so a run that rewrote the state file with identical content would open an
+    /// empty PR every time it ran.
+    /// </remarks>
+    public static DocumeState SetStale(DocumeState state, string path, bool stale)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentException.ThrowIfNullOrEmpty(path);
+
+        if (!state.Pages.TryGetValue(path, out var page) || page.Stale == stale)
+        {
+            return state;
+        }
+
+        return WithPage(state, path, page with { Stale = stale });
+    }
+
+    /// <summary>
+    /// Moves an approved page to <see cref="ApprovalStatus.NeedsReview"/>, preserving the approval that
+    /// was invalidated as a history entry (§6.2 step 7, §8).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two callers, one transition. A republish that changed <c>contentHash</c> invalidates
+    /// (§6.2 step 7), and <c>sync --labels</c> applies the same thing when a reviewer has taken the
+    /// label off — §6.3's "label absent but state says approved → clear (someone revoked)". The
+    /// bookkeeping is identical either way: the retired approval is archived, never dropped, because a
+    /// revocation destroying the record of what it revoked would defeat the audit trail §8 keeps it for.
+    /// </para>
+    /// <para>
     /// Idempotent and total: a page that is unknown, unapproved or already needs review comes back
     /// unchanged, so a caller may apply it without first re-deriving the decision that
     /// <see cref="PagePublishPlan.InvalidatesApproval"/> already made. History is append-only —
     /// §8 keeps it for audit, which a financial org reads as "never rewritten".
+    /// </para>
     /// </remarks>
     public static DocumeState InvalidateApproval(DocumeState state, string path)
     {

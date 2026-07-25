@@ -227,3 +227,19 @@ public sealed record ConfluenceAttachment(string Id, string Title, int? Version)
 /// <param name="Name">The label as a reviewer types it, e.g. <c>approved</c>.</param>
 /// <param name="Prefix">The namespace Confluence files it under; <c>global</c> for a normal label.</param>
 public sealed record ConfluenceLabel(string Name, string Prefix);
+
+/// <summary>
+/// One page a label search answered with (PLAN.md §6.3): what <c>sync --labels</c> reconciles into
+/// <c>_meta/state.json</c>.
+/// </summary>
+/// <param name="Id">The page id, which is what the reconcile keys on — never the title.</param>
+/// <param name="Title">The title as Confluence holds it, for a human-readable report line.</param>
+/// <param name="Version">
+/// The page version current when the search ran, or <c>null</c> when the response did not carry one.
+/// Nullable because it decides a fallback rather than a failure: §8 records approval at the version
+/// current at observation time, so a caller that gets no version here reads the page by id instead of
+/// guessing (<see cref="ConfluenceClient.FindPageByIdAsync"/>). It is emphatically not
+/// <c>state.publishedVersion</c> — the two differ exactly when a human edited the page in a browser,
+/// which is the case §8's wording exists for.
+/// </param>
+public sealed record ConfluenceLabelledPage(string Id, string Title, int? Version);

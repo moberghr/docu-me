@@ -294,27 +294,20 @@ public sealed class StatusModelTests : IDisposable
         },
     };
 
+    /// <summary>
+    /// Approves through the transition <c>sync --labels</c> uses (PLAN.md §6.3,
+    /// <see cref="StateUpdates.RecordApproval"/>) rather than hand-shaping an
+    /// <see cref="ApprovalState"/>. The report's honesty mechanism — approval columns and the "nothing
+    /// has synced labels yet" note appearing only when a page carries a record — is only worth anything
+    /// if it responds to what the real command writes.
+    /// </summary>
     private static DocumeState Approve(
         DocumeState state,
         string path,
         string by,
         string at,
         int version)
-    {
-        var pages = state.Pages.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-        pages[path] = pages[path] with
-        {
-            Approval = new ApprovalState
-            {
-                Status = ApprovalStatus.Approved,
-                ApprovedBy = by,
-                ApprovedAt = at,
-                ApprovedVersion = version,
-            },
-        };
-
-        return state with { Pages = pages };
-    }
+        => StateUpdates.RecordApproval(state, path, by, at, version);
 
     private StatusReport Build(DocumeState state, bool stateExists = true) =>
         StatusModel.Build(Paths(stateExists), Config(), Tree(), state);

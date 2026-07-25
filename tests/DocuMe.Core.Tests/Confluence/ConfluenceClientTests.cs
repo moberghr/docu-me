@@ -1426,6 +1426,134 @@ public sealed class ConfluenceClientTests
         server.LogEntries.Count.ShouldBe(1);
     }
 
+    /// <summary>
+    /// The label search behind <c>sync --labels</c> (PLAN.md §6.3). One CQL request answers "which pages
+    /// carry this label" for the whole space; v2 would need one request per page.
+    /// </summary>
+    [Fact]
+    public async Task Searches_a_space_for_the_pages_carrying_a_label()
+    {
+        using var server = WireMockServer.Start();
+        var body = SingleSearchBody;
+        server
+            .Given(Request.Create().WithPath(SearchPath).UsingGet())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        var pages = await client.SearchPagesByLabelAsync(
+            "DOCUMESBX",
+            "approved",
+            TestContext.Current.CancellationToken);
+
+        var page = pages.ShouldHaveSingleItem();
+        page.Id.ShouldBe("200001");
+        page.Title.ShouldBe("Home");
+
+        // The version comes from expand=version, which is what saves a second request per labelled page.
+        page.Version.ShouldBe(5);
+
+        var request = LastRequest(server);
+        request.Query!["cql"].Single().ShouldBe("""space = "DOCUMESBX" and label = "approved" and type = page""");
+        request.Query["expand"].Single().ShouldBe("version");
+
+        // v1 pages by offset, so unlike the v2 reads a page size has to be sent — the next start is only
+        // knowable if this side chose the step.
+        request.Query["limit"].Single().ShouldBe("50");
+        request.Query["start"].Single().ShouldBe("0");
+    }
+
+    /// <summary>
+    /// No <c>body-format</c> and no body expansion: rule §9.1 forbids reading Confluence page bodies back
+    /// as a content source, and a reconcile needs an id and a version.
+    /// </summary>
+    [Fact]
+    public async Task Never_asks_a_label_search_for_page_bodies()
+    {
+        using var server = WireMockServer.Start();
+        var body = SingleSearchBody;
+        server
+            .Given(Request.Create().WithPath(SearchPath).UsingGet())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        _ = await client.SearchPagesByLabelAsync("DOCUMESBX", "approved", TestContext.Current.CancellationToken);
+
+        var query = LastRequest(server).Query!;
+        query.ShouldNotContainKey("body-format");
+        query["expand"].Single().ShouldNotContain("body");
+    }
+
+    /// <summary>
+    /// v1's pagination is offsets, not v2's cursor, and the stop condition is <c>_links.next</c> going
+    /// away rather than a short page: CQL search filters by permission after it pages, so a full result
+    /// set can answer fewer rows than the limit and still have more behind it. Stopping short would lose
+    /// approvals, which would read as a reviewer revoking one.
+    /// </summary>
+    [Fact]
+    public async Task Follows_search_offsets_until_confluence_stops_offering_a_next_page()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(SearchPath).UsingGet())
+            .RespondWith(Json(request =>
+                string.Equals(request.Query!["start"].Single(), "0", StringComparison.Ordinal)
+                    ? FirstSearchBody
+                    : LastSearchBody));
+
+        using var client = CreateClient(server);
+        var pages = await client.SearchPagesByLabelAsync(
+            "DOCUMESBX",
+            "approved",
+            TestContext.Current.CancellationToken);
+
+        pages.Select(page => page.Id).ShouldBe(["200001", "200002"]);
+        server.LogEntries.Count.ShouldBe(2);
+
+        var followed = server.LogEntries[1].RequestMessage;
+        followed.ShouldNotBeNull();
+        followed.Query!["start"].Single().ShouldBe("50");
+    }
+
+    /// <summary>
+    /// A hit whose response carried no version is not a protocol failure: <c>expand</c> is best-effort,
+    /// and the caller reads the page by id instead. A failed sync teaches nobody anything.
+    /// </summary>
+    [Fact]
+    public async Task A_search_hit_without_a_version_comes_back_with_a_null_one()
+    {
+        using var server = WireMockServer.Start();
+        var body = VersionlessSearchBody;
+        server
+            .Given(Request.Create().WithPath(SearchPath).UsingGet())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        var pages = await client.SearchPagesByLabelAsync(
+            "DOCUMESBX",
+            "approved",
+            TestContext.Current.CancellationToken);
+
+        pages.ShouldHaveSingleItem().Version.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Label names are consumer-configured (<c>docume.json → labels</c>, §5.1), so a quote in one would
+    /// change the query rather than be searched for. Refused before the request, not escaped.
+    /// </summary>
+    [Fact]
+    public async Task A_label_that_would_break_the_query_is_refused_without_a_request()
+    {
+        using var server = WireMockServer.Start();
+
+        using var client = CreateClient(server);
+        _ = await Should.ThrowAsync<ArgumentException>(() => client.SearchPagesByLabelAsync(
+            "DOCUMESBX",
+            """approved" or type = blogpost""",
+            TestContext.Current.CancellationToken));
+
+        server.LogEntries.ShouldBeEmpty();
+    }
+
     private static ConfluenceClient CreateClient(
         WireMockServer server,
         int maxRetryAttempts = 2,
@@ -1683,6 +1811,66 @@ public sealed class ConfluenceClientTests
           "start": 0,
           "limit": 200,
           "size": 1,
+          "_links": {}
+        }
+        """;
+
+    /// <summary>
+    /// The v1 CQL search root. Not under <c>content/{id}</c> like the other v1 paths, so it is spelled out
+    /// rather than built from <see cref="LegacyPath"/>.
+    /// </summary>
+    private static string SearchPath => "/wiki/rest/api/content/search";
+
+    /// <summary>
+    /// One page of hits and no more, with v1's own <c>start</c>/<c>limit</c>/<c>size</c> members alongside
+    /// the <c>results</c> array the v2 reads share.
+    /// </summary>
+    private static string SingleSearchBody =>
+        """
+        {
+          "results": [
+            { "id": "200001", "type": "page", "status": "current", "title": "Home",
+              "version": { "number": 5 } }
+          ],
+          "start": 0, "limit": 50, "size": 1,
+          "_links": { "base": "https://example.atlassian.net/wiki" }
+        }
+        """;
+
+    /// <summary>The same first page, but offering another.</summary>
+    private static string FirstSearchBody =>
+        """
+        {
+          "results": [
+            { "id": "200001", "type": "page", "status": "current", "title": "Home",
+              "version": { "number": 5 } }
+          ],
+          "start": 0, "limit": 50, "size": 1,
+          "_links": { "next": "/wiki/rest/api/content/search?cql=label%3Dapproved&limit=50&start=50" }
+        }
+        """;
+
+    /// <summary>The last page: hits, and a <c>_links</c> block with no <c>next</c> in it.</summary>
+    private static string LastSearchBody =>
+        """
+        {
+          "results": [
+            { "id": "200002", "type": "page", "status": "current", "title": "Guides",
+              "version": { "number": 2 } }
+          ],
+          "start": 50, "limit": 50, "size": 1,
+          "_links": { "base": "https://example.atlassian.net/wiki" }
+        }
+        """;
+
+    /// <summary>A hit the response carried no <c>version</c> for, which the caller resolves by id.</summary>
+    private static string VersionlessSearchBody =>
+        """
+        {
+          "results": [
+            { "id": "200001", "type": "page", "status": "current", "title": "Home" }
+          ],
+          "start": 0, "limit": 50, "size": 1,
           "_links": {}
         }
         """;

@@ -192,6 +192,133 @@ public sealed class StateUpdatesTests
     }
 
     [Fact]
+    public void RecordApproval_UnapprovedPage_RecordsApprovalWithNoHistory()
+    {
+        var state = StateWith(new PageState { PageId = "123456", PublishedVersion = 6 });
+
+        var approval = StateUpdates
+            .RecordApproval(state, Path, "unknown", "2026-08-02T07:00:00Z", 6)
+            .Pages[Path]
+            .Approval;
+
+        approval!.Status.ShouldBe(ApprovalStatus.Approved);
+        approval.ApprovedBy.ShouldBe("unknown");
+        approval.ApprovedAt.ShouldBe("2026-08-02T07:00:00Z");
+        approval.ApprovedVersion.ShouldBe(6);
+
+        // Nothing was displaced, so nothing is archived: a first approval lives in the live fields.
+        approval.History.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void RecordApproval_ArchivesTheApprovalItDisplaces()
+    {
+        // The case §8 exists for: the label stayed on while a human edited the page in a browser, so
+        // the record moves to the observed version and the v6 approval survives only in history.
+        var state = StateWith(new PageState { PageId = "123456", Approval = ApprovedByJonas() });
+
+        var approval = StateUpdates
+            .RecordApproval(state, Path, "unknown", "2026-08-02T07:00:00Z", 9)
+            .Pages[Path]
+            .Approval;
+
+        approval!.ApprovedVersion.ShouldBe(9);
+
+        var archived = approval.History.ShouldHaveSingleItem();
+        archived.By.ShouldBe("jonas");
+        archived.At.ShouldBe("2026-08-01T09:00:00Z");
+        archived.Version.ShouldBe(6);
+    }
+
+    [Fact]
+    public void RecordApproval_AfterInvalidation_KeepsTheInvalidatedEntryAndAddsNoOther()
+    {
+        // Re-approval after a republish: history already holds the retired approval, and a needs-review
+        // record has no live approval left to archive, so the trail must not grow a duplicate.
+        var invalidated = StateUpdates.InvalidateApproval(
+            StateWith(new PageState { PageId = "123456", Approval = ApprovedByJonas() }),
+            Path);
+
+        var approval = StateUpdates
+            .RecordApproval(invalidated, Path, "unknown", "2026-08-02T07:00:00Z", 7)
+            .Pages[Path]
+            .Approval;
+
+        approval!.Status.ShouldBe(ApprovalStatus.Approved);
+        approval.ApprovedVersion.ShouldBe(7);
+        approval.History.ShouldHaveSingleItem().Version.ShouldBe(6);
+    }
+
+    [Fact]
+    public void RecordApproval_UnknownPage_IsUnchanged()
+    {
+        // A label on a page state does not manage is reported by the reconciler, never invented here.
+        var state = new DocumeState();
+
+        StateUpdates.RecordApproval(state, "nope.md", "unknown", "2026-08-02T07:00:00Z", 1)
+            .Pages
+            .ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void RecordApproval_PreservesEverythingItDoesNotOwn()
+    {
+        var state = StateWith(new PageState
+        {
+            PageId = "123456",
+            ContentHash = "sha256:old",
+            PublishedVersion = 6,
+            Stale = true,
+            FeedbackCursor = "2026-08-01T10:00:00Z",
+        });
+
+        var page = StateUpdates
+            .RecordApproval(state, Path, "unknown", "2026-08-02T07:00:00Z", 6)
+            .Pages[Path];
+
+        page.ContentHash.ShouldBe("sha256:old");
+        page.PublishedVersion.ShouldBe(6);
+        page.Stale.ShouldBeTrue();
+        page.FeedbackCursor.ShouldBe("2026-08-01T10:00:00Z");
+    }
+
+    [Fact]
+    public void RecordApproval_NullVersion_RecordsNoVersionRatherThanZero()
+    {
+        // An observation that could not establish a version records that fact. Zero would read as a
+        // real Confluence version, which no page has.
+        var state = StateWith(new PageState { PageId = "123456", PublishedVersion = 6 });
+
+        StateUpdates.RecordApproval(state, Path, "unknown", "2026-08-02T07:00:00Z", version: null)
+            .Pages[Path]
+            .Approval!
+            .ApprovedVersion
+            .ShouldBeNull();
+    }
+
+    [Fact]
+    public void SetStale_SetsAndClearsTheFlag()
+    {
+        var state = StateWith(new PageState { PageId = "123456" });
+
+        var marked = StateUpdates.SetStale(state, Path, stale: true);
+        marked.Pages[Path].Stale.ShouldBeTrue();
+
+        StateUpdates.SetStale(marked, Path, stale: false).Pages[Path].Stale.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void SetStale_NoChange_ReturnsTheSameStateInstance()
+    {
+        // Sync runs on a cron and commits through a PR (§6.3): a rewrite with identical content would
+        // open an empty PR every run, so "no change" has to mean no write at all.
+        var state = StateWith(new PageState { PageId = "123456", Stale = true });
+
+        StateUpdates.SetStale(state, Path, stale: true).ShouldBeSameAs(state);
+        StateUpdates.SetStale(state, "nope.md", stale: true).ShouldBeSameAs(state);
+    }
+
+    [Fact]
     public void RecordLastPublishedSha_StampsSha()
     {
         StateUpdates.RecordLastPublishedSha(new DocumeState(), "abc123").LastPublishedSha.ShouldBe("abc123");

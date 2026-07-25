@@ -114,6 +114,13 @@ public sealed class ConfluenceClient : IDisposable
     private const int PagedRequestLimit = 50;
 
     /// <summary>
+    /// The page size sent to v1 search, which — unlike the v2 collections above — has to be stated: v1
+    /// pages with <c>start</c>/<c>limit</c>, so the next offset is only knowable if this side chose the
+    /// step. 50 is inside v1's documented 200 maximum with room to spare.
+    /// </summary>
+    private const int SearchPageSize = 50;
+
+    /// <summary>
     /// Web defaults: camelCase, case-insensitive, and a number readable from a JSON string. The
     /// last one is deliberate slack — a version arriving as <c>"3"</c> instead of <c>3</c> is not
     /// worth failing a publish over.
@@ -187,7 +194,7 @@ public sealed class ConfluenceClient : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(spaceKey);
 
         var path = $"api/v2/spaces?keys={Uri.EscapeDataString(spaceKey)}&limit=1";
-        var response = await ReadAsync<MultiEntityResult<SpaceBulk>>(path, cancellationToken)
+        var response = await ReadAsync<MultiEntityResult<SpaceBulk>>(path, ApiSurface.V2, cancellationToken)
             .ConfigureAwait(false);
 
         var spaces = RequireResults(response, path);
@@ -230,7 +237,7 @@ public sealed class ConfluenceClient : IDisposable
         var path = $"api/v2/pages?space-id={Uri.EscapeDataString(spaceId)}"
             + $"&title={Uri.EscapeDataString(title)}&status=current&limit=1{BodyFormat(includeBody)}";
 
-        var response = await ReadAsync<MultiEntityResult<PageBulk>>(path, cancellationToken)
+        var response = await ReadAsync<MultiEntityResult<PageBulk>>(path, ApiSurface.V2, cancellationToken)
             .ConfigureAwait(false);
 
         var pages = RequireResults(response, path);
@@ -354,6 +361,68 @@ public sealed class ConfluenceClient : IDisposable
         return await ReadPagedAsync<InlineCommentBulk, ConfluenceInlineComment>(
                 endpoint,
                 MapInlineComment,
+                overrun,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Lists every page in a space carrying one label, with the page version current at search time
+    /// where the response offers it. The read half of the approval workflow (PLAN.md §6.3, §8).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>v1 CQL search, not v2</strong> — the "v1 only where v2 lacks" case §4 names explicitly.
+    /// v2 answers labels per page (<c>GET /pages/{id}/labels</c>), so answering "which pages carry
+    /// <c>approved</c>" through v2 would cost one request per managed page: 79 requests for one question,
+    /// every sync run, on a cron. <c>space = X and label = Y and type = page</c> is one request per label
+    /// plus pagination.
+    /// </para>
+    /// <para>
+    /// <strong>It answers no label author, and that is settled rather than worked around</strong> (§13
+    /// S3). Neither these search results nor v1's own <c>content/{id}/label</c> carry who added a label,
+    /// so §6.3's documented fallback — <c>approvedBy: "unknown"</c> — is the answer, and the caller
+    /// writes it. The authenticating account is not a substitute: DocuMe is not the reviewer.
+    /// </para>
+    /// <para>
+    /// <strong>No page bodies.</strong> <c>expand=version</c> and nothing else: rule §9.1 forbids reading
+    /// Confluence bodies back as a content source, and the reconcile needs an id and a version.
+    /// <c>expand</c> is best-effort — a response without <c>version.number</c> yields a
+    /// <c>null</c> <see cref="ConfluenceLabelledPage.Version"/> rather than a protocol failure, because
+    /// the caller can read the version by id and a failed sync teaches nobody anything.
+    /// </para>
+    /// <para>
+    /// Pagination is v1's, which is not v2's: <c>start</c>/<c>limit</c> offsets rather than an opaque
+    /// cursor. See <see cref="ReadOffsetPagedAsync{TWire,TModel}"/>.
+    /// </para>
+    /// </remarks>
+    /// <param name="spaceKey">The space to search, e.g. <c>DOCUMESBX</c>.</param>
+    /// <param name="label">The label to match, from <c>docume.json → labels</c> (§5.1).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired or revoked.</exception>
+    /// <exception cref="ConfluenceApiException">Any other non-success status, including a CQL 400.</exception>
+    /// <exception cref="ConfluenceProtocolException">
+    /// The response body is not the documented shape, or the endpoint kept offering another page of
+    /// results past <see cref="PagedRequestLimit"/> requests.
+    /// </exception>
+    public async Task<IReadOnlyList<ConfluenceLabelledPage>> SearchPagesByLabelAsync(
+        string spaceKey,
+        string label,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(spaceKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(label);
+        RequireCqlSafe(spaceKey, nameof(spaceKey));
+        RequireCqlSafe(label, nameof(label));
+
+        var cql = $"""space = "{spaceKey}" and label = "{label}" and type = page""";
+        var endpoint = $"rest/api/content/search?cql={Uri.EscapeDataString(cql)}&expand=version";
+        var overrun = $"it offered another page of results after {PagedRequestLimit} requests, which is "
+            + $"more than {PagedRequestLimit * SearchPageSize} pages carrying one label";
+
+        return await ReadOffsetPagedAsync<ContentBulk, ConfluenceLabelledPage>(
+                endpoint,
+                MapLabelledPage,
                 overrun,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -840,6 +909,27 @@ public sealed class ConfluenceClient : IDisposable
     }
 
     /// <summary>
+    /// Refuses a value that cannot be embedded in a CQL string literal.
+    /// </summary>
+    /// <remarks>
+    /// A quote or a backslash in a space key or a label would either break the query or, worse, extend
+    /// it — and the label names are consumer-configured (<c>docume.json → labels</c>, §5.1), so this
+    /// side does not get to assume they are tame. Refused rather than escaped: Confluence rejects both
+    /// characters in a label anyway, so an escape path would be untested code guarding an input that
+    /// cannot legitimately arrive.
+    /// </remarks>
+    private static void RequireCqlSafe(string value, string parameterName)
+    {
+        if (value.Contains('"', StringComparison.Ordinal) || value.Contains('\\', StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"A CQL search cannot quote '{value}': a double quote or a backslash would change the "
+                + "query rather than be searched for.",
+                parameterName);
+        }
+    }
+
+    /// <summary>
     /// Guards a field of a write input. Spelled out rather than delegated to
     /// <c>ArgumentException.ThrowIfNullOrWhiteSpace</c> because the caller passes a whole record: the
     /// parameter name can only ever be that record, so the field that was missing goes in the message.
@@ -876,14 +966,17 @@ public sealed class ConfluenceClient : IDisposable
         return first ? "?body-format=storage" : "&body-format=storage";
     }
 
-    private async Task<T> ReadAsync<T>(string path, CancellationToken cancellationToken)
+    private async Task<T> ReadAsync<T>(
+        string path,
+        ApiSurface surface,
+        CancellationToken cancellationToken)
         where T : class
     {
         var (statusCode, body) = await SendAsync(
                 HttpMethod.Get,
                 path,
                 content: null,
-                ApiSurface.V2,
+                surface,
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -952,7 +1045,7 @@ public sealed class ConfluenceClient : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var response = await ReadAsync<MultiEntityResult<TWire>>(path, cancellationToken)
+            var response = await ReadAsync<MultiEntityResult<TWire>>(path, ApiSurface.V2, cancellationToken)
                 .ConfigureAwait(false);
 
             var page = path;
@@ -964,6 +1057,64 @@ public sealed class ConfluenceClient : IDisposable
             }
 
             path = $"{endpoint}{separator}{CursorParameter}={Uri.EscapeDataString(cursor)}";
+        }
+
+        throw new ConfluenceProtocolException(endpoint, overrunDetail);
+    }
+
+    /// <summary>
+    /// Reads an offset-paginated v1 collection to the end — the search endpoint's pagination, which is
+    /// not <see cref="ReadPagedAsync{TWire,TModel}"/>'s.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A sibling rather than a parameter on the cursor version, because almost nothing is shared: v1
+    /// pages with a numeric <c>start</c> this side has to advance itself, so the page size must be sent
+    /// (<see cref="SearchPageSize"/>) where the v2 reads deliberately send none.
+    /// </para>
+    /// <para>
+    /// <strong>The stop condition is v1's own <c>_links.next</c>, not a short page.</strong> CQL search
+    /// filters by permission after it pages, so a full result set can answer fewer rows than the limit
+    /// and still have more behind it — stopping on a short page would silently lose approvals, which
+    /// would read as a reviewer's label being revoked. The offset is advanced by the requested limit,
+    /// which is what <c>next</c> itself does; the URL is not followed as given because it carries the
+    /// site's own <c>/wiki/</c> base segment, which composing against the client's base address would
+    /// duplicate. An empty page also stops the read, so a server that offers <c>next</c> forever costs
+    /// one wasted request rather than <see cref="PagedRequestLimit"/> of them.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TWire">The wire shape of one entity, e.g. <see cref="ContentBulk"/>.</typeparam>
+    /// <typeparam name="TModel">The public shape the caller gets back.</typeparam>
+    /// <param name="endpoint">The path to read, with any endpoint-specific query already on it.</param>
+    /// <param name="map">Maps one entity, given the path to name in a protocol failure.</param>
+    /// <param name="overrunDetail">What to say when the offsets never run out.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    private async Task<IReadOnlyList<TModel>> ReadOffsetPagedAsync<TWire, TModel>(
+        string endpoint,
+        Func<TWire, string, TModel> map,
+        string overrunDetail,
+        CancellationToken cancellationToken)
+    {
+        var separator = endpoint.Contains('?', StringComparison.Ordinal) ? '&' : '?';
+        var entities = new List<TModel>();
+
+        for (var request = 0; request < PagedRequestLimit; request++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var start = request * SearchPageSize;
+            var path = $"{endpoint}{separator}limit={SearchPageSize}&start={start}";
+            var response = await ReadAsync<MultiEntityResult<TWire>>(path, ApiSurface.V1, cancellationToken)
+                .ConfigureAwait(false);
+
+            var results = RequireResults(response, path);
+            var page = path;
+            entities.AddRange(results.Select(entity => map(entity, page)));
+
+            if (results.Count == 0 || response.Links?.Next is not { Length: > 0 })
+            {
+                return entities;
+            }
         }
 
         throw new ConfluenceProtocolException(endpoint, overrunDetail);
@@ -1154,6 +1305,16 @@ public sealed class ConfluenceClient : IDisposable
             Require(attachment.Id, "id", path),
             Require(attachment.Title, "title", path),
             attachment.Version?.Number);
+
+    /// <summary>
+    /// Maps a search hit. The version is passed through as it arrived — <c>null</c> included, because
+    /// <c>expand=version</c> is best-effort and the caller's fallback is a page read, not a failure.
+    /// </summary>
+    private static ConfluenceLabelledPage MapLabelledPage(ContentBulk page, string path)
+        => new(
+            Require(page.Id, "id", path),
+            Require(page.Title, "title", path),
+            page.Version?.Number);
 
     private static ConfluenceLabel MapLabel(LabelBulk label, string path)
         => new(

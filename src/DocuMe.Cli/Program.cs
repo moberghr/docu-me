@@ -13,6 +13,7 @@ internal static class Program
             InitCommand.Build(),
             ConvertCommand.Build(),
             PublishCommand.Build(),
+            SyncCommand.Build(),
             StatusCommand.Build(),
         };
 
