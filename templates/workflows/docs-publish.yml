@@ -217,7 +217,22 @@ jobs:
           # here, the archive items `--reply` edited in place (already tracked, since they arrived through
           # an earlier docs/sync PR, so a `git clean` would not touch them), and a state file that is
           # untracked here while tracked on the branch — the ordinary case until the first PR merges.
-          cp "$state" "$RUNNER_TEMP/state.json"
+          #
+          # THE STATE COPY IS GUARDED, because the guard above admits a run that has no state file to copy:
+          # it passes when ANY of the three paths is dirty, and `git status` calls a DELETED tracked file
+          # dirty too. Two shapes reach here — a `docume publish` that died before writing the state (a 401
+          # hard-stops, rule §1.2) on a repo whose inbox already held items, and a state file a consumer
+          # deleted by hand. Unguarded this `cp` failed the step, which cost more than it reads: it threw
+          # away the very items the held exit codes above exist to rescue, and it skipped the "Fail if
+          # DocuMe reported a failure" step, so the last line of the log was `cp: No such file or
+          # directory` instead of the annotation naming what actually broke.
+          have_state=0
+          if [ -f "$state" ]; then
+            cp "$state" "$RUNNER_TEMP/state.json"
+            have_state=1
+          else
+            echo "::notice title=DocuMe::No state file at $state in the working tree — carrying the feedback items only, and leaving whatever $STATE_BRANCH already holds alone."
+          fi
           rm -rf "$RUNNER_TEMP/feedback"
           mkdir -p "$RUNNER_TEMP/feedback/inbox" "$RUNNER_TEMP/feedback/archive"
           if [ -d "$inbox" ]; then cp -R "$inbox/." "$RUNNER_TEMP/feedback/inbox/"; fi
@@ -230,8 +245,13 @@ jobs:
             git checkout -f -B "$STATE_BRANCH"
           fi
 
-          cp "$RUNNER_TEMP/state.json" "$state"
-          mkdir -p "$inbox" "$archive"
+          # THE DIRECTORIES FIRST, then the files. The branch just switched to need not carry
+          # `$root/_meta/` at all — a `docs/sync` that predates the wiki, or one the consumer already had
+          # under that name — and when the state file was tracked here and is absent there, the forced
+          # switch removes it and prunes the empty directory with it. The copy-back then had nowhere to
+          # land and died the same way.
+          mkdir -p "$(dirname "$state")" "$inbox" "$archive"
+          if [ "$have_state" = '1' ]; then cp "$RUNNER_TEMP/state.json" "$state"; fi
           cp -R "$RUNNER_TEMP/feedback/inbox/." "$inbox/"
           cp -R "$RUNNER_TEMP/feedback/archive/." "$archive/"
 
@@ -239,7 +259,17 @@ jobs:
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           # An empty directory is not fatal to `git add`, and git stores no such thing, so a repo with no
           # feedback at all stages the state file and nothing else.
-          git add "$state" "$inbox" "$archive"
+          #
+          # The state is staged ONLY when this run has one in hand, because `git add` on a path that exists
+          # in no ref is FATAL — `fatal: pathspec ... did not match any files`, exit 128 — and under
+          # `set -e` that kills the carry and drops the feedback items with it. Which is the same failure
+          # the guarded copy above prevents, one line later.
+          #
+          # Not, as it first looks, about staging a deletion: `git add` on a tracked file the tree has lost
+          # does stage one, but it cannot happen here, because the forced switch above restores whatever
+          # the target ref tracks before this line runs.
+          if [ "$have_state" = '1' ]; then git add "$state"; fi
+          git add "$inbox" "$archive"
           if git diff --cached --quiet; then
             echo "::notice title=DocuMe::Branch already holds this state and these replies."
             exit 0

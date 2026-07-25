@@ -141,7 +141,21 @@ jobs:
           # docs/sync would otherwise abort: the branch holds its own state.json (locally modified here)
           # and, while its PR is unmerged, inbox items this run has just written again as untracked files.
           # Both refusals read as a mystifying red check on a cron job.
-          cp "$state" "$RUNNER_TEMP/state.json"
+          #
+          # THE STATE COPY IS GUARDED, as in docs-publish.yml, and the case it covers is this job's own
+          # header: the guard above passes when EITHER path is dirty, so a run whose ingestion wrote inbox
+          # items before dying reaches here — and on that run there is no state file, because
+          # StateStore.Save runs once at the end and a run that died never got there. Unguarded, this `cp`
+          # failed the step and threw away exactly the comments the paragraph above promises it carries.
+          # `git status` also calls a DELETED tracked file dirty, so a state file a consumer removed by
+          # hand arrives here the same way.
+          have_state=0
+          if [ -f "$state" ]; then
+            cp "$state" "$RUNNER_TEMP/state.json"
+            have_state=1
+          else
+            echo "::notice title=DocuMe::No state file at $state in the working tree — carrying the feedback items only, and leaving whatever $STATE_BRANCH already holds alone."
+          fi
           rm -rf "$RUNNER_TEMP/inbox"
           mkdir -p "$RUNNER_TEMP/inbox"
           if [ -d "$inbox" ]; then cp -R "$inbox/." "$RUNNER_TEMP/inbox/"; fi
@@ -159,13 +173,21 @@ jobs:
           else
             git checkout -f -B "$STATE_BRANCH"
           fi
-          cp "$RUNNER_TEMP/state.json" "$state"
-          mkdir -p "$inbox"
+          # Directories first, then files, as in docs-publish.yml: the branch need not carry
+          # `$root/_meta/` at all, and when the state file was tracked here and is absent there the forced
+          # switch prunes the directory along with it, leaving the copy-back nowhere to land.
+          mkdir -p "$(dirname "$state")" "$inbox"
+          if [ "$have_state" = '1' ]; then cp "$RUNNER_TEMP/state.json" "$state"; fi
           cp -R "$RUNNER_TEMP/inbox/." "$inbox/"
 
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git add "$state" "$inbox"
+          # The state only when this run has one in hand: `git add` on a path that exists in no ref is
+          # FATAL (exit 128, `did not match any files`), so under `set -e` an unguarded line here kills the
+          # carry and drops the ingested comments. It is not about staging a deletion — the forced switch
+          # above restores whatever the target ref tracks first.
+          if [ "$have_state" = '1' ]; then git add "$state"; fi
+          git add "$inbox"
           if git diff --cached --quiet; then
             echo "::notice title=DocuMe::Branch already holds this state and this feedback."
             exit 0

@@ -374,9 +374,16 @@ public sealed class WorkflowTemplateTests
         text.ShouldContain(
             "_meta/feedback/inbox",
             customMessage: $"{name} must locate the inbox to commit it (§5.4).");
+
+        // The inbox unconditionally, the state only when the run has one in hand — `git add` on a path
+        // that exists in no ref is fatal, and an unguarded line there kills the carry and drops the
+        // ingested comments (WorkflowShellTests runs that case).
         text.ShouldContain(
-            "git add \"$state\" \"$inbox\"",
-            customMessage: $"{name} must stage the inbox items alongside the state file (§9).");
+            "git add \"$inbox\"",
+            customMessage: $"{name} must stage the inbox items it ingested (§9).");
+        text.ShouldContain(
+            "git add \"$state\"",
+            customMessage: $"{name} must stage the state file alongside them (§9).");
     }
 
     [Fact]
@@ -431,7 +438,11 @@ public sealed class WorkflowTemplateTests
             + "`sync --reply` stamps `repliedAt` into those files, and dropping the stamp re-posts "
             + "every reply on the next publish (§5.4, §9 step 5).";
 
-        text.ShouldContain("git add \"$state\" \"$inbox\" \"$archive\"", customMessage: staged);
+        // Both feedback directories unconditionally; the state file only when the run has one in hand,
+        // because `git add` on a path that exists in no ref is fatal and would kill the carry outright
+        // (WorkflowShellTests runs that case).
+        text.ShouldContain("git add \"$inbox\" \"$archive\"", customMessage: staged);
+        text.ShouldContain("git add \"$state\"", customMessage: staged);
 
         // And the early exit has to watch them too. A push that changes no page body still stamps the
         // items the reply answered, so a guard reading the state alone calls that "nothing to do".
