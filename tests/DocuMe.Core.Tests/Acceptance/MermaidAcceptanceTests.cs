@@ -205,9 +205,9 @@ public sealed class MermaidAcceptanceTests : IDisposable
     private string WriteRejectsPieStub()
     {
         const string body =
-            """
-            import { readFileSync } from 'node:fs';
-            const header = readFileSync(0, 'utf8').split('\n').map((l) => l.trim()).find((l) => l !== '');
+            $$"""
+            {{BundledRenderScript.ReadSourceFromStdin}}
+            const header = source.split('\n').map((l) => l.trim()).find((l) => l !== '');
             if (header.startsWith('pie')) {
               process.stderr.write(
                 `render-mermaid: the diagram did not render: Invalid mermaid header: "${header}". `
@@ -227,8 +227,8 @@ public sealed class MermaidAcceptanceTests : IDisposable
     {
         var body =
             $$"""
-            import { appendFileSync, readFileSync } from 'node:fs';
-            const source = readFileSync(0, 'utf8');
+            import { appendFileSync } from 'node:fs';
+            {{BundledRenderScript.ReadSourceFromStdin}}
             appendFileSync('{{logPath}}', source.split('\n')[0] + '\n');
             process.stdout.write('{{RenderedSvg}}');
             """;

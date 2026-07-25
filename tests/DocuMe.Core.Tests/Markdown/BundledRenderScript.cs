@@ -17,6 +17,21 @@ internal static class BundledRenderScript
         + "render-mermaid.mjs end to end.";
 
     /// <summary>
+    /// How a stub script must read the diagram source, leaving it in a <c>source</c> const.
+    /// </summary>
+    /// <remarks>
+    /// The same idiom the shipped script uses, and for the same reason: <c>readFileSync(0)</c>
+    /// throws EAGAIN on the non-blocking stdin pipe .NET hands a child whenever the source has not
+    /// arrived yet, so a stub that read it that way would be a fixture with a race in it.
+    /// </remarks>
+    public const string ReadSourceFromStdin =
+        """
+        const chunks = [];
+        for await (const chunk of process.stdin) chunks.push(chunk);
+        const source = Buffer.concat(chunks).toString('utf8');
+        """;
+
+    /// <summary>
     /// The script's path, or <c>null</c> when it or <c>beautiful-mermaid</c> is absent.
     /// </summary>
     public static string? TryFind()

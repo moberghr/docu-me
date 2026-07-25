@@ -38,7 +38,7 @@ function fail(code, message) {
   process.exitCode = code;
 }
 
-function readSource() {
+async function readSource() {
   const [file] = process.argv.slice(2);
   if (file) {
     return readFileSync(file, 'utf8');
@@ -49,13 +49,23 @@ function readSource() {
     return null;
   }
 
-  return readFileSync(0, 'utf8');
+  // The stream, never readFileSync(0): a parent that spawns this script gets a NON-BLOCKING
+  // stdin pipe (.NET's Process does, so `docume publish` does), and a synchronous read of fd 0
+  // then throws EAGAIN whenever the source has not arrived yet — a lost diagram decided by
+  // process scheduling. Iterating the stream waits for readability instead, which is also what
+  // keeps a source larger than one pipe buffer whole.
+  const chunks = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk);
+  }
+
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 async function main() {
   let source;
   try {
-    source = readSource();
+    source = await readSource();
   } catch (error) {
     return fail(EXIT_NO_INPUT, `could not read the diagram source: ${error.message}`);
   }

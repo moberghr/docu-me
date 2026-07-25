@@ -224,9 +224,7 @@ public sealed partial class MermaidRenderer
         var standardOutput = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var standardError = process.StandardError.ReadToEndAsync(cancellationToken);
 
-        await process.StandardInput.WriteAsync(mermaidSource.AsMemory(), cancellationToken)
-            .ConfigureAwait(false);
-        process.StandardInput.Close();
+        await WriteSourceAsync(process, mermaidSource, cancellationToken).ConfigureAwait(false);
 
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(_timeout);
@@ -254,6 +252,34 @@ public sealed partial class MermaidRenderer
             process.ExitCode,
             await standardOutput.ConfigureAwait(false),
             await standardError.ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// Feeds the diagram to the script, tolerating a script that stopped listening.
+    /// </summary>
+    /// <remarks>
+    /// A script that refuses the run before reading stdin breaks this pipe — a missing
+    /// <c>beautiful-mermaid</c> (exit 3) is the everyday case, and it is a race, since a script
+    /// that exits at once may or may not do so before the write lands. The script's own verdict is
+    /// its exit code plus stderr, both read below, so surfacing the broken pipe instead would
+    /// replace an install instruction with an OS error decided by process scheduling.
+    /// </remarks>
+    private static async Task WriteSourceAsync(
+        Process process,
+        string mermaidSource,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await process.StandardInput.WriteAsync(mermaidSource.AsMemory(), cancellationToken)
+                .ConfigureAwait(false);
+            process.StandardInput.Close();
+        }
+        catch (IOException)
+        {
+            // Nothing to add: the exit code and stderr say what happened, and a script that
+            // never wanted the source cannot have failed because of it.
+        }
     }
 
     private static void Kill(Process process)

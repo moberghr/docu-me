@@ -45,9 +45,8 @@ public sealed class MermaidRendererTests : IDisposable
         // Echoing stdin back inside an <svg> wrapper proves the whole pipe: the script receives
         // the diagram source verbatim and the renderer keeps what came back byte-for-byte.
         var script = WriteStub(
-            """
-            import { readFileSync } from 'node:fs';
-            const source = readFileSync(0, 'utf8');
+            $$"""
+            {{BundledRenderScript.ReadSourceFromStdin}}
             process.stdout.write(`<svg width="212.64" height="297.5">${source}</svg>`);
             """);
 
@@ -133,6 +132,30 @@ public sealed class MermaidRendererTests : IDisposable
 
         error.Message.ShouldContain("npm install beautiful-mermaid");
         error.Message.ShouldContain("cannot load beautiful-mermaid");
+    }
+
+    [Fact]
+    public async Task A_script_that_exits_before_reading_stdin_still_reports_its_own_diagnostic()
+    {
+        // Regression guard for the other half of the full-suite flake: the source is written to
+        // the child's stdin, and a script that exits without reading it — which is what exit 3
+        // does — leaves that write with nowhere to go. The verdict belongs to the exit code and
+        // stderr, so a broken pipe must not replace an install instruction with an OS error.
+        // A source larger than a pipe buffer makes the write outlive the child every time,
+        // which is what turns the race into a certainty here.
+        var script = WriteStub(
+            """
+            process.stderr.write('render-mermaid: cannot load beautiful-mermaid');
+            process.exitCode = 3;
+            """);
+        var oversized = "graph TD\n" + new string('A', 512 * 1024);
+
+        var error = await Should.ThrowAsync<MermaidRenderException>(
+            () => new MermaidRenderer(script).RenderAsync(oversized, TestContext.Current.CancellationToken));
+
+        error.Message.ShouldContain("npm install beautiful-mermaid");
+        error.Message.ShouldContain("cannot load beautiful-mermaid");
+        error.Fault.ShouldBe(MermaidRenderFault.Setup);
     }
 
     [Fact]
