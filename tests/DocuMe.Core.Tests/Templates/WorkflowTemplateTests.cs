@@ -475,6 +475,80 @@ public sealed class WorkflowTemplateTests
     }
 
     [Fact]
+    public void A_failed_publish_still_carries_the_state_it_already_wrote()
+    {
+        const string name = "docs-publish.yml";
+        var steps = Steps(name, "publish");
+
+        // Every step that runs the tool, not the reply alone. `docume publish` saves state.json BEFORE it
+        // reports a failure, on purpose (§6.2 step 8): a page id earned by a create cannot be earned again,
+        // so the run that failed on page seven is the run whose state file matters most. A step that failed
+        // would skip the carry below, and the next run would create a second copy of every page this one
+        // created — the exact duplicate-title rejection the state file exists to prevent.
+        var held = steps
+            .Where(step => step.Run.Contains(ToolRun, StringComparison.Ordinal))
+            .ToList();
+
+        held.Count.ShouldBe(3, $"{name} should run publish, the dashboard and the reply pass (§10).");
+
+        foreach (var step in held)
+        {
+            step.Id.ShouldNotBeEmpty($"{name}: the \"{step.Name}\" step needs an id to publish its code.");
+
+            var unheld =
+                $"{name}: the \"{step.Name}\" step must hold its exit code (`|| code=$?`) rather than fail. "
+                + "A failure there skips the carry step, which is what commits the state file the publish "
+                + "already wrote and the `repliedAt` stamps of the replies that already landed.";
+
+            step.Run.ShouldContain("|| code=$?", customMessage: unheld);
+
+            var unreported =
+                $"{name}: the \"{step.Name}\" step holds its exit code without writing it to $GITHUB_OUTPUT, "
+                + "so the failure cannot be turned into a red check further down.";
+
+            step.Run.ShouldContain("echo \"code=$code\" >> \"$GITHUB_OUTPUT\"", customMessage: unreported);
+        }
+
+        var carry = steps.FindIndex(step => step.Run.Contains("git add \"$state\"", StringComparison.Ordinal));
+
+        carry.ShouldBeGreaterThan(-1, $"{name} never carries the state file into the PR.");
+
+        foreach (var step in held)
+        {
+            steps
+                .IndexOf(step)
+                .ShouldBeLessThan(carry, $"{name}: \"{step.Name}\" must run before the state is carried.");
+        }
+
+        // One step, after the carry, reading all three codes. Held and never read is the worse bug of the
+        // two this test guards: a publish that failed half way leaves a green check, and the next push
+        // narrows `--changed-since` against a sha whose pages were never all written.
+        var report = steps.FindIndex(step => held.All(
+            command => step.If.Contains($"steps.{command.Id}.outputs.code", StringComparison.Ordinal)));
+
+        const string unread =
+            "docs-publish.yml must fail the job on any held exit code — publish, dashboard and reply — in "
+            + "one step after the carry. A code that nothing reads is a green check over a failed publish.";
+
+        report.ShouldBeGreaterThan(-1, unread);
+        report.ShouldBeGreaterThan(carry, $"{name} must fail the job only after the state is safe.");
+
+        // And the reply is the one command that must not run after a failed publish. It claims the
+        // reviewer's point is fixed in the page they are looking at; the reply pass reads triaged items and
+        // live comments, so it cannot know that this run never reached that page. The dashboard is
+        // deliberately not gated this way — it states what the state file says, which is true either way.
+        var publish = held.Single(step => step.Run.Contains($"{ToolRun} publish", StringComparison.Ordinal));
+        var reply = held.Single(step => step.Run.Contains($"{ToolRun} sync --reply", StringComparison.Ordinal));
+
+        const string ungated =
+            "docs-publish.yml must skip the reply pass when the publish failed: a reply that answers a "
+            + "comment on a page this run never republished is a false claim, posted where nobody re-reads "
+            + "it (§9 step 5).";
+
+        reply.If.ShouldContain($"steps.{publish.Id}.outputs.code == '0'", customMessage: ungated);
+    }
+
+    [Fact]
     public void The_sticky_comment_marker_matches_the_one_the_CLI_writes()
     {
         var env = Mapping(Mapping(Mapping(Root("docs-drift-pr.yml"), "jobs"), "comment"), "env");

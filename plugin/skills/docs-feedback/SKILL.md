@@ -278,6 +278,9 @@ Not your work, and worth knowing so the PR body does not promise the wrong thing
    because that is the only place where the merge and the republish have both already happened. It stamps
    `repliedAt` on each item it answers, which is why it can never answer twice, and the same run commits
    those stamps back through the `docs/sync` PR.
+3. If that publish failed part way, the reply pass is skipped and the item stays un-stamped, so the next
+   successful publish answers it. A reviewer waiting one cycle longer is the cheaper mistake: a reply sent
+   after a failed publish would claim a fix is live on a page the run may never have reached.
 
 That order is the reason clause 4 forbids you from replying: a reply posted from this run would say "fixed
 in the latest version" while the fix sat unmerged in a branch.

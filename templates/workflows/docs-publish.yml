@@ -69,19 +69,45 @@ jobs:
       # No lastPublishedSha means nothing has ever been published from this repo, so there is no
       # "changed" to narrow to and the whole tree is the correct scope. Unchanged pages are skipped by
       # contentHash either way (§6.2 step 5), so the full run is cheap after the first one.
+      #
+      # THE EXIT CODE IS HELD, like the reply step's below, and for the sharper version of the same reason:
+      # `docume publish` writes the state file BEFORE it reports a failure, deliberately (§6.2 step 8),
+      # because a page id earned by a create cannot be earned again — lose it and the next run creates a
+      # second page with the same title, which Confluence rejects. A run that failed on page seven is
+      # therefore the run whose state file matters MOST, and a step that failed here would skip the carry
+      # below and throw it away. The last step turns the held code into a red check.
+      #
+      # Held codes rather than `if: always()` on the carry, which would be the shorter spelling: always()
+      # would also run the carry after a checkout or a restore failure, where there is no state file to
+      # copy and the `cp` fails with something that reads like a DocuMe bug. Holding these three codes says
+      # exactly which failures are survivable and leaves the rest to skip the carry, as they should.
       - name: Publish changed pages
+        id: publish
         run: |
           set -euo pipefail
           since='${{ steps.paths.outputs.sha }}'
+          code=0
           if [ -n "$since" ]; then
-            dotnet tool run docume publish --changed-since "$since"
+            dotnet tool run docume publish --changed-since "$since" || code=$?
           else
             echo "::notice title=DocuMe::No lastPublishedSha in state — publishing the whole tree."
-            dotnet tool run docume publish
+            dotnet tool run docume publish || code=$?
           fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
 
+      # Held too, but the cost it is guarding is the other one's: `dashboard` writes a Confluence page and
+      # nothing in this repo, so its own failure costs a stale table until the next run. What failing here
+      # would cost is the carry, and with it the publish's state file — so it holds.
+      #
+      # Not gated on the publish having succeeded, unlike the reply: this page states what the state file
+      # says, so it is true whatever the publish managed to do.
       - name: Refresh the dashboard
-        run: dotnet tool run docume dashboard
+        id: dashboard
+        run: |
+          set -euo pipefail
+          code=0
+          dotnet tool run docume dashboard || code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
 
       # §9 step 5, and this job is the only honest place for it. The reply says the reviewer's point is
       # fixed in the published page, and that is true here and nowhere else: the fix PR has merged (this
@@ -104,8 +130,16 @@ jobs:
       # and throw away both those stamps and the state file the publish wrote (which holds the pageId of
       # every page created in this run — lose it and the next publish creates them again). The last step
       # turns the held code into a red check, after the carry.
+      #
+      # AND IT IS SKIPPED WHEN THE PUBLISH FAILED, which the dashboard is not. The reply says the reviewer's
+      # point is fixed in the page they are looking at; if the publish did not finish, that page may be one
+      # it never reached, and the reply pass cannot tell — it reads triaged items and the live comments, not
+      # this run's outcome. Skipping costs that reviewer one publish cycle and leaves their item un-stamped,
+      # so the next green run answers it. Posting would leave a false claim under their comment, in the one
+      # place nobody re-reads.
       - name: Answer the reviewers whose feedback shipped
         id: reply
+        if: steps.publish.outputs.code == '0'
         run: |
           set -euo pipefail
           code=0
@@ -183,10 +217,39 @@ jobs:
             --title 'docs: DocuMe state' \
             --body 'Machine-owned state file (§5.3): page ids, versions, content hashes, approvals. Written by docs-publish.yml and docs-sync.yml. May also carry feedback items stamped `repliedAt` by the reply pass (§9 step 5) — that stamp is what stops the same reply being posted twice, so merge it rather than dropping it. Review the diff, then merge.'
 
-      # Held from the reply step so the carry above could run first. Everything the reply pass managed to
-      # post is stamped and on its way to the repo by now; this is only the red check.
-      - name: Fail if Confluence refused a reply
-        if: steps.reply.outputs.code != '0'
+      # THE ONE PLACE A FAILURE ABOVE BECOMES A RED CHECK, and it is last on purpose: by the time this runs,
+      # everything the job earned — the page ids of pages that were created, the `repliedAt` stamps of the
+      # replies that landed — is committed and on its way to the docs/sync PR. Skipped entirely when all
+      # three commands were happy, so the usual run does not carry an extra step's noise.
+      #
+      # The codes come through `env:` rather than being interpolated into the script, so a value can never
+      # be read as shell. One error line per failure, each saying what it cost and what a re-run will do,
+      # because these annotations are all a consumer sees before opening the log.
+      - name: Fail if DocuMe reported a failure
+        if: steps.publish.outputs.code != '0' || steps.dashboard.outputs.code != '0' || steps.reply.outputs.code != '0'
+        env:
+          PUBLISH_CODE: ${{ steps.publish.outputs.code }}
+          DASHBOARD_CODE: ${{ steps.dashboard.outputs.code }}
+          REPLY_CODE: ${{ steps.reply.outputs.code }}
         run: |
-          echo "::error title=DocuMe::Confluence refused at least one reply (§9 step 5) — see the \"Answer the reviewers whose feedback shipped\" step. The replies that did land are stamped and carried in the docs/sync PR, so a re-run answers only what is left."
-          exit 1
+          set -euo pipefail
+          failed=0
+
+          if [ "${PUBLISH_CODE:-0}" != '0' ]; then
+            echo "::error title=DocuMe::\`docume publish\` exited ${PUBLISH_CODE} — see the \"Publish changed pages\" step. Every page it did publish is recorded in the state file, which the docs/sync PR above carries, so a re-run picks up where this one stopped instead of creating those pages twice. The reply pass was skipped: a reply must not claim a fix is live on a page this run may never have reached."
+            failed=1
+          fi
+
+          if [ "${DASHBOARD_CODE:-0}" != '0' ]; then
+            echo "::error title=DocuMe::\`docume dashboard\` exited ${DASHBOARD_CODE} — the Documentation Status page (§6.5) is stale until the next run. Nothing else in this run is affected: the dashboard writes a Confluence page and nothing in the repo."
+            failed=1
+          fi
+
+          # A skipped step produces no output at all, so an empty code reads as "did not fail" — the reply is
+          # skipped exactly when the publish failed, and that failure is already reported above.
+          if [ "${REPLY_CODE:-0}" != '0' ]; then
+            echo "::error title=DocuMe::Confluence refused at least one reply (§9 step 5) — see the \"Answer the reviewers whose feedback shipped\" step. The replies that did land are stamped and carried in the docs/sync PR, so a re-run answers only what is left."
+            failed=1
+          fi
+
+          exit "$failed"

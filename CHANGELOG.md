@@ -75,6 +75,10 @@ First release. Everything below is new, so it is grouped by what it does rather 
   a deploy, nightly refresh, and feedback. The publish job closes the feedback loop: after republishing it
   runs `sync --reply`, then carries the state file and the `repliedAt`-stamped items into the `docs/sync` PR
   together, so a reviewer is answered once and only once.
+- Every `docume` step in the publish job holds its exit code and one final step turns a failure into a red
+  check, after the state has been carried. A publish that fails half way still records the page ids it
+  earned, so the next run continues instead of creating those pages a second time; a failed publish also
+  skips the reply pass, because a reply must not claim a fix is live on a page the run never reached.
 - A release workflow that fires on a `vX.Y.Z` tag: verify, restore, build, test, pack, push to GitHub
   Packages, cut the release. The verify step refuses the release unless the tag matches all three files
   carrying the version, and it runs first because a package on a feed cannot be unpublished.
