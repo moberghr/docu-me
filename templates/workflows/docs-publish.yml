@@ -211,12 +211,12 @@ jobs:
             exit 0
           fi
 
-          # Copy aside, switch branches, copy back — the same dance as docs-sync.yml, and for the same
-          # reason: the docs/sync branch carries its own copy of every file below, so switching to it
-          # with them modified here aborts. One difference from the sync job, which matters. There the
-          # inbox items are new and untracked, so `git clean` clears them; here they are already tracked
-          # (they arrived through an earlier docs/sync PR) and `--reply` edits them in place, which
-          # `git clean` does not touch. Hence the forced switch.
+          # Copy aside, switch branches, copy back — the same dance as docs-sync.yml, and now the same
+          # spelling: the docs/sync branch carries its own copy of every file below, so an unforced switch
+          # aborts. Three collisions reach it, and `-f` is what covers all three: the state file modified
+          # here, the archive items `--reply` edited in place (already tracked, since they arrived through
+          # an earlier docs/sync PR, so a `git clean` would not touch them), and a state file that is
+          # untracked here while tracked on the branch — the ordinary case until the first PR merges.
           cp "$state" "$RUNNER_TEMP/state.json"
           rm -rf "$RUNNER_TEMP/feedback"
           mkdir -p "$RUNNER_TEMP/feedback/inbox" "$RUNNER_TEMP/feedback/archive"
