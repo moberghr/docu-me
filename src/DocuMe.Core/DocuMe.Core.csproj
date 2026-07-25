@@ -11,6 +11,9 @@
     <!-- wiki.exclude glob matching for the tree walk (PLAN.md §5.1), and later the
          sources globs of drift detection (§6.4). Microsoft-owned, no transitive deps. -->
     <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" />
+    <!-- Retry + rate-limit backoff for the Confluence client (PLAN.md §4): Confluence Cloud
+         rate limits are real on an ~80-page bulk publish (§13 S5). -->
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
     <!-- YAML frontmatter deserialization (PLAN.md §5.2). -->
     <PackageReference Include="YamlDotNet" />
   </ItemGroup>
