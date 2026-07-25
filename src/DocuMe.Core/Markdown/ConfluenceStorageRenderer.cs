@@ -1563,8 +1563,12 @@ internal sealed class LinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStor
             ?? throw new InvalidOperationException(
                 $"Relative markdown link '{url}' requires a page-link resolver, but none was " +
                 "supplied to ConfluenceStorageConverter.Convert.");
+
+        // NotSupportedException, unlike the resolver-is-null throw above: a broken cross-reference
+        // is authored content the converter refuses, so it belongs in the run's refused-pages
+        // report with every other refusal (§7) rather than ending the run with a stack trace.
         var title = resolver(path)
-            ?? throw new InvalidOperationException(
+            ?? throw new NotSupportedException(
                 $"Relative markdown link '{url}' does not resolve to any known wiki page " +
                 "(broken cross-reference). Fix the link or the target page's title.");
 
@@ -1637,8 +1641,11 @@ internal sealed class LinkInlineRenderer : MarkdownObjectRenderer<ConfluenceStor
                 ?? throw new InvalidOperationException(
                     $"Local image '{url}' requires an attachment resolver, but none was " +
                     "supplied to ConfluenceStorageConverter.Convert.");
+
+            // Authored content, so the same NotSupportedException a broken page link throws —
+            // a missing image file is the author's to fix, not a bug in the caller's wiring.
             var filename = resolver(url)
-                ?? throw new InvalidOperationException(
+                ?? throw new NotSupportedException(
                     $"Local image '{url}' does not resolve to any known file (broken image " +
                     "reference). Fix the path or add the file.");
 

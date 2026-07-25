@@ -259,7 +259,7 @@ public sealed class WikiTreeTests : IDisposable
         var tree = BuildTree();
         var resolvers = tree.ResolversFor("broken.md");
 
-        var ex = Should.Throw<InvalidOperationException>(() => ConfluenceStorageConverter.Convert(
+        var ex = Should.Throw<NotSupportedException>(() => ConfluenceStorageConverter.Convert(
             tree.Pages.Single(p => string.Equals(p.Path, "broken.md", StringComparison.Ordinal)).Parsed.Body,
             resolvers.Link,
             resolvers.Attachment,

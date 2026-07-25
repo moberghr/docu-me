@@ -232,6 +232,38 @@ public sealed class PublishPipelineTests : IDisposable
         report.CanPublish.ShouldBeFalse();
     }
 
+    /// <summary>
+    /// A cross-reference to a page that is not in the tree is authored content the converter
+    /// refuses, not a programming error: it has to reach the author through the same
+    /// "PAGES THE CONVERTER REFUSES" report as every other refusal. The assertion that matters is
+    /// the one a converter-level test cannot make — which exception type crosses the pipeline
+    /// boundary — because the pipeline catches <see cref="NotSupportedException"/> alone.
+    /// </summary>
+    [Fact]
+    public void A_broken_page_link_is_a_failure_not_a_crash()
+    {
+        Write("orphan-link.md", "# Orphan Link\n\nSee the [Missing Page](nowhere/gone.md).");
+
+        var report = Plan(new DocumeState());
+
+        report.Failures.Select(failure => failure.Path).ShouldBe(["orphan-link.md"]);
+        report.Failures[0].Message.ShouldContain("nowhere/gone.md");
+        report.CanPublish.ShouldBeFalse();
+    }
+
+    /// <summary>An image whose file is not in the tree is the same refusal as a broken link.</summary>
+    [Fact]
+    public void A_broken_image_reference_is_a_failure_not_a_crash()
+    {
+        Write("orphan-image.md", "# Orphan Image\n\n![missing](images/nope.png)");
+
+        var report = Plan(new DocumeState());
+
+        report.Failures.Select(failure => failure.Path).ShouldBe(["orphan-image.md"]);
+        report.Failures[0].Message.ShouldContain("images/nope.png");
+        report.CanPublish.ShouldBeFalse();
+    }
+
     [Fact]
     public void An_asset_attachment_carries_its_path_and_the_hash_of_the_bytes_on_disk()
     {

@@ -60,8 +60,10 @@ public sealed class ConfluenceStorageConverterTests
     public void Convert_throws_on_local_image_the_resolver_does_not_resolve()
     {
         // A path the resolver returns null for is a broken image reference — the
-        // same fail-loud contract as an unresolved relative .md link.
-        var ex = Should.Throw<InvalidOperationException>(
+        // same fail-loud contract as an unresolved relative .md link. NotSupportedException
+        // and not InvalidOperationException: the author's file is missing, which the publish
+        // pipeline collects as a refused page, where a missing resolver is a caller bug.
+        var ex = Should.Throw<NotSupportedException>(
             () => ConfluenceStorageConverter.Convert(
                 "![a diagram](missing.png)",
                 attachmentResolver: _ => null));
@@ -450,7 +452,9 @@ public sealed class ConfluenceStorageConverterTests
     {
         // A resolver that returns null means the cross-reference is broken; that
         // must surface rather than silently producing an empty content-title.
-        var ex = Should.Throw<InvalidOperationException>(
+        // NotSupportedException is what makes it a refused page instead of a crashed run
+        // (PublishPipeline catches that type alone).
+        var ex = Should.Throw<NotSupportedException>(
             () => ConfluenceStorageConverter.Convert("See [Gone](missing/page.md).", _ => null));
         ex.Message.ShouldContain("broken cross-reference");
     }
