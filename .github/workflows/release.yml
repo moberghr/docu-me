@@ -71,7 +71,7 @@ jobs:
 
           ok=1
           [ "$props" = "$version" ] || { echo "::error::Directory.Build.props <Version> is $props, tag is $tag."; ok=0; }
-          [ "$manifest" = "$version" ] || { echo "::error::plugin.json version is $manifest, tag is $tag."; ok=0; }
+          [ "$manifest" = "$version" ] || { echo "::error::plugin/.claude-plugin/plugin.json version is $manifest, tag is $tag."; ok=0; }
           [ "$readme" = "$tag" ] || { echo "::error::plugin/README.md marketplace ref is $readme, tag is $tag."; ok=0; }
 
           if [ "$ok" -ne 1 ]; then
@@ -112,12 +112,20 @@ jobs:
           set -euo pipefail
           notes="$RUNNER_TEMP/release-notes.md"
 
-          # The plugin's own description, so the entry pasted into the Moberg marketplace cannot drift
-          # from the one plugin.json ships — that string is what the /plugin Discover list shows before
-          # anything is fetched. Read into a variable rather than written inline for a second reason:
-          # bash does not rescan an expanded value, so the backticks around `docume` stay literal here
-          # without the hand-escaping the rest of this unquoted heredoc needs.
-          description=$(jq -r '.description' plugin/.claude-plugin/plugin.json)
+          # The marketplace entry a human pastes into the Moberg marketplace repository, built BY jq out
+          # of plugin.json rather than hand-interpolated into the heredoc below. Two of its fields are
+          # prose that lives in a json file: a description carrying a double quote wrote invalid json
+          # into the release notes, and the paste then fails at install time — the one failure
+          # PluginManifestTests structurally cannot see, because the manifest itself stays valid. jq
+          # escapes both values and is already in this step. Expanding its result also keeps the
+          # backticks around `docume` literal for free: bash does not rescan an expanded value, so the
+          # description needs none of the hand-escaping the rest of this unquoted heredoc does.
+          entry=$(jq \
+            --arg url "https://github.com/$GITHUB_REPOSITORY.git" \
+            --arg ref "$TAG" \
+            '{name, source: {source: "git-subdir", url: $url, path: "plugin", ref: $ref},
+              description, category: "documentation"}' \
+            plugin/.claude-plugin/plugin.json)
 
           # The install story of this exact version, written into the release rather than left in a
           # README that describes whatever `main` currently is.
@@ -145,17 +153,7 @@ jobs:
           repository's \`.claude-plugin/marketplace.json\` — \`ref\` is the only field a release changes:
 
           \`\`\`json
-          {
-            "name": "docume",
-            "source": {
-              "source": "git-subdir",
-              "url": "https://github.com/${GITHUB_REPOSITORY}.git",
-              "path": "plugin",
-              "ref": "$TAG"
-            },
-            "description": "$description",
-            "category": "documentation"
-          }
+          $entry
           \`\`\`
           EOF
 

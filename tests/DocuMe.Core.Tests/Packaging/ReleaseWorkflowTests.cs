@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json.Nodes;
 using Shouldly;
 using YamlDotNet.RepresentationModel;
 
@@ -24,8 +26,16 @@ namespace DocuMe.Core.Tests.Packaging;
 /// see the three, and a plugin pinned to a version that was never released is one Claude Code keeps
 /// its cached copy of forever.
 /// </para>
+/// <para>
+/// Its two shell steps are executed, not read. Both are one-shot and neither can be rehearsed on a
+/// runner: the version guard runs once per tag and the release it refuses is the only signal it works,
+/// and the notes step runs <em>after</em> the packages are already on the feed, so its failure leaves a
+/// released-but-unannounced version. The notes are also the text a human pastes into the Moberg
+/// marketplace repository, which makes wrong content worse than a crash — a bad paste installs a plugin
+/// that fails silently. The scripts come out of the shipped yaml, never retyped.
+/// </para>
 /// </remarks>
-public sealed class ReleaseWorkflowTests
+public sealed class ReleaseWorkflowTests : IDisposable
 {
     /// <summary>The files the guard has to read, because each one carries the version separately.</summary>
     private static readonly string[] VersionSites =
@@ -36,6 +46,16 @@ public sealed class ReleaseWorkflowTests
     ];
 
     private const string Feed = "nuget.pkg.github.com";
+
+    private readonly List<string> _scratch = [];
+
+    public void Dispose()
+    {
+        foreach (var directory in _scratch.Where(Directory.Exists))
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
 
     [Fact]
     public void The_release_workflow_is_where_Actions_looks_for_it()
@@ -189,42 +209,449 @@ public sealed class ReleaseWorkflowTests
             customMessage: "release.yml holds a Confluence credential — a release publishes packages, not pages.");
     }
 
-    [Fact]
-    public void The_release_notes_carry_the_marketplace_entry_pinned_to_this_tag()
-    {
-        var notes = Run(Steps()[IndexOfRun("gh release create")]);
+    // ---- the two shell steps, executed rather than read --------------------------------------------
 
-        // §12's "plugin marketplace ref update" is the one step of a release that this repository
-        // cannot perform: the Moberg marketplace is a different repository, so the entry is pasted in
-        // by hand. Putting it in the release notes with `ref` already filled in is what keeps that
-        // paste from being the place a stale version is introduced.
-        notes.ShouldContain("git-subdir", customMessage: "The release notes lost the marketplace entry (§12).");
-        notes.ShouldContain(
-            "\"ref\": \"$TAG\"",
-            customMessage: "The marketplace entry in the release notes is not pinned to the tag being released.");
+    /// <summary>
+    /// The guard's happy path, and the vacuity guard for every refusal below it: if the harness could not
+    /// drive one accepted release, a step dying on its first line would read as a pass everywhere else.
+    /// </summary>
+    /// <remarks>
+    /// The fixture is the repository's own three version files, unmodified, with the tag derived from
+    /// them — so this also fails on a half-bumped tree, which is correct and not a second copy of
+    /// <see cref="PluginManifestTests"/>: that one compares the files to each other at desk time, this one
+    /// runs the shell that compares them to the tag.
+    /// </remarks>
+    [Fact]
+    public void The_version_guard_accepts_a_tag_all_three_files_agree_with()
+    {
+        var guard = RunVersionGuard($"v{CurrentVersion()}", NewVersionTree());
+
+        guard.Code.ShouldBe(0, guard.Diagnostics);
+        guard.Outputs.ShouldContainKeyAndValue("version", CurrentVersion());
     }
 
+    /// <summary>
+    /// A half-bumped release: two files moved to the tag and one did not. Each site gets its own case
+    /// because the guard reads each with a different tool, and a release that ships with any one of them
+    /// stale is the failure the whole step exists for.
+    /// </summary>
+    [Theory]
+    [InlineData("Directory.Build.props")]
+    [InlineData("plugin/.claude-plugin/plugin.json")]
+    [InlineData("plugin/README.md")]
+    public void The_version_guard_refuses_the_release_when_one_file_lags(string lagging)
+    {
+        var guard = RunVersionGuard("v9.9.9", NewVersionTree("9.9.9", lagging));
+
+        guard.Code.ShouldNotBe(0, $"A release with a stale {lagging} was allowed through.\n{guard.Diagnostics}");
+        guard.Outputs.ShouldNotContainKey("version", "A refused release still published a version output.");
+
+        // The annotation has to name the file, because the fix is to bump that one and re-push the tag.
+        var named = guard.Annotations.Exists(line => line.Contains(lagging, StringComparison.Ordinal));
+        named.ShouldBeTrue($"No ::error:: named {lagging}. Got:\n{string.Join('\n', guard.Annotations)}");
+    }
+
+    /// <summary>
+    /// A props file with no <c>&lt;Version&gt;</c> at all. The sed prints nothing and exits 0, so this is
+    /// the shape that could have compared empty-to-empty and released whatever was on the tag.
+    /// </summary>
+    [Fact]
+    public void The_version_guard_refuses_a_props_file_carrying_no_version()
+    {
+        const string Props = "<Project>\n  <PropertyGroup>\n    <LangVersion>latest</LangVersion>\n  </PropertyGroup>\n</Project>\n";
+        var tree = NewVersionTree();
+        File.WriteAllText(Path.Combine(tree, "Directory.Build.props"), Props);
+
+        var guard = RunVersionGuard("v0.1.0", tree);
+
+        guard.Code.ShouldNotBe(0, $"A props file with no version released anyway.\n{guard.Diagnostics}");
+    }
+
+    /// <summary>
+    /// <c>LangVersion</c> sits directly above <c>Version</c> in this repository's props file, and the sed
+    /// that reads one must not match the other.
+    /// </summary>
+    [Fact]
+    public void The_version_guard_does_not_read_LangVersion_as_the_package_version()
+    {
+        const string Props = "<Project>\n  <PropertyGroup>\n    <LangVersion>latest</LangVersion>\n    <Version>3.4.5</Version>\n  </PropertyGroup>\n</Project>\n";
+        var tree = NewVersionTree("3.4.5", lagging: "Directory.Build.props");
+        File.WriteAllText(Path.Combine(tree, "Directory.Build.props"), Props);
+
+        var guard = RunVersionGuard("v3.4.5", tree);
+
+        guard.Code.ShouldBe(0, guard.Diagnostics);
+        guard.Outputs.ShouldContainKeyAndValue("version", "3.4.5");
+    }
+
+    /// <summary>
+    /// A version file it cannot read at all must stop the release, not compare against an empty string.
+    /// Every read here is a bare assignment for that reason — a substitution nested inside an argument is
+    /// invisible to <c>set -e</c>, which is how the same shape went silently wrong in docs-refresh.yml.
+    /// </summary>
+    [Theory]
+    [InlineData("Directory.Build.props", null)]
+    [InlineData("plugin/README.md", null)]
+    [InlineData("plugin/.claude-plugin/plugin.json", "{ \"version\": ")]
+    public void The_version_guard_stops_when_a_version_file_cannot_be_read(string site, string? corrupt)
+    {
+        var tree = NewVersionTree();
+        var path = Path.Combine(tree, site.Replace('/', Path.DirectorySeparatorChar));
+
+        if (corrupt is null)
+        {
+            File.Delete(path);
+        }
+        else
+        {
+            File.WriteAllText(path, corrupt);
+        }
+
+        var guard = RunVersionGuard("v0.1.0", tree);
+
+        guard.Code.ShouldNotBe(0, $"An unreadable {site} did not stop the release.\n{guard.Diagnostics}");
+        guard.Outputs.ShouldNotContainKey("version", $"An unreadable {site} still published a version output.");
+    }
+
+    /// <summary>
+    /// §12's "plugin marketplace ref update" is the one step of a release this repository cannot perform:
+    /// the Moberg marketplace is a different repository, so the entry is pasted in by hand. The release
+    /// notes carry it with <c>ref</c> already filled in, which is what keeps that paste from being where a
+    /// stale version enters.
+    /// </summary>
+    [Fact]
+    public void The_release_notes_carry_a_marketplace_entry_pinned_to_this_tag()
+    {
+        var release = RunReleaseNotes("v1.2.3", "1.2.3");
+
+        release.Code.ShouldBe(0, release.Diagnostics);
+
+        var entry = release.MarketplaceEntry();
+        ((string?)entry["source"]?["source"]).ShouldBe("git-subdir");
+        ((string?)entry["source"]?["ref"]).ShouldBe("v1.2.3", "The pasted marketplace entry is not pinned to this tag.");
+        ((string?)entry["source"]?["path"]).ShouldBe("plugin");
+    }
+
+    /// <summary>
+    /// The regression this file was written for. The entry used to be hand-interpolated into the heredoc,
+    /// so a description carrying a double quote emitted invalid json into the release notes — and nothing
+    /// noticed, because the manifest stays valid and the break only surfaces when a human pastes it and
+    /// the plugin fails to install. Built by jq, both fields are escaped for us.
+    /// </summary>
+    [Theory]
+    [InlineData("Docs lifecycle for the \\\"repo is truth\\\" model.")]
+    [InlineData("Backslash-terminated path: C:\\\\docs\\\\wiki")]
+    [InlineData("A newline\\nin the middle.")]
+    public void The_marketplace_entry_stays_valid_json_whatever_the_description_holds(string description)
+    {
+        var tree = NewVersionTree();
+        var manifestPath = Path.Combine(tree, "plugin", ".claude-plugin", "plugin.json");
+        var manifest = JsonNode.Parse(File.ReadAllText(manifestPath))!;
+        manifest["description"] = JsonNode.Parse($"\"{description}\"");
+        File.WriteAllText(manifestPath, manifest.ToJsonString());
+
+        var release = RunReleaseNotes("v1.2.3", "1.2.3", tree);
+
+        release.Code.ShouldBe(0, release.Diagnostics);
+
+        // Parsing it IS the assertion: an unescaped quote makes this throw, which is what shipped before.
+        var entry = release.MarketplaceEntry();
+        ((string?)entry["description"]).ShouldBe((string?)manifest["description"]);
+    }
+
+    /// <summary>
+    /// The description is what the <c>/plugin</c> Discover list shows before anything is fetched, so the
+    /// pasted entry needs it — an entry without one advertises the plugin as a blank line. It is read out
+    /// of plugin.json at release time rather than retyped, which keeps this file from becoming a fourth
+    /// copy of the same string.
+    /// </summary>
     [Fact]
     public void The_release_notes_describe_the_plugin_the_way_plugin_json_does()
     {
-        var notes = Run(Steps()[IndexOfRun("gh release create")]);
+        var manifest = JsonNode.Parse(File.ReadAllText(ManifestPath))!;
+        var release = RunReleaseNotes("v1.2.3", "1.2.3");
 
-        // The description is what the /plugin Discover list shows before anything is fetched, so the
-        // pasted entry needs it — an entry without one advertises the plugin as a blank line. It is read
-        // out of plugin.json at release time rather than retyped here, which keeps this file from becoming
-        // a third copy to drift, and has a second payoff: bash does not rescan an expanded value, so the
-        // backticks inside the description stay literal without the escaping the rest of this unquoted
-        // heredoc needs. Retyping it inline is how `docume` becomes a command substitution.
-        notes.ShouldContain(
-            "description=$(jq -r '.description' plugin/.claude-plugin/plugin.json)",
-            customMessage: "The release notes stopped deriving the plugin description from plugin.json.");
+        release.Code.ShouldBe(0, release.Diagnostics);
 
-        notes.ShouldContain(
-            "\"description\": \"$description\",",
-            customMessage: "The marketplace entry in the release notes carries no description (§12).");
+        var entry = release.MarketplaceEntry();
+        var description = (string?)entry["description"] ?? string.Empty;
+        description.ShouldBe((string?)manifest["description"]);
+        ((string?)entry["name"]).ShouldBe((string?)manifest["name"]);
+
+        // The backticks inside the description are the reason it is expanded rather than written inline:
+        // bash does not rescan an expanded value, so `docume` stays text instead of becoming a command.
+        var literal = description.Contains('`', StringComparison.Ordinal);
+        literal.ShouldBeTrue("plugin.json's description lost its backticks, so this no longer proves they survive.");
     }
 
+    /// <summary>
+    /// The install line names the version being released and the feed it went to, and no <c>$VAR</c>
+    /// survives anywhere in the notes — an unexpanded one is a broken command pasted by whoever installs.
+    /// </summary>
+    [Fact]
+    public void The_release_notes_leave_nothing_unexpanded()
+    {
+        var release = RunReleaseNotes("v1.2.3", "1.2.3");
+
+        release.Code.ShouldBe(0, release.Diagnostics);
+        release.Notes.Contains("--version 1.2.3", StringComparison.Ordinal)
+            .ShouldBeTrue($"The install line does not name the version.\n{release.Notes}");
+        release.Notes.Contains(Feed, StringComparison.Ordinal)
+            .ShouldBeTrue($"The install line does not name the feed.\n{release.Notes}");
+
+        var leftovers = release.Notes.Split('\n').Where(line => line.Contains('$', StringComparison.Ordinal)).ToList();
+        leftovers.ShouldBeEmpty($"Unexpanded shell variables reached the release notes:\n{string.Join('\n', leftovers)}");
+    }
+
+    /// <summary>
+    /// What the release is actually created with: the packages that were packed, resolved rather than left
+    /// as a glob, and <c>--verify-tag</c>.
+    /// </summary>
+    /// <remarks>
+    /// The glob is worth pinning because <c>gh</c> is handed <c>"$PACKAGES"/*.nupkg</c> unquoted: if it ever
+    /// matched nothing, bash passes the pattern through as a literal filename. And <c>--verify-tag</c> is
+    /// the difference between a release of the tag that was pushed and a release of a tag this workflow
+    /// invented, which is not something a re-run can take back.
+    /// </remarks>
+    [Fact]
+    public void The_release_uploads_the_packages_it_packed_and_will_not_invent_the_tag()
+    {
+        var release = RunReleaseNotes("v1.2.3", "1.2.3");
+
+        release.Code.ShouldBe(0, release.Diagnostics);
+        release.Argv.ShouldContain("--verify-tag", "The release no longer refuses to invent a missing tag.");
+        release.Argv.ShouldContain("--notes-file", "The release stopped attaching the notes it just wrote.");
+
+        var assets = release.Argv.Where(argument => argument.EndsWith(".nupkg", StringComparison.Ordinal)).ToList();
+        assets.Count.ShouldBe(2, $"Expected both packages as assets, got: {string.Join(' ', release.Argv)}");
+
+        var unexpanded = release.Argv.Exists(argument => argument.Contains('*', StringComparison.Ordinal));
+        unexpanded.ShouldBeFalse("The asset glob reached gh unexpanded, so the release would carry no packages.");
+    }
+
+    /// <summary>
+    /// The drift guard for everything above: both executed steps are found by name, so a rename would fail
+    /// here instead of turning every execution test into a silent skip.
+    /// </summary>
+    [Fact]
+    public void The_executed_steps_are_the_ones_the_workflow_still_ships()
+    {
+        var names = Steps().Where(step => Run(step).Length is not 0).Select(step => Value(step, "name")).ToList();
+
+        names.ShouldContain(VersionGuardStep, $"release.yml no longer has a step named '{VersionGuardStep}'.");
+        names.ShouldContain(CutReleaseStep, $"release.yml no longer has a step named '{CutReleaseStep}'.");
+    }
+
+    // ---- fixtures and process plumbing -------------------------------------------------------------
+    private const string VersionGuardStep = "Verify the tag is the single version";
+    private const string CutReleaseStep = "Cut the GitHub Release";
+
     private static string RepoRoot { get; } = Locate();
+
+    private static string ManifestPath { get; } =
+        Path.Combine(RepoRoot, "plugin", ".claude-plugin", "plugin.json");
+
+    /// <summary>
+    /// The version the tree currently carries. Read from the manifest rather than restated here, so a
+    /// version bump does not have to touch this file.
+    /// </summary>
+    private static string CurrentVersion()
+    {
+        var manifest = JsonNode.Parse(File.ReadAllText(ManifestPath));
+
+        return (string?)manifest?["version"]
+            ?? throw new InvalidOperationException("plugin.json carries no version for the guard to agree with.");
+    }
+
+    /// <summary>
+    /// A throwaway tree holding the three files the guard reads, copied from the repository so a passing
+    /// case is the shape that actually ships. With <paramref name="bumpTo"/> set, every site except
+    /// <paramref name="lagging"/> moves to that version — the half-bumped release.
+    /// </summary>
+    private string NewVersionTree(string? bumpTo = null, string? lagging = null)
+    {
+        var tree = NewScratch("release");
+        Directory.CreateDirectory(Path.Combine(tree, "plugin", ".claude-plugin"));
+
+        var current = CurrentVersion();
+
+        foreach (var site in VersionSites)
+        {
+            var relative = site.Replace('/', Path.DirectorySeparatorChar);
+            var text = File.ReadAllText(Path.Combine(RepoRoot, relative));
+
+            if (bumpTo is not null && !string.Equals(site, lagging, StringComparison.Ordinal))
+            {
+                text = text.Replace(current, bumpTo, StringComparison.Ordinal);
+            }
+
+            File.WriteAllText(Path.Combine(tree, relative), text);
+        }
+
+        return tree;
+    }
+
+    /// <summary>Runs the shipped version guard against <paramref name="tree"/>, as a tag push would.</summary>
+    private GuardRun RunVersionGuard(string tag, string tree)
+    {
+        var output = Path.Combine(tree, "github-output");
+        File.WriteAllText(output, string.Empty);
+
+        var environment = BaseEnvironment(tree);
+        environment["GITHUB_REF_NAME"] = tag;
+        environment["GITHUB_OUTPUT"] = output;
+        environment["GITHUB_STEP_SUMMARY"] = Path.Combine(tree, "summary.md");
+
+        var result = Shell(ScriptOf(VersionGuardStep), tree, environment);
+
+        return new GuardRun(result.Code, result.Output, result.Error, VersionGuardStep, ReadOutputs(output));
+    }
+
+    /// <summary>
+    /// Runs the shipped release-notes step with a <c>gh</c> on <c>PATH</c> that only records its argument
+    /// list, so the notes file and the asset glob are inspectable without cutting a release.
+    /// </summary>
+    private ReleaseRun RunReleaseNotes(string tag, string version, string? tree = null)
+    {
+        var work = tree ?? NewVersionTree();
+        var runnerTemp = Path.Combine(work, "runner-temp");
+        var packages = Path.Combine(work, "artifacts");
+        Directory.CreateDirectory(runnerTemp);
+        Directory.CreateDirectory(packages);
+        File.WriteAllText(Path.Combine(packages, $"DocuMe.Cli.{version}.nupkg"), "nupkg");
+        File.WriteAllText(Path.Combine(packages, $"DocuMe.Core.{version}.nupkg"), "nupkg");
+
+        var argv = Path.Combine(work, "gh-argv.txt");
+        var environment = BaseEnvironment(work);
+        environment["PATH"] = $"{StubGh(work, argv)}{Path.PathSeparator}{environment["PATH"]}";
+        environment["RUNNER_TEMP"] = runnerTemp;
+        environment["TAG"] = tag;
+        environment["VERSION"] = version;
+        environment["FEED"] = $"https://{Feed}/moberghr/index.json";
+        environment["PACKAGES"] = packages;
+        environment["GITHUB_REPOSITORY"] = "moberghr/docu-me";
+        environment["GITHUB_STEP_SUMMARY"] = Path.Combine(work, "summary.md");
+
+        var result = Shell(ScriptOf(CutReleaseStep), work, environment);
+        var notesPath = Path.Combine(runnerTemp, "release-notes.md");
+
+        return new ReleaseRun(
+            result.Code,
+            result.Output,
+            result.Error,
+            CutReleaseStep,
+            File.Exists(notesPath) ? File.ReadAllText(notesPath) : string.Empty,
+            File.Exists(argv) ? File.ReadAllLines(argv).ToList() : []);
+    }
+
+    /// <summary>The shell of the step named <paramref name="name"/>, extracted from the shipped yaml.</summary>
+    private static string ScriptOf(string name)
+    {
+        var step = Steps().Find(candidate =>
+            candidate.Children.Any(child => IsKey(child.Key, "name"))
+            && string.Equals(Value(candidate, "name"), name, StringComparison.Ordinal));
+
+        step.ShouldNotBeNull($"release.yml has no step named '{name}'.");
+
+        return Run(step);
+    }
+
+    /// <summary>
+    /// A <c>gh</c> that records its arguments one per line and does nothing else. One per line so the
+    /// <c>*.nupkg</c> glob's expansion is visible: a release that uploads the literal pattern is a release
+    /// with no assets on it.
+    /// </summary>
+    private static string StubGh(string root, string argv)
+    {
+        var bin = Path.Combine(root, "stub-bin");
+        var script = $"""
+            #!/bin/bash
+            printf '%s\n' "$@" > '{argv}'
+            exit 0
+            """;
+        var path = CreateFile(bin, "gh", script);
+
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(
+                path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        return bin;
+    }
+
+    /// <summary>
+    /// The environment cleared down to what a runner guarantees. Cleared rather than inherited so a
+    /// variable this repository happens to export cannot stand in for one the workflow must set itself.
+    /// </summary>
+    private static Dictionary<string, string> BaseEnvironment(string home)
+        => new(StringComparer.Ordinal)
+        {
+            ["PATH"] = Environment.GetEnvironmentVariable("PATH") ?? "/usr/bin:/bin",
+            ["HOME"] = home,
+        };
+
+    /// <summary>The <c>key=value</c> lines a step appended to <c>$GITHUB_OUTPUT</c>.</summary>
+    private static Dictionary<string, string> ReadOutputs(string path)
+    {
+        var outputs = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var line in File.Exists(path) ? File.ReadAllLines(path) : [])
+        {
+            var parts = line.Split('=', 2);
+
+            if (parts.Length is 2)
+            {
+                outputs[parts[0]] = parts[1];
+            }
+        }
+
+        return outputs;
+    }
+
+    private static ProcessResult Shell(string script, string workingDirectory, Dictionary<string, string> environment)
+    {
+        var path = CreateFile(workingDirectory, ".step.sh", script);
+        var info = new ProcessStartInfo("bash")
+        {
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        info.ArgumentList.Add(path);
+        info.Environment.Clear();
+
+        foreach (var (key, value) in environment)
+        {
+            info.Environment[key] = value;
+        }
+
+        using var process = Process.Start(info)
+            ?? throw new InvalidOperationException("bash did not start.");
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        return new ProcessResult(process.ExitCode, output, error);
+    }
+
+    private static string CreateFile(string directory, string name, string content)
+    {
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, name);
+        File.WriteAllText(path, content);
+
+        return path;
+    }
+
+    private string NewScratch(string prefix)
+    {
+        var directory = Directory.CreateTempSubdirectory($"docume-{prefix}").FullName;
+        _scratch.Add(directory);
+
+        return directory;
+    }
 
     private static string WorkflowPath { get; } =
         Path.Combine(RepoRoot, ".github", "workflows", "release.yml");
@@ -325,5 +752,60 @@ public sealed class ReleaseWorkflowTests
 
         throw new InvalidOperationException(
             $"No DocuMe.slnx above {AppContext.BaseDirectory}, so release.yml cannot be found.");
+    }
+
+    private sealed record ProcessResult(int Code, string Output, string Error);
+
+    private abstract record StepRun(int Code, string Output, string Error, string Step)
+    {
+        /// <summary>Everything a failure needs, since the interesting half is usually on stderr.</summary>
+        internal string Diagnostics => $"""
+            "{Step}" exited {Code}.
+            stdout: {Output}
+            stderr: {Error}
+            """;
+    }
+
+    private sealed record GuardRun(
+        int Code, string Output, string Error, string Step, Dictionary<string, string> Outputs)
+        : StepRun(Code, Output, Error, Step)
+    {
+        /// <summary>
+        /// The <c>::error::</c> annotations the step wrote. These are the whole user interface of a refused
+        /// release: the run is red on a tag, and the annotation is what says which file to bump.
+        /// </summary>
+        internal List<string> Annotations => Output
+            .Split('\n')
+            .Where(line => line.StartsWith("::error::", StringComparison.Ordinal))
+            .ToList();
+    }
+
+    private sealed record ReleaseRun(
+        int Code, string Output, string Error, string Step, string Notes, List<string> Argv)
+        : StepRun(Code, Output, Error, Step)
+    {
+        /// <summary>
+        /// The json entry out of the release notes, parsed. Parsing is itself the assertion: this block is
+        /// pasted into another repository's <c>marketplace.json</c>, so json that only looks right is the
+        /// failure mode, and it used to be hand-interpolated.
+        /// </summary>
+        internal JsonNode MarketplaceEntry()
+        {
+            const string Fence = "```json";
+            var start = Notes.IndexOf(Fence, StringComparison.Ordinal);
+
+            start.ShouldBeGreaterThanOrEqualTo(0, $"The release notes carry no json entry (§12):\n{Notes}");
+
+            var body = Notes[(start + Fence.Length)..];
+            var end = body.IndexOf("```", StringComparison.Ordinal);
+
+            end.ShouldBeGreaterThanOrEqualTo(0, $"The marketplace entry's json fence is never closed:\n{Notes}");
+
+            var node = JsonNode.Parse(body[..end]);
+
+            node.ShouldNotBeNull($"The marketplace entry parsed as null:\n{body[..end]}");
+
+            return node;
+        }
     }
 }
