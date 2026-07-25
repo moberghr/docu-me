@@ -139,6 +139,98 @@ public sealed class FeedbackInboxTests : IDisposable
         FeedbackInbox.ExistingItemFiles(_dir).ShouldContain("page-1.json");
     }
 
+    /// <summary>
+    /// The archive is the inbox's sibling, so the default layout lands exactly on §5.4's path and a run
+    /// that relocated the inbox with <c>--output-dir</c> keeps the pair together.
+    /// </summary>
+    [Fact]
+    public void Puts_the_archive_next_to_whichever_inbox_is_in_use()
+    {
+        var wiki = Path.Combine(Path.GetTempPath(), "repo", "docs", "wiki");
+        var archive = FeedbackInbox.ArchiveBeside(FeedbackInbox.DirectoryFor(wiki));
+
+        archive.ShouldBe(Path.Combine(wiki, "_meta", "feedback", "archive"));
+        FeedbackInbox.ArchiveBeside(Path.Combine(wiki, "elsewhere", "inbox"))
+            .ShouldBe(Path.Combine(wiki, "elsewhere", "archive"));
+    }
+
+    /// <summary>
+    /// The reply pass reads the inbox and the archive together (§9 step 4 moves an item to the archive in
+    /// the same PR that triages it, so by the time a reply is due the item is usually already there).
+    /// </summary>
+    [Fact]
+    public void Reads_items_from_every_directory_it_is_given()
+    {
+        var archive = Directory.CreateDirectory(Path.Combine(_dir, "archive")).FullName;
+        FeedbackInbox.Write(_dir, Plan(Item("conf-comment-1", FeedbackKind.Footer)));
+        FeedbackInbox.Write(archive, Plan(Item("conf-comment-2", FeedbackKind.Footer)));
+
+        var items = FeedbackInbox.Read([_dir, archive]);
+
+        items.Select(item => item.Item?.Id).ShouldBe(["conf-comment-1", "conf-comment-2"]);
+    }
+
+    /// <summary>
+    /// A directory that does not exist reads as empty: a repo with no archive yet is the ordinary case,
+    /// and <c>docume init</c> scaffolds neither directory.
+    /// </summary>
+    [Fact]
+    public void Reads_a_missing_directory_as_empty()
+        => FeedbackInbox.Read([Path.Combine(_dir, "nope")]).ShouldBeEmpty();
+
+    /// <summary>
+    /// One hand-edited item with a typo in it must not stop the other forty from being answered, so an
+    /// unparseable file comes back with a null item for the caller to report.
+    /// </summary>
+    [Fact]
+    public void Surfaces_an_unparseable_item_instead_of_throwing()
+    {
+        File.WriteAllText(Path.Combine(_dir, "broken.json"), "{ not json");
+        FeedbackInbox.Write(_dir, Plan(Item("conf-comment-1", FeedbackKind.Footer)));
+
+        var items = FeedbackInbox.Read([_dir]);
+
+        items.Count.ShouldBe(2);
+        items.Single(item => item.FilePath.EndsWith("broken.json", StringComparison.Ordinal))
+            .Item.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// The stamp that stops a second reply (§9 step 5). Everything else on the item survives it — the
+    /// triage's own status and resolution above all, which is what the reply was composed from.
+    /// </summary>
+    [Fact]
+    public void Stamps_an_item_as_replied_without_disturbing_its_triage()
+    {
+        FeedbackInbox.Write(_dir, Plan(Item("conf-comment-1", FeedbackKind.Footer)));
+        var path = Path.Combine(_dir, "page-1.json");
+
+        var triaged = FeedbackInbox.Read([_dir])[0].Item! with
+        {
+            Status = FeedbackStatus.Fixed,
+            Resolution = "Corrected on the loans page.",
+        };
+
+        FeedbackInbox.MarkReplied(
+            new StoredFeedbackItem(path, triaged),
+            new DateTimeOffset(2026, 8, 3, 9, 0, 0, TimeSpan.Zero));
+
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var root = document.RootElement;
+
+        root.GetProperty("repliedAt").GetString().ShouldBe("2026-08-03T09:00:00.000Z");
+        root.GetProperty("status").GetString().ShouldBe("fixed");
+        root.GetProperty("resolution").GetString().ShouldBe("Corrected on the loans page.");
+        root.GetProperty("body").GetString().ShouldBe("<p>A claim to verify.</p>");
+    }
+
+    /// <summary>An item that never parsed has nothing to stamp, and stamping a blank over it would erase it.</summary>
+    [Fact]
+    public void Refuses_to_stamp_an_item_that_never_parsed()
+        => Should.Throw<ArgumentException>(() => FeedbackInbox.MarkReplied(
+            new StoredFeedbackItem(Path.Combine(_dir, "broken.json"), Item: null),
+            DateTimeOffset.UnixEpoch));
+
     private static FeedbackIngestPlan Plan(params PlannedFeedbackItem[] items) => new(items, [], []);
 
     private static PlannedFeedbackItem Item(string id, string kind, string? quotedText = null)

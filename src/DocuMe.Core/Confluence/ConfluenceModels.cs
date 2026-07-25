@@ -168,6 +168,9 @@ internal static class CommentResolution
     /// <summary>The one status that means a human has closed the comment.</summary>
     private const string ResolvedStatus = "resolved";
 
+    /// <summary>The one status that means Confluence has lost the text the comment was anchored to.</summary>
+    private const string DanglingStatus = "dangling";
+
     /// <summary>
     /// Whether Confluence considers the comment closed.
     /// </summary>
@@ -181,6 +184,17 @@ internal static class CommentResolution
     /// </remarks>
     public static bool IsResolved(string? resolutionStatus) =>
         string.Equals(resolutionStatus, ResolvedStatus, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether the comment's anchor is lost, which is the one state Confluence refuses to update.
+    /// </summary>
+    /// <remarks>
+    /// The opposite default to <see cref="IsResolved"/>, and for the same reason: an unrecognized status
+    /// reads as <em>not</em> dangling, so a resolve is attempted and fails loudly rather than being
+    /// silently skipped on a comment that was fine.
+    /// </remarks>
+    public static bool IsDangling(string? resolutionStatus) =>
+        string.Equals(resolutionStatus, DanglingStatus, StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -229,6 +243,12 @@ public enum ConfluenceCommentKind
 /// For an inline comment, the page text it is anchored to (<c>properties.inlineOriginalSelection</c>) —
 /// §5.4's <c>quotedText</c>. Always <c>null</c> for a footer comment, which is anchored to nothing.
 /// </param>
+/// <param name="Version">
+/// The comment's current version number (<c>version.number</c>), or <c>null</c> when the response
+/// carried none. Read for exactly one reason: resolving an inline comment sends this incremented by one
+/// (<see cref="ConfluenceClient.ResolveInlineCommentAsync"/>), so a resolve needs a read first. Nothing
+/// on the ingestion path uses it — a comment with no version is filed like any other.
+/// </param>
 /// <param name="ResolutionStatus">Confluence's own resolution state, verbatim and unparsed, or <c>null</c>.</param>
 /// <param name="WebUiLink">The comment's browser URL as Confluence composes it, or <c>null</c>.</param>
 public sealed record ConfluenceComment(
@@ -236,6 +256,7 @@ public sealed record ConfluenceComment(
     ConfluenceCommentKind Kind,
     string? AuthorAccountId,
     string? CreatedAt,
+    int? Version,
     string? Body,
     string? QuotedText,
     string? ResolutionStatus,
@@ -243,7 +264,43 @@ public sealed record ConfluenceComment(
 {
     /// <inheritdoc cref="CommentResolution.IsResolved"/>
     public bool IsResolved => CommentResolution.IsResolved(ResolutionStatus);
+
+    /// <summary>
+    /// Whether Confluence has lost the page text this comment was anchored to.
+    /// </summary>
+    /// <remarks>
+    /// Its own schema states that "a dangling comment cannot be updated", so this is what stops a resolve
+    /// from being attempted against one (<see cref="ConfluenceClient.ResolveInlineCommentAsync"/>). It is
+    /// deliberately <em>not</em> folded into <see cref="IsResolved"/>: a dangling comment is still open
+    /// feedback nobody has answered, which is why the publish-time guard counts it (see
+    /// <see cref="CommentResolution"/>).
+    /// </remarks>
+    public bool IsDangling => CommentResolution.IsDangling(ResolutionStatus);
 }
+
+/// <summary>
+/// A reply to post under an existing comment (PLAN.md §9 step 5).
+/// </summary>
+/// <remarks>
+/// <para>
+/// <strong><see cref="ParentCommentId"/> is what makes this a reply rather than a new top-level
+/// comment.</strong> Both endpoints accept a <c>pageId</c> or a <c>parentCommentId</c> and Atlassian's
+/// schema says outright "Do not provide if creating a reply" about the former, so this shape offers no
+/// page id at all: DocuMe never opens a comment thread, it only answers one a human started.
+/// </para>
+/// <para>
+/// <see cref="Kind"/> picks the endpoint, and the two are not interchangeable — a reply to an inline
+/// comment posted to <c>footer-comments</c> is a new footer thread, not an answer. It comes from the
+/// parent comment, never from a guess.
+/// </para>
+/// </remarks>
+/// <param name="ParentCommentId">The comment being answered.</param>
+/// <param name="Kind">Which collection the parent came from, which is which endpoint the reply goes to.</param>
+/// <param name="Storage">The reply body in storage format, already escaped by the caller.</param>
+public sealed record ConfluenceCommentReply(
+    string ParentCommentId,
+    ConfluenceCommentKind Kind,
+    string Storage);
 
 /// <summary>
 /// A Confluence account, narrowed to the two things DocuMe asks about one: which account it is, and what

@@ -49,3 +49,32 @@ internal sealed record VersionWrite(int Number, string? Message);
 /// does not change when a caller adds a second label.
 /// </summary>
 internal sealed record LabelCreate(string Prefix, string Name);
+
+/// <summary>
+/// A reply under an existing comment, named after v2's <c>CreateFooterCommentModel</c> /
+/// <c>CreateInlineCommentModel</c> (PLAN.md §9 step 5).
+/// </summary>
+/// <remarks>
+/// <para>
+/// The schemas offer <c>pageId</c>, <c>blogPostId</c>, <c>attachmentId</c>, <c>customContentId</c> and
+/// <c>parentCommentId</c> as alternatives, and say of <c>pageId</c>: "Do not provide if creating a
+/// reply". So this shape carries the parent alone — there is no member here that could be filled in by
+/// accident and turn an answer into a new thread.
+/// </para>
+/// <para>
+/// <c>inlineCommentProperties.textSelection</c> is required only for a <em>top-level</em> inline
+/// comment, which DocuMe never creates, so it is absent from this shape as well.
+/// </para>
+/// </remarks>
+internal sealed record CommentReplyRequest(string ParentCommentId, PageNestedBodyWrite Body);
+
+/// <summary>
+/// The resolve half, named after v2's <c>UpdateInlineCommentModel</c>: the new version and the flag.
+/// </summary>
+/// <remarks>
+/// <c>body</c> is deliberately omitted — this write closes somebody else's comment and must not rewrite
+/// what they said. <c>version.number</c> must be exactly one higher than the comment's current version,
+/// which is why <see cref="ConfluenceComment.Version"/> is read (see
+/// <see cref="ConfluenceClient.ResolveInlineCommentAsync"/>).
+/// </remarks>
+internal sealed record InlineCommentResolveRequest(VersionWrite Version, bool Resolved);

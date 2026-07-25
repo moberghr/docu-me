@@ -1222,6 +1222,9 @@ public sealed class ConfluenceClientTests
         comments[0].Kind.ShouldBe(ConfluenceCommentKind.Footer);
         comments[0].AuthorAccountId.ShouldBe("557058:jonas");
         comments[0].CreatedAt.ShouldBe("2026-08-02T14:11:00.000Z");
+
+        // Carried for one reason: resolving a comment sends its version incremented by one.
+        comments[0].Version.ShouldBe(1);
         comments[0].Body.ShouldBe("<p>Disbursement is instant since the Straumur integration.</p>");
         comments[0].WebUiLink.ShouldBe("/spaces/DOCUMESBX/pages/65601/Domain+model?focusedCommentId=5001");
 
@@ -1256,6 +1259,149 @@ public sealed class ConfluenceClientTests
         // Resolved comments are returned like any other: what "resolved" means is decided on this side.
         comments[1].ResolutionStatus.ShouldBe("resolved");
         comments[1].IsResolved.ShouldBeTrue();
+
+        comments[0].IsDangling.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A dangling comment reads as unresolved (its anchor is lost, so it is exactly the case worth
+    /// talking about) and as not closable, which is what stops a resolve Confluence would reject:
+    /// its own schema says "a dangling comment cannot be updated".
+    /// </summary>
+    [Fact]
+    public async Task Reads_a_dangling_comment_as_open_and_not_closable()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(InlineCommentsPath).UsingGet())
+            .RespondWith(Json(DanglingCommentBody));
+
+        using var client = CreateClient(server);
+        var comments = await client.GetInlineCommentsWithBodiesAsync(
+            PageId,
+            TestContext.Current.CancellationToken);
+
+        comments[0].IsResolved.ShouldBeFalse();
+        comments[0].IsDangling.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A reply to a footer comment (PLAN.md §9 step 5): the parent id and nothing else identifying, since
+    /// v2's schema says of <c>pageId</c> "Do not provide if creating a reply".
+    /// </summary>
+    [Fact]
+    public async Task Replies_to_a_footer_comment_by_parent_id_alone()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ApiPath("footer-comments")).UsingPost())
+            .RespondWith(Json(ReplyBody));
+
+        using var client = CreateClient(server);
+        var reply = new ConfluenceCommentReply("5001", ConfluenceCommentKind.Footer, "<p>Thanks.</p>");
+        var posted = await client.ReplyToCommentAsync(reply, TestContext.Current.CancellationToken);
+
+        posted.Id.ShouldBe("7001");
+        posted.Kind.ShouldBe(ConfluenceCommentKind.Footer);
+
+        LastRequest(server).Path.ShouldBe(ApiPath("footer-comments"));
+
+        var payload = Payload(server);
+        payload.GetProperty("parentCommentId").GetString().ShouldBe("5001");
+        payload.GetProperty("body").GetProperty("storage").GetProperty("value").GetString()
+            .ShouldBe("<p>Thanks.</p>");
+        payload.GetProperty("body").GetProperty("storage").GetProperty("representation").GetString()
+            .ShouldBe("storage");
+        payload.TryGetProperty("pageId", out _).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The same reply to an inline comment goes to the <em>other</em> endpoint. Posting it to
+    /// <c>footer-comments</c> would not be a misplaced reply, it would be a new thread answering nobody.
+    /// </summary>
+    [Fact]
+    public async Task Replies_to_an_inline_comment_on_the_inline_endpoint()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ApiPath("inline-comments")).UsingPost())
+            .RespondWith(Json(ReplyBody));
+
+        using var client = CreateClient(server);
+        var reply = new ConfluenceCommentReply("6001", ConfluenceCommentKind.Inline, "<p>Fixed.</p>");
+        await client.ReplyToCommentAsync(reply, TestContext.Current.CancellationToken);
+
+        LastRequest(server).Path.ShouldBe(ApiPath("inline-comments"));
+        Payload(server).GetProperty("parentCommentId").GetString().ShouldBe("6001");
+
+        // textSelection is required only for a top-level inline comment, which DocuMe never creates.
+        Payload(server).TryGetProperty("inlineCommentProperties", out _).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The resolve is an optimistic-lock write like a page update: the version sent is the comment's
+    /// current one plus one, and no body rides along — closing somebody's comment must not rewrite it.
+    /// </summary>
+    [Fact]
+    public async Task Resolves_an_inline_comment_at_the_next_version_without_touching_its_body()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ApiPath("inline-comments/6001")).UsingPut())
+            .RespondWith(Json(ResolvedCommentBody));
+
+        using var client = CreateClient(server);
+        var resolved = await client.ResolveInlineCommentAsync(
+            "6001",
+            currentVersion: 3,
+            TestContext.Current.CancellationToken);
+
+        resolved.IsResolved.ShouldBeTrue();
+
+        var payload = Payload(server);
+        payload.GetProperty("version").GetProperty("number").GetInt32().ShouldBe(4);
+        payload.GetProperty("resolved").GetBoolean().ShouldBeTrue();
+        payload.TryGetProperty("body", out _).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A 409 on the resolve is reported, never worked around: it means somebody edited the comment
+    /// between the read and the write, and a re-read-and-retry would close a comment this run never saw.
+    /// </summary>
+    [Fact]
+    public async Task Reports_a_conflicting_resolve_rather_than_re_reading_and_retrying()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ApiPath("inline-comments/6001")).UsingPut())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Conflict).WithBody("{}"));
+
+        using var client = CreateClient(server);
+        await Should.ThrowAsync<ConfluenceConflictException>(
+            () => client.ResolveInlineCommentAsync(
+                "6001",
+                currentVersion: 3,
+                TestContext.Current.CancellationToken));
+
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// A blank reply is refused before it leaves the process. Confluence would happily store an empty
+    /// comment under somebody's question, and the inbox item would be recorded as answered by it.
+    /// </summary>
+    [Fact]
+    public async Task Refuses_to_post_an_empty_reply()
+    {
+        using var server = WireMockServer.Start();
+        using var client = CreateClient(server);
+
+        await Should.ThrowAsync<ArgumentException>(
+            () => client.ReplyToCommentAsync(
+                new ConfluenceCommentReply("5001", ConfluenceCommentKind.Footer, string.Empty),
+                TestContext.Current.CancellationToken));
+
+        server.LogEntries.ShouldBeEmpty();
     }
 
     /// <summary>
@@ -1861,6 +2007,41 @@ public sealed class ConfluenceClientTests
               "body": { "storage": { "representation": "storage", "value": "<p>Handled.</p>" } } }
           ],
           "_links": { "base": "https://example.atlassian.net/wiki" }
+        }
+        """;
+
+    /// <summary>An inline comment whose anchor Confluence has lost — the one state a resolve cannot touch.</summary>
+    private static string DanglingCommentBody =>
+        $$"""
+        {
+          "results": [
+            { "id": "6003", "status": "current", "title": "Re: Domain model", "pageId": "{{PageId}}",
+              "resolutionStatus": "dangling",
+              "version": { "number": 2, "createdAt": "2026-08-02T14:11:00.000Z", "authorId": "557058:jonas" },
+              "body": { "storage": { "representation": "storage", "value": "<p>Orphaned.</p>" } } }
+          ],
+          "_links": { "base": "https://example.atlassian.net/wiki" }
+        }
+        """;
+
+    /// <summary>What a comment create answers: the stored comment, not a result set.</summary>
+    private static string ReplyBody =>
+        $$"""
+        {
+          "id": "7001", "status": "current", "title": "Re: Domain model", "pageId": "{{PageId}}",
+          "version": { "number": 1, "createdAt": "2026-08-03T09:00:00.000Z", "authorId": "557058:docume-bot" },
+          "body": { "storage": { "representation": "storage", "value": "<p>Thanks.</p>" } }
+        }
+        """;
+
+    /// <summary>What the resolve answers: the same comment, now closed and one version on.</summary>
+    private static string ResolvedCommentBody =>
+        $$"""
+        {
+          "id": "6001", "status": "current", "title": "Re: Domain model", "pageId": "{{PageId}}",
+          "resolutionStatus": "resolved",
+          "version": { "number": 4, "createdAt": "2026-08-03T09:00:00.000Z", "authorId": "557058:docume-bot" },
+          "body": { "storage": { "representation": "storage", "value": "<p>This is wrong.</p>" } }
         }
         """;
 

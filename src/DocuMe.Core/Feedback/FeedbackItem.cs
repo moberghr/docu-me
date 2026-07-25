@@ -63,6 +63,31 @@ public sealed record FeedbackItem
 
     /// <summary>What was done about it. Written by <c>/docs-feedback</c>, never by the CLI (§9).</summary>
     public string? Resolution { get; init; }
+
+    /// <summary>
+    /// When <c>docume sync --reply</c> answered the comment in Confluence, in
+    /// <see cref="FeedbackTimestamp.Format"/>; absent until it has.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The one member the CLI writes after ingestion, and the only thing that stops a second
+    /// reply.</strong> §9 step 5 runs on a cron over items whose triage happened in an earlier PR, so
+    /// "which of these have I already answered" has to survive between runs, and it cannot be derived:
+    /// <see cref="Status"/> says what the triage decided, not whether the reviewer was told. Without this
+    /// field every cron would post "Fixed in the latest version" again under the same comment.
+    /// </para>
+    /// <para>
+    /// <strong>It lives on the item rather than in <c>state.json</c></strong> because it is a fact about
+    /// this one piece of feedback, it reads in the PR diff next to the triage it answers, and an item
+    /// moved to <c>_meta/feedback/archive/</c> (§5.4) carries it along. A parallel list of answered
+    /// comment ids in state would have to be kept in step with a file that moves.
+    /// </para>
+    /// <para>
+    /// <strong>Not in §5.4's shape</strong>, which predates the reply step being built; recorded as a
+    /// pending PLAN edit rather than silently diverging.
+    /// </para>
+    /// </remarks>
+    public string? RepliedAt { get; init; }
 }
 
 /// <summary>

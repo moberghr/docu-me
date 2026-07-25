@@ -74,6 +74,12 @@ public sealed class ConfluenceClient : IDisposable
     /// <summary>Spelled as a segment rather than a path so the endpoint constants carry no separator.</summary>
     private const string PagesSegment = "pages";
 
+    /// <summary>The v2 collection holding a page's comment thread — read per page, written per reply.</summary>
+    private const string FooterCommentsSegment = "footer-comments";
+
+    /// <summary>The v2 collection holding comments anchored to a span of the page body.</summary>
+    private const string InlineCommentsSegment = "inline-comments";
+
     /// <summary>Content type for every JSON write body.</summary>
     private const string JsonMediaType = "application/json";
 
@@ -355,7 +361,7 @@ public sealed class ConfluenceClient : IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
 
-        var endpoint = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/inline-comments";
+        var endpoint = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/{InlineCommentsSegment}";
         var overrun = $"it offered another page of inline comments after {PagedRequestLimit} requests, "
             + "which is more comments than one page collects";
 
@@ -401,7 +407,7 @@ public sealed class ConfluenceClient : IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
 
-        var endpoint = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/footer-comments"
+        var endpoint = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/{FooterCommentsSegment}"
             + BodyFormat(includeBody: true, first: true);
 
         var overrun = $"it offered another page of footer comments after {PagedRequestLimit} requests, "
@@ -448,7 +454,7 @@ public sealed class ConfluenceClient : IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
 
-        var endpoint = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/inline-comments"
+        var endpoint = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/{InlineCommentsSegment}"
             + BodyFormat(includeBody: true, first: true);
 
         var overrun = $"it offered another page of inline comments after {PagedRequestLimit} requests, "
@@ -460,6 +466,126 @@ public sealed class ConfluenceClient : IDisposable
                 overrun,
                 cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Posts a reply under an existing comment (PLAN.md §9 step 5) and returns it as Confluence stored it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Two endpoints, chosen by the parent's kind.</strong> A reply to an inline comment posted to
+    /// <c>footer-comments</c> is not a badly-placed reply, it is a brand new footer thread that answers
+    /// nobody — so <see cref="ConfluenceCommentReply.Kind"/> comes from the comment being answered and is
+    /// never inferred here.
+    /// </para>
+    /// <para>
+    /// <strong>The request carries <c>parentCommentId</c> and no page id at all.</strong> Both schemas
+    /// list the two as alternatives and say of <c>pageId</c>: "Do not provide if creating a reply". The
+    /// request shape has no page id member for that reason (<see cref="CommentReplyRequest"/>) rather
+    /// than relying on a caller passing <c>null</c>.
+    /// </para>
+    /// <para>
+    /// <strong>A retried reply can duplicate, and that is accepted here rather than solved here.</strong>
+    /// Unlike a page create, a comment has no uniqueness constraint: if a 5xx arrives after Confluence
+    /// actually stored the reply, the transport's replay posts it twice. The bound is that DocuMe replies
+    /// once per inbox item and records the fact on the item before the next run looks
+    /// (<c>FeedbackItem.RepliedAt</c>), so the exposure is one duplicate inside one run, never a reply
+    /// posted on every cron. A second "thanks" under a comment is noise; the alternative — refusing to
+    /// retry at all — loses replies to ordinary rate limiting.
+    /// </para>
+    /// </remarks>
+    /// <param name="reply">The parent comment, its kind, and the storage-format body to post.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired, or no comment permission.</exception>
+    /// <exception cref="ConfluenceApiException">
+    /// Any other non-success status, including a parent comment that no longer exists (404) and a body
+    /// Confluence will not parse as storage format (400).
+    /// </exception>
+    /// <exception cref="ConfluenceProtocolException">The response body is not the documented shape.</exception>
+    public async Task<ConfluenceComment> ReplyToCommentAsync(
+        ConfluenceCommentReply reply,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(reply);
+        Validate(reply, nameof(reply));
+
+        var inline = reply.Kind == ConfluenceCommentKind.Inline;
+        var segment = inline ? InlineCommentsSegment : FooterCommentsSegment;
+        var word = inline ? "inline" : "footer";
+
+        var path = $"api/v2/{segment}";
+        var request = new CommentReplyRequest(reply.ParentCommentId, StorageBody(reply.Storage));
+
+        var comment = await WriteAsync<CommentReplyRequest, CommentBulk>(
+                HttpMethod.Post,
+                path,
+                request,
+                $"replying to {word} comment {reply.ParentCommentId}",
+                ApiSurface.V2,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return MapComment(comment, path, reply.Kind);
+    }
+
+    /// <summary>
+    /// Marks an inline comment resolved (PLAN.md §9 step 5's "resolves inline comments where the API
+    /// allows"), sending <paramref name="currentVersion"/> incremented by one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Inline only, because there is nothing to resolve on a footer comment.</strong> v2's
+    /// <c>UpdateFooterCommentModel</c> has no <c>resolved</c> member and the footer thread carries no
+    /// resolution state at all, so this settles the open half of spike S4 (§13) in the affirmative: the
+    /// fallback it anticipated — "footer-comment reply only, inline left for humans" — is not needed.
+    /// </para>
+    /// <para>
+    /// <strong>It is an optimistic-lock write like a page update, which is why it needs a read first.</strong>
+    /// The schema requires the new version to be exactly one higher than the current one, and there is no
+    /// "whatever it is now" spelling. A 409 therefore means somebody edited the comment between the read
+    /// and this call, and it is reported rather than resolved by re-reading: a second attempt would be
+    /// closing a comment whose text this run never saw.
+    /// </para>
+    /// <para>
+    /// <strong>A dangling comment cannot be updated</strong> — Atlassian's schema states it outright, and
+    /// the caller is expected to check <see cref="ConfluenceComment.IsDangling"/> and report rather than
+    /// send a request that can only fail. Nothing is checked here, because this client holds no comment
+    /// state; what it does is fail loudly if one is sent anyway.
+    /// </para>
+    /// </remarks>
+    /// <param name="commentId">The inline comment to close.</param>
+    /// <param name="currentVersion">Its current <c>version.number</c>, as the read answered it.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired, or no comment permission.</exception>
+    /// <exception cref="ConfluenceConflictException">409: the comment changed since it was read.</exception>
+    /// <exception cref="ConfluenceApiException">
+    /// Any other non-success status, including a comment that is gone (404) and a dangling one (400).
+    /// </exception>
+    /// <exception cref="ConfluenceProtocolException">The response body is not the documented shape.</exception>
+    public async Task<ConfluenceComment> ResolveInlineCommentAsync(
+        string commentId,
+        int currentVersion,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(commentId);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(currentVersion);
+
+        var nextVersion = currentVersion + 1;
+        var path = $"api/v2/{InlineCommentsSegment}/{Uri.EscapeDataString(commentId)}";
+        var request = new InlineCommentResolveRequest(
+            new VersionWrite(nextVersion, Message: null),
+            Resolved: true);
+
+        var comment = await WriteAsync<InlineCommentResolveRequest, CommentBulk>(
+                HttpMethod.Put,
+                path,
+                request,
+                $"resolving inline comment {commentId} at version {nextVersion}",
+                ApiSurface.V2,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return MapComment(comment, path, ConfluenceCommentKind.Inline);
     }
 
     /// <summary>
@@ -1020,6 +1146,17 @@ public sealed class ConfluenceClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Unlike a page body, an empty reply body is refused. A blank page is a legitimate thing to publish;
+    /// a blank comment posted under somebody's question is not, and the inbox item that asked for it
+    /// would be recorded as answered by it.
+    /// </summary>
+    private static void Validate(ConfluenceCommentReply reply, string parameterName)
+    {
+        RequireField(reply.ParentCommentId, "parent comment id", parameterName);
+        RequireField(reply.Storage, "reply body", parameterName);
+    }
+
     private static void Validate(ConfluenceAttachmentUpload upload, string parameterName)
     {
         RequireField(upload.PageId, "page id", parameterName);
@@ -1449,6 +1586,7 @@ public sealed class ConfluenceClient : IDisposable
             kind,
             comment.Version?.AuthorId,
             comment.Version?.CreatedAt,
+            comment.Version?.Number,
             comment.Body?.Storage?.Value,
             comment.Properties?.InlineOriginalSelection,
             comment.ResolutionStatus,

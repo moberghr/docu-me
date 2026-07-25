@@ -11,16 +11,19 @@ using Spectre.Console;
 namespace DocuMe.Cli.Commands;
 
 /// <summary>
-/// <c>docume sync</c> — PLAN.md §6.3. Two reads reconciled into the repo: the <c>approved</c>/<c>stale</c>
-/// labels into <c>_meta/state.json</c>, and each page's comments into <c>_meta/feedback/inbox/</c>.
-/// Neither flag runs both, which is §6.3's documented default.
+/// <c>docume sync</c> — PLAN.md §6.3, plus §9 step 5. Two reads reconciled into the repo — the
+/// <c>approved</c>/<c>stale</c> labels into <c>_meta/state.json</c> and each page's comments into
+/// <c>_meta/feedback/inbox/</c> — and, only when asked, the replies that close the feedback loop.
+/// Passing no flag runs the two reads, which is §6.3's documented default.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <strong>It writes nothing to Confluence.</strong> A sync is a read plus repo writes: the human gesture
-/// is the label (§8) and the comment (§9), and the only label writes in the design are publish's
-/// invalidation (§6.2 step 7) and <c>drift --mark</c> (§6.4). It reads no page bodies either — rule §9.1
-/// makes the repo the source of truth.
+/// <strong>The two read halves write nothing to Confluence; <c>--reply</c> does.</strong> A sync is a
+/// read plus repo writes: the human gesture is the label (§8) and the comment (§9). <c>--reply</c> is the
+/// one exception and it is opt-in for that reason — it posts an answer under each triaged comment (§9
+/// step 5) and closes the inline ones. Because it writes, it is the only half the protected-space lock
+/// refuses outright (rule §1.4) rather than merely noting. No half reads page bodies: rule §9.1 makes the
+/// repo the source of truth.
 /// </para>
 /// <para>
 /// <strong>Comment text is untrusted input</strong> (CLAUDE.md §0.2, rule §1.3). The comments half copies
@@ -51,11 +54,18 @@ internal static class SyncCommand
         };
         var labelsOption = new Option<bool>("--labels")
         {
-            Description = "Reconcile the approved/stale labels into state. Passing neither half runs both.",
+            Description = "Reconcile the approved/stale labels into state. Passing no half runs the two "
+                + "read halves.",
         };
         var commentsOption = new Option<bool>("--comments")
         {
-            Description = "Ingest page comments into the feedback inbox. Passing neither half runs both.",
+            Description = "Ingest page comments into the feedback inbox. Passing no half runs the two "
+                + "read halves.",
+        };
+        var replyOption = new Option<bool>("--reply")
+        {
+            Description = "Post a reply under every triaged inbox item and resolve the inline comments "
+                + "it answers. Writes to Confluence, so it never runs unless asked for.",
         };
         var outputDirOption = new Option<string>("--output-dir")
         {
@@ -64,13 +74,14 @@ internal static class SyncCommand
         };
         var dryRunOption = new Option<bool>("--dry-run")
         {
-            Description = "Report what would change in state.json and the inbox, and write nothing.",
+            Description = "Report what would change in state.json and the inbox and what would be posted "
+                + "to Confluence, and write none of it.",
         };
 
         const string description =
             "Read the approved/stale labels and the page comments out of Confluence and reconcile them "
-            + "into state.json and the feedback inbox. Writes nothing to Confluence; committing the "
-            + "result is the caller's job.";
+            + "into state.json and the feedback inbox. Writes nothing to Confluence unless --reply is "
+            + "passed; committing the result is the caller's job.";
 
         var command = new Command("sync", description)
         {
@@ -78,6 +89,7 @@ internal static class SyncCommand
             stateOption,
             labelsOption,
             commentsOption,
+            replyOption,
             outputDirOption,
             dryRunOption,
         };
@@ -85,8 +97,10 @@ internal static class SyncCommand
         command.SetAction((parseResult, cancellationToken) => RunAsync(
             parseResult.GetValue(configOption)!,
             parseResult.GetValue(stateOption),
-            parseResult.GetValue(labelsOption),
-            parseResult.GetValue(commentsOption),
+            new SyncHalves(
+                parseResult.GetValue(labelsOption),
+                parseResult.GetValue(commentsOption),
+                parseResult.GetValue(replyOption)),
             parseResult.GetValue(outputDirOption),
             parseResult.GetValue(dryRunOption),
             cancellationToken));
@@ -97,16 +111,17 @@ internal static class SyncCommand
     private static async Task<int> RunAsync(
         string configPath,
         string? statePath,
-        bool labels,
-        bool comments,
+        SyncHalves requested,
         string? outputDir,
         bool dryRun,
         CancellationToken cancellationToken)
     {
-        // §6.3's "Default: both". Asking for one half is what turns the other off, so a workflow that
-        // wants only labels says so and a bare `sync` on a cron does the whole job.
-        var syncLabels = labels || !comments;
-        var syncComments = comments || !labels;
+        // §6.3's "Default: both", extended by one rule rather than rewritten: naming any half selects
+        // exactly the halves named, and naming none runs the two that only read. --reply is never in the
+        // default set — a bare `sync` on a six-hourly cron must not post comments into Confluence.
+        var syncLabels = requested.Labels || (!requested.Comments && !requested.Reply);
+        var syncComments = requested.Comments || (!requested.Labels && !requested.Reply);
+        var syncReply = requested.Reply;
 
         var fullConfigPath = Path.GetFullPath(configPath);
 
@@ -186,14 +201,29 @@ internal static class SyncCommand
                 + "like https://your-site.atlassian.net/wiki (PLAN.md §5.1).");
         }
 
-        // The write lock is surfaced, not enforced: this command writes nothing to Confluence, so a
-        // protected space is worth knowing about (the labels and comments being read belong to a space
-        // this repo is not cleared to publish to) without being a refusal. `docume status` does the same.
+        // The write lock is surfaced for the read halves and enforced for --reply. Reading labels and
+        // comments out of a space this repo is not cleared to publish to is worth knowing about but is
+        // not destructive, and `docume status` says it the same way. Posting a comment into that space
+        // is a write, and the lock exists to stop writes (rule §1.4) — a refusal, not a note. --dry-run
+        // is refused too: it would print a plan whose real run cannot happen.
         if (PublishGuard.WriteRefusal(config.Confluence, allowProtectedSpace: false) is { } refusal)
         {
+            if (syncReply)
+            {
+                // Worded here rather than reusing the guard's message, which offers publish's per-run
+                // --allow-protected-space override. `sync` deliberately has no such flag: a reply is a
+                // comment posted into a space this repo was told to stay out of, and no single run of
+                // that is worth waving through. The guard decides; this says what it means for --reply.
+                return Fail(
+                    $"confluence.spaceKey '{spaceKey}' is listed in confluence.protectedSpaces, and "
+                    + "`sync --reply` posts comments into the space it is pointed at. Refused. There is "
+                    + "no per-run override here — remove the entry from docume.json to go live. The "
+                    + "--labels and --comments halves only read, and still work against it.");
+            }
+
             AnsiConsole.MarkupLine($"[yellow]note[/] — {refusal.EscapeMarkup()}");
             AnsiConsole.MarkupLine(
-                "[grey]Reading from it anyway: a sync writes nothing to Confluence.[/]");
+                "[grey]Reading from it anyway: neither of these halves writes to Confluence.[/]");
         }
 
         using var client = ConfluenceClient.Create(new ConfluenceClientOptions { BaseUrl = baseUrl }, credentials);
@@ -204,8 +234,8 @@ internal static class SyncCommand
                     client,
                     config,
                     state,
-                    new SyncPaths(resolvedStatePath, inboxPath),
-                    new SyncScope(syncLabels, syncComments, spaceKey, dryRun),
+                    new SyncPaths(resolvedStatePath, inboxPath, FeedbackInbox.ArchiveBeside(inboxPath)),
+                    new SyncScope(new SyncHalves(syncLabels, syncComments, syncReply), spaceKey, dryRun),
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -239,7 +269,7 @@ internal static class SyncCommand
         var current = state;
         var changed = false;
 
-        if (scope.Labels)
+        if (scope.Halves.Labels)
         {
             var reconciled = await ReconcileLabelsAsync(
                     client,
@@ -253,7 +283,7 @@ internal static class SyncCommand
             changed |= reconciled.Changed;
         }
 
-        if (scope.Comments)
+        if (scope.Halves.Comments)
         {
             var ingested = await IngestCommentsAsync(
                     client,
@@ -267,12 +297,25 @@ internal static class SyncCommand
             changed |= ingested.Changed;
         }
 
+        // Replies go last, after both reads: answering a comment before this run has finished reading
+        // the comments would be replying to a conversation it has not caught up with. Its exit code is
+        // held rather than returned, so a failed reply never costs the cursor moves the read half earned.
+        var replyExit = 0;
+        if (scope.Halves.Reply)
+        {
+            replyExit = await ReplyAsync(client, current, paths, scope.DryRun, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         if (!changed)
         {
-            AnsiConsole.MarkupLine(
-                "[green]IN SYNC[/] — state and inbox already match Confluence. Nothing written.");
+            if (!scope.Halves.Reply)
+            {
+                AnsiConsole.MarkupLine(
+                    "[green]IN SYNC[/] — state and inbox already match Confluence. Nothing written.");
+            }
 
-            return 0;
+            return replyExit;
         }
 
         if (scope.DryRun)
@@ -280,7 +323,7 @@ internal static class SyncCommand
             AnsiConsole.MarkupLine(
                 $"[yellow]--dry-run[/] — {paths.StatePath.EscapeMarkup()} and the inbox left alone.");
 
-            return 0;
+            return replyExit;
         }
 
         StateStore.Save(paths.StatePath, current);
@@ -364,8 +407,155 @@ internal static class SyncCommand
         return new SyncHalf(FeedbackInboxPlanner.Apply(state, plan), Changed: true);
     }
 
+    /// <summary>
+    /// The reply pass (§9 step 5): read the triaged items, post an answer under each comment, close the
+    /// inline ones. The only half that writes to Confluence.
+    /// </summary>
+    /// <returns>0, or 1 when Confluence refused any part of the plan.</returns>
+    private static async Task<int> ReplyAsync(
+        ConfluenceClient client,
+        DocumeState state,
+        SyncPaths paths,
+        bool dryRun,
+        CancellationToken cancellationToken)
+    {
+        AnsiConsole.MarkupLine("Reading triaged feedback…");
+
+        var directories = new[] { paths.InboxPath, paths.ArchivePath };
+        var read = await FeedbackReplyReader.ReadAsync(client, state, directories, cancellationToken)
+            .ConfigureAwait(false);
+
+        var plan = FeedbackReplyPlanner.Plan(read.Observation);
+
+        AnsiConsole.MarkupLine(
+            $"[green]{read.ItemsRead}[/] item(s) in the inbox and archive; "
+            + $"[green]{plan.Replies.Count}[/] awaiting a reply on [green]{read.PagesRead}[/] page(s)"
+            + $"{Unreadable(read.PagesUnpublished)}.");
+
+        RenderReplies(plan);
+
+        if (!plan.HasChanges)
+        {
+            return 0;
+        }
+
+        if (dryRun)
+        {
+            AnsiConsole.MarkupLine(
+                "[yellow]--dry-run[/] — nothing posted to Confluence and no item stamped.");
+
+            return 0;
+        }
+
+        var result = await FeedbackReplyExecutor
+            .ExecuteAsync(client, plan, DateTimeOffset.UtcNow, cancellationToken)
+            .ConfigureAwait(false);
+
+        AnsiConsole.MarkupLine(
+            $"Posted [green]{result.Posted}[/] repl(y/ies), resolved [green]{result.Resolved}[/] "
+            + "inline comment(s).");
+
+        return RenderReplyFailures(result);
+    }
+
+    /// <summary>
+    /// What the reply pass would post and what it declined. Like the ingestion report, nothing here
+    /// prints a comment body — and nothing prints the reply body either, which is composed from a fixed
+    /// sentence plus the triage's own resolution text.
+    /// </summary>
+    private static void RenderReplies(FeedbackReplyPlan plan)
+    {
+        AnsiConsole.WriteLine();
+
+        foreach (var reply in plan.Replies)
+        {
+            AnsiConsole.MarkupLine(
+                $"  [green]reply[/] {reply.Page.EscapeMarkup()} [grey]({reply.Kind} comment "
+                + $"{reply.CommentId.EscapeMarkup()}, {reply.Status.EscapeMarkup()})[/]"
+                + Closing(reply.Resolve));
+        }
+
+        RenderReplySkips(plan);
+    }
+
+    /// <summary>
+    /// Why a comment is or is not closed after the reply. Spelled out per reply rather than counted,
+    /// because "answered but still showing as open" is the state a human has to finish by hand.
+    /// </summary>
+    private static string Closing(ReplyResolvePlan resolve) => resolve switch
+    {
+        ReplyResolvePlan.Planned => " [blue]+resolve[/]",
+        ReplyResolvePlan.AlreadyResolved => " [grey](already resolved)[/]",
+        ReplyResolvePlan.NotClosable => " [yellow](anchor is dangling — resolve it by hand)[/]",
+        ReplyResolvePlan.NoVersion => " [yellow](no version in the response — resolve it by hand)[/]",
+        _ => string.Empty,
+    };
+
+    /// <summary>
+    /// Every item that gets no reply. The two routine reasons are counted; the rest are named, because
+    /// each one is a reviewer whose comment was triaged and will never be answered without a human.
+    /// </summary>
+    private static void RenderReplySkips(FeedbackReplyPlan plan)
+    {
+        var untriaged = plan.SkippedCount(FeedbackReplySkipReason.NotTriaged);
+        if (untriaged > 0)
+        {
+            AnsiConsole.MarkupLine($"  [grey]{untriaged} item(s) not triaged yet.[/]");
+        }
+
+        var answered = plan.SkippedCount(FeedbackReplySkipReason.AlreadyReplied);
+        if (answered > 0)
+        {
+            AnsiConsole.MarkupLine($"  [grey]{answered} item(s) already answered.[/]");
+        }
+
+        var notable = plan.Skipped.Where(skip =>
+            skip.Reason is not (FeedbackReplySkipReason.NotTriaged or FeedbackReplySkipReason.AlreadyReplied));
+
+        foreach (var skip in notable)
+        {
+            var file = Path.GetFileName(skip.FilePath);
+            AnsiConsole.MarkupLine(
+                $"  [yellow]skipped[/] {file.EscapeMarkup()} [grey]({ExplainReply(skip.Reason)})[/]");
+        }
+    }
+
+    private static string ExplainReply(FeedbackReplySkipReason reason) => reason switch
+    {
+        FeedbackReplySkipReason.Unreadable => "the file could not be parsed",
+        FeedbackReplySkipReason.Unaddressable => "it names no page or no Confluence comment id",
+        FeedbackReplySkipReason.PageNotPublished => "its page has never been published",
+        FeedbackReplySkipReason.CommentGone => "the comment no longer exists in Confluence",
+        FeedbackReplySkipReason.AlreadyReplied => "already answered",
+        _ => "not triaged yet",
+    };
+
+    /// <summary>Reports what Confluence refused, and turns any of it into a non-zero exit.</summary>
+    private static int RenderReplyFailures(FeedbackReplyResult result)
+    {
+        foreach (var failure in result.Failures)
+        {
+            var what = failure.Replied ? "resolve" : "reply to";
+            AnsiConsole.MarkupLine(
+                $"  [red]failed[/] to {what} comment {failure.CommentId.EscapeMarkup()} — "
+                + failure.Detail.EscapeMarkup());
+        }
+
+        if (result.StoppedBecause is { Length: > 0 } stopped)
+        {
+            AnsiConsole.MarkupLine($"[red]{stopped.EscapeMarkup()}[/]");
+        }
+
+        return result.Failures.Count == 0 ? 0 : 1;
+    }
+
     private static string Unpublished(int skipped)
         => skipped == 0 ? string.Empty : $" [grey]({skipped} page(s) not published yet, skipped)[/]";
+
+    private static string Unreadable(int unpublished)
+        => unpublished == 0
+            ? string.Empty
+            : $" [yellow]({unpublished} page(s) never published, so their items cannot be answered)[/]";
 
     private static void RenderLabels(LabelSyncPlan plan, IReadOnlyDictionary<string, string> titles)
     {
@@ -504,11 +694,21 @@ internal static class SyncCommand
         return 1;
     }
 
-    /// <summary>Where this run reads and writes: one state file, one inbox directory.</summary>
-    private sealed record SyncPaths(string StatePath, string InboxPath);
+    /// <summary>
+    /// Where this run reads and writes: one state file, one inbox directory, and the archive beside it
+    /// (<see cref="FeedbackInbox.ArchiveBeside"/>) — which the reply pass reads because a triaged item is
+    /// usually already there by the time its reply is due (§9 step 4).
+    /// </summary>
+    private sealed record SyncPaths(string StatePath, string InboxPath, string ArchivePath);
+
+    /// <summary>
+    /// Which halves a run performs. As parsed it is what the flags asked for; by the time it reaches
+    /// <see cref="SyncScope"/> the defaulting rule has been applied.
+    /// </summary>
+    private sealed record SyncHalves(bool Labels, bool Comments, bool Reply);
 
     /// <summary>Which halves run, against which space, and whether anything may be written.</summary>
-    private sealed record SyncScope(bool Labels, bool Comments, string? SpaceKey, bool DryRun);
+    private sealed record SyncScope(SyncHalves Halves, string? SpaceKey, bool DryRun);
 
     /// <summary>One half's outcome: the state it produced, and whether it changed anything.</summary>
     private sealed record SyncHalf(DocumeState State, bool Changed);
