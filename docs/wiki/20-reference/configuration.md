@@ -26,6 +26,7 @@ environment and from nowhere else.
 
 ```json
 {
+  "$schema": "https://raw.githubusercontent.com/moberghr/docu-me/main/schema/docume.schema.json",
   "confluence": {
     "baseUrl": "https://example.atlassian.net/wiki",
     "spaceKey": "DOCS",
@@ -50,7 +51,19 @@ environment and from nowhere else.
 ```
 
 Three fields are required and validated on load: `confluence.baseUrl`, `confluence.spaceKey` and
-`wiki.root`. Everything else has the default shown above.
+`wiki.root`. `docume init` writes a working file with all three set.
+
+**The block above is an example, not a list of defaults.** Four of its values are illustrations, and
+the real default for each is empty:
+
+| Field | Actual default | What the example shows instead |
+|---|---|---|
+| `confluence.spaceId` | absent — resolved from `spaceKey` on first use | a numeric id |
+| `confluence.rootPageId` | absent — publish under the space root | a numeric id |
+| `confluence.protectedSpaces` | `[]` — **no space is write-locked** | one locked space |
+| `wiki.extraPages` | `[]` | one re-included file |
+
+Every other field does default to the value shown.
 
 Two are worth a second look:
 
@@ -58,9 +71,18 @@ Two are worth a second look:
   under `a/b/README.md`, which hangs under `a/README.md`. A directory with no index page is skipped
   rather than synthesized: its children hang from the nearest index above it, because inventing a page
   no author wrote would break the one-way rule.
-- **`confluence.protectedSpaces`** is a write lock. A space listed here is refused, and the only way
-  past it is `--allow-protected-space` for a single run. There is no config value that grants it
-  permanently, so removing the lock is a reviewed commit rather than a flag somebody stops reading.
+- **`confluence.protectedSpaces`** is a write lock, and it starts empty: a fresh `docume init` locks
+  nothing. A space listed here is refused, and the only way past it is `--allow-protected-space` for a
+  single run. There is no config value that grants it permanently, so removing the lock is a reviewed
+  commit rather than a flag somebody stops reading.
+
+### `$schema` is the only check on a misspelled key
+
+`docume init` writes the `$schema` line, and it earns its place the moment you hand-edit the file. The
+loader binds the keys it recognizes and drops the rest without a word: write `protectedSpace` for
+`protectedSpaces` and the write lock is simply off, on every run, with nothing printed. The schema sets
+`additionalProperties: false` on every object, so a schema-aware editor flags the typo as you type it.
+That is the only place a misspelled key is ever reported.
 
 ## Page frontmatter
 
@@ -105,6 +127,7 @@ Machine-owned, one entry per page:
       "contentHash": "sha256:...",
       "publishedVersion": 6,
       "attachments": { "mermaid-abc123.svg": "sha256:..." },
+      "diagramWidths": { "mermaid-abc123.svg": "241" },
       "approval": { "status": "approved", "approvedVersion": 6 },
       "stale": false,
       "feedbackCursor": "2026-08-01T10:00:00Z"
@@ -122,6 +145,18 @@ The two top-level shas answer different questions and are set by different thing
 
 Using the publish sha as a drift baseline would report zero drift on a repo that publishes on every
 merge, which is every repo that has automated this properly.
+
+`diagramWidths` is the one per-page field that is not bookkeeping about the page itself: it records the
+pixel width measured from each rendered diagram, which is the `ac:width` its image carries in Confluence.
+It is remembered rather than re-derived because a publish re-renders only the diagrams whose bytes it
+uploads, so a run that edits a page's *text* would otherwise republish its unchanged diagram without a
+width, and the image would fall back to Confluence's native scaling. `docume publish --force` re-renders
+everything and re-measures, which is also how a page picks a width up after a renderer upgrade changed
+the layout without changing the diagram source.
+
+`approval` carries three more keys than the example shows: `approvedBy`, `approvedAt` and a `history`
+array. [Approval and drift](../10-concepts/approval-and-drift.md) covers what each one means, including
+why the first of them always reads `unknown`.
 
 ## Excluding files
 
