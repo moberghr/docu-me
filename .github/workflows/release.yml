@@ -112,6 +112,13 @@ jobs:
           set -euo pipefail
           notes="$RUNNER_TEMP/release-notes.md"
 
+          # The plugin's own description, so the entry pasted into the Moberg marketplace cannot drift
+          # from the one plugin.json ships — that string is what the /plugin Discover list shows before
+          # anything is fetched. Read into a variable rather than written inline for a second reason:
+          # bash does not rescan an expanded value, so the backticks around `docume` stay literal here
+          # without the hand-escaping the rest of this unquoted heredoc needs.
+          description=$(jq -r '.description' plugin/.claude-plugin/plugin.json)
+
           # The install story of this exact version, written into the release rather than left in a
           # README that describes whatever `main` currently is.
           cat > "$notes" <<EOF
@@ -146,6 +153,7 @@ jobs:
               "path": "plugin",
               "ref": "$TAG"
             },
+            "description": "$description",
             "category": "documentation"
           }
           \`\`\`

@@ -126,6 +126,24 @@ public sealed partial class PluginManifestTests
     }
 
     [Fact]
+    public void The_marketplace_entry_in_the_README_describes_the_plugin_the_same_way()
+    {
+        var entry = ReadmeEntry();
+
+        Value(entry, "name").ShouldBe(Value(Manifest(), "name"));
+
+        // The third carrier of the description, and the one a human actually pastes into the Moberg
+        // marketplace — so it is the copy real users read in the Discover list, before anything is
+        // fetched. A truncated one advertises the plugin with half its sentence and nothing objects:
+        // no build step reads this snippet, and the marketplace it lands in is another repository.
+        // The_marketplace_entry_and_the_manifest_describe_the_same_plugin holds the in-repo copy to the
+        // same string; between them, all three carriers say one thing.
+        Value(entry, "description").ShouldBe(
+            Value(Manifest(), "description"),
+            "plugin/README.md's pasteable marketplace entry and plugin.json describe the plugin differently.");
+    }
+
+    [Fact]
     public void Every_skill_in_the_tree_is_discoverable_without_being_listed()
     {
         var skillsDirectory = Path.Combine(PluginDirectory, "skills");
@@ -276,6 +294,31 @@ public sealed partial class PluginManifestTests
         entry.ShouldNotBeNull($"marketplace.json lists no plugin named '{PluginName}'.");
 
         return entry;
+    }
+
+    /// <summary>
+    /// The copy-pasteable git-subdir marketplace entry in <c>plugin/README.md</c>: the fenced json block
+    /// carrying the <c>git-subdir</c> source. Parsed rather than pattern-matched, so a snippet that is not
+    /// valid json fails here rather than on the person who pastes it into the other repository.
+    /// </summary>
+    private static JsonObject ReadmeEntry()
+    {
+        var readme = File.ReadAllText(Path.Combine(PluginDirectory, "README.md"));
+
+        var blocks = readme
+            .Split("```json", StringSplitOptions.None)
+            .Skip(1)
+            .Select(block => block.Split("```", StringSplitOptions.None)[0])
+            .Where(block => block.Contains("git-subdir", StringComparison.Ordinal))
+            .ToList();
+
+        blocks.Count.ShouldBe(1, "plugin/README.md should carry exactly one git-subdir marketplace entry.");
+
+        var node = JsonNode.Parse(blocks[0]);
+
+        node.ShouldNotBeNull("plugin/README.md's marketplace entry is empty.");
+
+        return (JsonObject)node;
     }
 
     private static JsonObject Read(string path)

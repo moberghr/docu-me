@@ -204,6 +204,26 @@ public sealed class ReleaseWorkflowTests
             customMessage: "The marketplace entry in the release notes is not pinned to the tag being released.");
     }
 
+    [Fact]
+    public void The_release_notes_describe_the_plugin_the_way_plugin_json_does()
+    {
+        var notes = Run(Steps()[IndexOfRun("gh release create")]);
+
+        // The description is what the /plugin Discover list shows before anything is fetched, so the
+        // pasted entry needs it — an entry without one advertises the plugin as a blank line. It is read
+        // out of plugin.json at release time rather than retyped here, which keeps this file from becoming
+        // a third copy to drift, and has a second payoff: bash does not rescan an expanded value, so the
+        // backticks inside the description stay literal without the escaping the rest of this unquoted
+        // heredoc needs. Retyping it inline is how `docume` becomes a command substitution.
+        notes.ShouldContain(
+            "description=$(jq -r '.description' plugin/.claude-plugin/plugin.json)",
+            customMessage: "The release notes stopped deriving the plugin description from plugin.json.");
+
+        notes.ShouldContain(
+            "\"description\": \"$description\",",
+            customMessage: "The marketplace entry in the release notes carries no description (§12).");
+    }
+
     private static string RepoRoot { get; } = Locate();
 
     private static string WorkflowPath { get; } =

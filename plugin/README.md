@@ -42,7 +42,7 @@ marketplace lives in another repository, so this entry has to be added there by 
     "path": "plugin",
     "ref": "v0.1.0"
   },
-  "description": "The generative half of the DocuMe docs lifecycle: write, refresh and correct a repo-based wiki that publishes to Confluence.",
+  "description": "The generative half of the DocuMe docs lifecycle: write, refresh and correct a repo-based wiki that publishes to Confluence. Every skill's output is a pull request, and only the `docume` CLI talks to Confluence.",
   "category": "documentation"
 }
 ```
