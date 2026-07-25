@@ -2,6 +2,7 @@
 sources:
   - src/DocuMe.Core/Markdown/*.cs
   - src/DocuMe.Core/Acceptance/*.cs
+  - templates/tools/*.mjs
   - tests/golden/**
 ---
 
@@ -102,6 +103,18 @@ Rendering happens at publish. `convert` counts diagrams without starting a proce
 pull request.
 
 > [!WARNING]
-> Not every mermaid dialect renders. A diagram the renderer rejects fails its page rather than
-> publishing a broken image reference, so a new diagram is worth a `convert --render-mermaid` before
-> the pull request.
+> Not every mermaid dialect renders. A rejected diagram fails its page rather than publishing a
+> broken image reference, so a new diagram is worth a `convert --render-mermaid` before the pull
+> request.
+
+The renderer is a reimplementation of mermaid rather than mermaid itself, so it accepts a subset.
+These header spellings are rejected, and both of them render on GitHub, which is the case where the
+repository gives you no warning of its own:
+
+| Header | Why it fails |
+|---|---|
+| `pie` | The renderer does not implement pie charts |
+| `graph TD;` | A trailing semicolon on the header line. `graph TD` renders |
+
+`graph`, `flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram-v2`, `erDiagram` and
+`xychart-beta` all render.

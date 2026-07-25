@@ -39,6 +39,8 @@ usually means something on an existing page should have been a table.
 preferences:
 
 - Every page declares at least one `sources` glob, and every glob matches a file that exists.
+- Every shipped path is covered by some page's globs, so nothing DocuMe hands over is invisible to
+  `docume drift`.
 - The whole wiki converts with **zero failures and zero degradations** under the strict policy.
   DocuMe's own docs do not use constructs DocuMe converts badly.
 - Titles are unique, and every relative link resolves to a page in the tree.

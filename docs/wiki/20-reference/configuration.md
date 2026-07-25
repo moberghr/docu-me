@@ -3,6 +3,7 @@ sources:
   - src/DocuMe.Core/Config/*.cs
   - src/DocuMe.Core/State/*.cs
   - src/DocuMe.Core/Scaffolding/*.cs
+  - schema/*.json
 ---
 
 # Configuration and State

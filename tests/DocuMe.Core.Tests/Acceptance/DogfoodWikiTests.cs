@@ -32,6 +32,37 @@ public sealed class DogfoodWikiTests
     private static readonly HashSet<string> SkippedDirectories =
         new(StringComparer.Ordinal) { ".git", ".mtk", "bin", "obj", "node_modules" };
 
+    /// <summary>
+    /// What a consumer receives: the tool, the plugin, the files <c>init</c> scaffolds, the composite
+    /// action and the config schema. Everything else in the repo (tests, the build loop, CI for this
+    /// repository) is how DocuMe is made rather than what it hands over, and the wiki documents the
+    /// product.
+    /// </summary>
+    private static readonly string[] ShippedRoots =
+        ["actions/", "plugin/", "schema/", "src/", "templates/"];
+
+    /// <summary>
+    /// Shipped files no page derives from, each for a stated reason. Adding a line here is a decision
+    /// that an artifact needs no page; leaving it out is the default.
+    /// </summary>
+    private static readonly HashSet<string> UndocumentedByDesign = new(StringComparer.Ordinal)
+    {
+        // Project plumbing: version, analyzer and packaging settings, described by the release notes
+        // and the house standards rather than by a wiki page about DocuMe's behaviour.
+        "src/DocuMe.Cli/DocuMe.Cli.csproj",
+        "src/DocuMe.Core/DocuMe.Core.csproj",
+
+        // The plugin's own README is documentation, not a documented artifact. Pointing a wiki page's
+        // sources at it would report "the docs changed, so the docs may need changing".
+        "plugin/README.md",
+    };
+
+    private const string UncoveredMessage =
+        "A shipped file no page's `sources` glob covers can never arrive as drift, so the page "
+        + "describing it goes stale with nothing reporting it (docs/wiki/_meta/GAPS.md, \"Shipped but "
+        + "no page describes it\"). Either add a glob to the page that describes it, or add it to "
+        + "UndocumentedByDesign with the reason. Uncovered:";
+
     [Fact]
     public void The_wiki_loads_as_a_tree_that_can_be_published()
     {
@@ -113,6 +144,34 @@ public sealed class DogfoodWikiTests
             + "with no error anywhere. Dead globs:";
 
         dead.ShouldBeEmpty(message);
+    }
+
+    [Fact]
+    public void Every_shipped_path_reaches_some_page_through_its_sources()
+    {
+        var tree = Load();
+
+        var shipped = RepoFiles()
+            .Where(file => ShippedRoots.Any(root => file.StartsWith(root, StringComparison.Ordinal)))
+            .Where(file => !UndocumentedByDesign.Contains(file))
+            .ToList();
+
+        var report = DriftPlanner.Plan("baseline", "head", shipped, tree.Pages);
+
+        var covered = report.Pages
+            .SelectMany(page => page.Matches.SelectMany(match => match.Files))
+            .ToHashSet(StringComparer.Ordinal);
+
+        // Vacuous-pass guards: a shipped list that walked nothing, or a plan that matched nothing,
+        // would make the assertion below pass by describing an empty repo.
+        shipped.Count.ShouldBeGreaterThan(20);
+        covered.ShouldNotBeEmpty();
+
+        var invisible = shipped
+            .Where(file => !covered.Contains(file))
+            .ToList();
+
+        invisible.ShouldBeEmpty(UncoveredMessage);
     }
 
     [Fact]

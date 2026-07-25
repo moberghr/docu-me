@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using DocuMe.Core.Acceptance;
 using DocuMe.Core.Markdown;
 using DocuMe.Core.Tests.Markdown;
@@ -21,7 +22,7 @@ namespace DocuMe.Core.Tests.Acceptance;
 /// It skips with a reason when <c>node_modules</c> is absent.
 /// </para>
 /// </remarks>
-public sealed class MermaidAcceptanceTests : IDisposable
+public sealed partial class MermaidAcceptanceTests : IDisposable
 {
     private const string RenderedSvg = """<svg width="1" height="1"/>""";
 
@@ -43,8 +44,9 @@ public sealed class MermaidAcceptanceTests : IDisposable
         // beautiful-mermaid 1.1.3 refuses: `graph TD;` (a trailing semicolon on the header, which
         // mermaid.js and GitHub both accept) and `pie` (not implemented). PLAN.md §4 line 128 calls
         // the mechanism "Proven on AurServices (59 diagrams)"; on a 27-page corpus it is already
-        // 2-for-4, which is what makes the AurServices run (gate-m1-aurservices-files) worth doing
-        // before M2 rather than after.
+        // 2-for-4, which is what makes the AurServices run worth doing at all. That run is M7 Aur
+        // adoption now: gate-m1-aurservices-files was closed without action, and the dialect census
+        // moved with it (.claude/references/decisions.md).
         var conversion = ConversionAcceptance.RunDirectory(GoldenCorpus.Directory, GoldenCorpus.Resolvers);
         conversion.FailedPageCount.ShouldBe(0);
 
@@ -80,6 +82,47 @@ public sealed class MermaidAcceptanceTests : IDisposable
                 new ConstructCount("pie title Pets", 1),
                 new ConstructCount("sequenceDiagram", 1),
             ]);
+    }
+
+    [Fact]
+    public async Task The_conversion_page_names_exactly_the_headers_the_real_renderer_rejects()
+    {
+        var script = BundledRenderScript.TryFind();
+        Assert.SkipUnless(script is not null, BundledRenderScript.DependencyMissingReason);
+
+        var conversion = ConversionAcceptance.RunDirectory(GoldenCorpus.Directory, GoldenCorpus.Resolvers);
+
+        var report = await MermaidAcceptance.RenderDiagramsAsync(
+            conversion,
+            new MermaidRenderer(script!),
+            TestContext.Current.CancellationToken);
+
+        var rejected = report.Renders!.Failures
+            .SelectMany(failure => failure.ByDialect.Select(dialect => dialect.Construct))
+            .ToList();
+
+        var claimed = ClaimedRejectedHeaders();
+
+        // Vacuous-pass guards. An empty rejected set (a renderer version that accepts everything the
+        // corpus holds) or an empty table would make both directions below pass on nothing.
+        rejected.ShouldNotBeEmpty();
+        claimed.ShouldNotBeEmpty();
+
+        // Forward: the direction that rots silently. A renderer version that starts refusing a new
+        // dialect leaves the page describing a subset it no longer accepts, and nothing else looks.
+        var unnamed = rejected
+            .Where(header => !claimed.Exists(claim => header.StartsWith(claim, StringComparison.Ordinal)))
+            .ToList();
+
+        unnamed.ShouldBeEmpty(UnnamedMessage);
+
+        // Reverse: the over-claim. A renderer version that starts rendering `pie` leaves the page
+        // warning a reader away from a diagram that now works.
+        var stale = claimed
+            .Where(header => !rejected.Exists(construct => construct.StartsWith(header, StringComparison.Ordinal)))
+            .ToList();
+
+        stale.ShouldBeEmpty(StaleMessage);
     }
 
     [Fact]
@@ -192,6 +235,25 @@ public sealed class MermaidAcceptanceTests : IDisposable
         report.AllRendered.ShouldBeTrue();
     }
 
+    /// <summary>
+    /// The header spellings <c>20-reference/conversion.md</c> tells a reader are rejected: the first
+    /// column of the table under "Mermaid". A table rather than the sentence it replaced, because a
+    /// claim about what does not work has to be readable by the thing that knows.
+    /// </summary>
+    private static List<string> ClaimedRejectedHeaders()
+    {
+        var page = File.ReadAllText(
+            Path.Combine(RepoRoot, "docs", "wiki", "20-reference", "conversion.md"));
+
+        var section = MermaidSection().Match(page);
+        section.Success.ShouldBeTrue($"No \"## Mermaid\" section in {ConversionPagePath}.");
+
+        return RejectedRow()
+            .Matches(section.Value)
+            .Select(row => row.Groups["header"].Value)
+            .ToList();
+    }
+
     private Task<DiagramRenderReport> RunAsync(params DiagramOccurrence[] diagrams) =>
         RunAsync(WriteRejectsPieStub(), diagrams);
 
@@ -241,5 +303,52 @@ public sealed class MermaidAcceptanceTests : IDisposable
         var path = Path.Combine(_stubDirectory, name);
         File.WriteAllText(path, body);
         return path;
+    }
+
+    private const string ConversionPagePath = "docs/wiki/20-reference/conversion.md";
+
+    private const string UnnamedMessage =
+        "The real renderer rejects a header the Mermaid table in " + ConversionPagePath + " does not "
+        + "name, so a reader whose diagram GitHub renders gets no warning from the page. Add a row. "
+        + "Unnamed:";
+
+    private const string StaleMessage =
+        "The Mermaid table in " + ConversionPagePath + " names a header the real renderer no longer "
+        + "rejects, so the page warns a reader off a diagram that works. Drop the row. Stale:";
+
+    /// <summary>The "## Mermaid" section, bounded at the next heading so the table below it is the one read.</summary>
+    [GeneratedRegex(
+        @"^## Mermaid$.*?(?=^\#{2,3} |\z)",
+        RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.ExplicitCapture,
+        matchTimeoutMilliseconds: 1000)]
+    private static partial Regex MermaidSection();
+
+    /// <summary>
+    /// A table row whose first cell is a code span: the header spellings. The table's own header row
+    /// and its separator carry no backticks, which is what keeps them out.
+    /// </summary>
+    [GeneratedRegex(
+        @"^\|\s*`(?<header>[^`]+)`\s*\|",
+        RegexOptions.Multiline | RegexOptions.ExplicitCapture,
+        matchTimeoutMilliseconds: 1000)]
+    private static partial Regex RejectedRow();
+
+    private static string RepoRoot { get; } = Locate();
+
+    /// <summary>Walks up to the directory holding <c>DocuMe.slnx</c>: the page ships in the tree.</summary>
+    private static string Locate()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
+             directory is not null;
+             directory = directory.Parent)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "DocuMe.slnx")))
+            {
+                return directory.FullName;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"No DocuMe.slnx above {AppContext.BaseDirectory}, so {ConversionPagePath} cannot be found.");
     }
 }
