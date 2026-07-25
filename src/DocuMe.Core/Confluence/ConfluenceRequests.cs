@@ -42,3 +42,10 @@ internal sealed record PageNestedBodyWrite(PageBodyWrite Storage);
 internal sealed record PageBodyWrite(string Representation, string Value);
 
 internal sealed record VersionWrite(int Number, string? Message);
+
+/// <summary>
+/// One label to add, named after the v1 <c>LabelCreate</c> schema, which requires both members. Sent
+/// as an array: the endpoint accepts either a bare object or an array, and an array is the shape that
+/// does not change when a caller adds a second label.
+/// </summary>
+internal sealed record LabelCreate(string Prefix, string Name);

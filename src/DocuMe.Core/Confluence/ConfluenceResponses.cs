@@ -21,6 +21,11 @@ namespace DocuMe.Core.Confluence;
 /// numeric member, so a version arriving as <c>"3"</c> still parses.
 /// </para>
 /// </remarks>
+/// <remarks>
+/// Shared with the two v1 endpoints DocuMe uses, whose <c>ContentArray</c> and <c>LabelArray</c>
+/// schemas wrap their results in the same <c>results</c> member. The extra members v1 adds
+/// (<c>start</c>, <c>limit</c>, <c>size</c>) are simply not read.
+/// </remarks>
 internal sealed record MultiEntityResult<T>(IReadOnlyList<T>? Results);
 
 internal sealed record SpaceBulk(string? Id, string? Key, string? Name);
@@ -34,6 +39,15 @@ internal sealed record PageBulk(
     BodyBulk? Body);
 
 internal sealed record VersionBulk(int? Number);
+
+/// <summary>
+/// The v1 <c>Content</c> schema, narrowed to what an attachment upload answers with. v1 marks only
+/// <c>type</c> and <c>status</c> required, so everything DocuMe reads is checked by the mapper.
+/// </summary>
+internal sealed record ContentBulk(string? Id, string? Title, VersionBulk? Version);
+
+/// <summary>The v1 <c>Label</c> schema, whose four members are all required.</summary>
+internal sealed record LabelBulk(string? Prefix, string? Name, string? Id, string? Label);
 
 internal sealed record BodyBulk(BodyType? Storage);
 

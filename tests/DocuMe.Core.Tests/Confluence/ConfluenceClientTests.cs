@@ -22,8 +22,18 @@ public sealed class ConfluenceClientTests
     private const string Email = "bot@example.com";
     private const string ApiToken = "very-secret-token";
     private const string SpaceId = "98304";
+    private const string PageId = "65601";
+    private const string FilePart = "file";
+
+    /// <summary>Flattened the way PLAN.md §7 names an attachment: underscores, and longer than a filename.</summary>
+    private const string DiagramName = "docs_architecture_data_flow.svg";
+
+    private const string Svg = """<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>""";
 
     private static readonly ConfluenceCredentials Credentials = new(Email, ApiToken);
+
+    /// <summary>A field rather than an inline array, which CA1861 rejects as an argument.</summary>
+    private static readonly string[] ApprovedLabel = ["approved"];
 
     [Fact]
     public async Task Finds_a_space_by_its_key()
@@ -644,6 +654,349 @@ public sealed class ConfluenceClientTests
         server.LogEntries.Count.ShouldBe(0);
     }
 
+    /// <summary>
+    /// The multipart shape v1 requires: the file under a part literally named <c>file</c> carrying the
+    /// attachment name, the mandatory <c>minorEdit</c>, and the XSRF opt-out header without which
+    /// Confluence blocks a <c>multipart/form-data</c> request outright.
+    /// </summary>
+    [Fact]
+    public async Task Uploads_an_attachment_as_multipart_with_the_xsrf_header()
+    {
+        using var server = WireMockServer.Start();
+        var body = AttachmentBody;
+        server
+            .Given(Request.Create().WithPath(AttachmentPath).UsingPut())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        var attachment = await client.UploadAttachmentAsync(
+            new ConfluenceAttachmentUpload(PageId, DiagramName, Encoding.UTF8.GetBytes(Svg), "image/svg+xml"),
+            TestContext.Current.CancellationToken);
+
+        attachment.Id.ShouldBe("att77830");
+        attachment.Title.ShouldBe(DiagramName);
+        attachment.Version.ShouldBe(2);
+
+        var request = LastRequest(server);
+        request.Method.ShouldBe("PUT");
+        request.Headers!["X-Atlassian-Token"].Single().ShouldBe("nocheck");
+
+        // .NET writes the part name as a bare token (name=file, not name="file") and emits the file
+        // name twice — filename= plus the RFC 5987 filename*=utf-8''… — which is what Confluence has
+        // to agree with about the stored attachment name (sandbox item 16).
+        var multipart = MultipartBody(server);
+        multipart.ShouldContain($"name={FilePart}");
+        multipart.ShouldContain($"filename={DiagramName}");
+        multipart.ShouldContain("Content-Type: image/svg+xml");
+        multipart.ShouldContain(Svg);
+        multipart.ShouldContain("name=minorEdit");
+        multipart.ShouldContain("true");
+    }
+
+    /// <summary>
+    /// v1 offers both verbs on this path and they are not interchangeable: <c>POST</c> is create-only
+    /// and answers 400 when the content already has an attachment with that filename, while <c>PUT</c>
+    /// stores a new version. Because §6.2 uploads only the attachments whose hash changed, the name
+    /// almost always exists already — so the create-only verb would fail exactly the uploads that
+    /// matter. This stub answers the way the real API does, so picking the wrong verb fails here.
+    /// </summary>
+    [Fact]
+    public async Task Uploads_with_the_verb_that_replaces_an_existing_name_rather_than_the_one_that_rejects_it()
+    {
+        using var server = WireMockServer.Start();
+        var body = AttachmentBody;
+        server
+            .Given(Request.Create().WithPath(AttachmentPath).UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(HttpStatusCode.BadRequest)
+                .WithBody("""{"message":"Cannot add a new attachment with same file name as an existing attachment"}"""));
+        server
+            .Given(Request.Create().WithPath(AttachmentPath).UsingPut())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        var attachment = await client.UploadAttachmentAsync(
+            new ConfluenceAttachmentUpload(PageId, DiagramName, Encoding.UTF8.GetBytes(Svg), "image/svg+xml"),
+            TestContext.Current.CancellationToken);
+
+        attachment.Version.ShouldBe(2);
+        LastRequest(server).Method.ShouldBe("PUT");
+    }
+
+    /// <summary>
+    /// The v1 calls hang off the same <c>/wiki/</c> base address as the v2 ones, by a relative path
+    /// that starts <c>rest/api</c> instead of <c>api/v2</c>. Worth pinning separately: a base URL
+    /// without a trailing slash silently relocated every request once already.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Composes_the_v1_path_off_the_same_base_as_the_v2_calls(bool trailingSlash)
+    {
+        using var server = WireMockServer.Start();
+        var body = AttachmentBody;
+        server
+            .Given(Request.Create().WithPath(AttachmentPath).UsingPut())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server, trailingSlash: trailingSlash);
+        _ = await client.UploadAttachmentAsync(
+            new ConfluenceAttachmentUpload(PageId, DiagramName, Encoding.UTF8.GetBytes(Svg), "image/svg+xml"),
+            TestContext.Current.CancellationToken);
+
+        LastRequest(server).Path.ShouldBe(AttachmentPath);
+    }
+
+    /// <summary>
+    /// Same rule as the page write's null-omission: an absent comment means "do not set one", which is
+    /// a missing part rather than an empty one.
+    /// </summary>
+    [Fact]
+    public async Task An_absent_attachment_comment_is_omitted_rather_than_sent_empty()
+    {
+        using var server = WireMockServer.Start();
+        var body = AttachmentBody;
+        server
+            .Given(Request.Create().WithPath(AttachmentPath).UsingPut())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        _ = await client.UploadAttachmentAsync(
+            new ConfluenceAttachmentUpload(PageId, DiagramName, Encoding.UTF8.GetBytes(Svg), "image/svg+xml"),
+            TestContext.Current.CancellationToken);
+
+        MultipartBody(server).ShouldNotContain("name=comment");
+    }
+
+    [Fact]
+    public async Task An_attachment_comment_is_sent_when_supplied()
+    {
+        using var server = WireMockServer.Start();
+        var body = AttachmentBody;
+        server
+            .Given(Request.Create().WithPath(AttachmentPath).UsingPut())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        _ = await client.UploadAttachmentAsync(
+            new ConfluenceAttachmentUpload(
+                PageId,
+                DiagramName,
+                Encoding.UTF8.GetBytes(Svg),
+                "image/svg+xml",
+                Comment: "Rendered by docume"),
+            TestContext.Current.CancellationToken);
+
+        var multipart = MultipartBody(server);
+        multipart.ShouldContain("name=comment");
+        multipart.ShouldContain("Rendered by docume");
+    }
+
+    /// <summary>
+    /// The multipart counterpart of the create's replay test, and the one that needed proving rather
+    /// than assuming: a <see cref="StreamContent"/> part would be drained by the first attempt and the
+    /// replay would upload an empty file over a working attachment. Buffered parts survive.
+    /// </summary>
+    [Fact]
+    public async Task A_rate_limited_upload_is_replayed_with_the_same_bytes()
+    {
+        using var server = WireMockServer.Start();
+        var body = AttachmentBody;
+        const string scenario = "upload-rate-limited";
+        server
+            .Given(Request.Create().WithPath(AttachmentPath).UsingPut())
+            .InScenario(scenario)
+            .WillSetStateTo("allowed")
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.TooManyRequests));
+        server
+            .Given(Request.Create().WithPath(AttachmentPath).UsingPut())
+            .InScenario(scenario)
+            .WhenStateIs("allowed")
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        var attachment = await client.UploadAttachmentAsync(
+            new ConfluenceAttachmentUpload(PageId, DiagramName, Encoding.UTF8.GetBytes(Svg), "image/svg+xml"),
+            TestContext.Current.CancellationToken);
+
+        attachment.Id.ShouldBe("att77830");
+        server.LogEntries.Count.ShouldBe(2);
+
+        var replayed = MultipartBody(server, index: 1);
+        replayed.ShouldContain(Svg);
+        replayed.ShouldContain(DiagramName);
+    }
+
+    /// <summary>
+    /// Zero bytes means whatever produced the file failed. Uploading it would not error — it would
+    /// store a new version of a working attachment containing nothing, so it never reaches the wire.
+    /// </summary>
+    [Fact]
+    public async Task An_empty_attachment_never_reaches_the_wire()
+    {
+        using var server = WireMockServer.Start();
+        var upload = new ConfluenceAttachmentUpload(PageId, DiagramName, ReadOnlyMemory<byte>.Empty, "image/svg+xml");
+
+        using var client = CreateClient(server);
+        _ = await Should.ThrowAsync<ArgumentException>(
+            () => client.UploadAttachmentAsync(upload, TestContext.Current.CancellationToken));
+
+        server.LogEntries.Count.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task An_authentication_failure_on_an_upload_stops_dead_too()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(AttachmentPath).UsingPut())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Forbidden));
+
+        var upload = new ConfluenceAttachmentUpload(
+            PageId,
+            DiagramName,
+            Encoding.UTF8.GetBytes(Svg),
+            "image/svg+xml");
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceAuthenticationException>(
+            () => client.UploadAttachmentAsync(upload, TestContext.Current.CancellationToken));
+
+        exception.Message.ShouldNotContain(ApiToken);
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// A 200 carrying no attachment is not "nothing to do" — DocuMe just uploaded a file. Reading it
+    /// as success would record a published diagram that is not there.
+    /// </summary>
+    [Fact]
+    public async Task An_upload_Confluence_accepted_without_returning_the_attachment_fails_loud()
+    {
+        using var server = WireMockServer.Start();
+        var body = EmptyResultsBody;
+        server
+            .Given(Request.Create().WithPath(AttachmentPath).UsingPut())
+            .RespondWith(Json(body));
+
+        var upload = new ConfluenceAttachmentUpload(
+            PageId,
+            DiagramName,
+            Encoding.UTF8.GetBytes(Svg),
+            "image/svg+xml");
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceProtocolException>(
+            () => client.UploadAttachmentAsync(upload, TestContext.Current.CancellationToken));
+
+        exception.Message.ShouldContain(DiagramName);
+    }
+
+    /// <summary>
+    /// The v1 label body is an array of <c>{prefix, name}</c>, both required. <c>global</c> is the
+    /// prefix an ordinary human-visible label lives under — the one a reviewer sees and clicks.
+    /// </summary>
+    [Fact]
+    public async Task Adds_labels_as_an_array_with_the_global_prefix()
+    {
+        using var server = WireMockServer.Start();
+        var body = LabelsBody;
+        server
+            .Given(Request.Create().WithPath(LabelPath).UsingPost())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        var labels = await client.AddLabelsAsync(PageId, ApprovedLabel, TestContext.Current.CancellationToken);
+
+        labels.Count.ShouldBe(1);
+        labels[0].Name.ShouldBe("approved");
+        labels[0].Prefix.ShouldBe("global");
+
+        var request = LastRequest(server);
+        request.Headers!["X-Atlassian-Token"].Single().ShouldBe("nocheck");
+
+        var payload = Payload(server);
+        payload.ValueKind.ShouldBe(JsonValueKind.Array);
+        payload[0].GetProperty("prefix").GetString().ShouldBe("global");
+        payload[0].GetProperty("name").GetString().ShouldBe("approved");
+    }
+
+    [Fact]
+    public async Task Adding_no_labels_never_reaches_the_wire()
+    {
+        using var server = WireMockServer.Start();
+
+        using var client = CreateClient(server);
+        _ = await Should.ThrowAsync<ArgumentException>(
+            () => client.AddLabelsAsync(PageId, [], TestContext.Current.CancellationToken));
+
+        server.LogEntries.Count.ShouldBe(0);
+    }
+
+    /// <summary>
+    /// Approval invalidation (PLAN.md §8). The <c>?name=</c> spelling is deliberate: the
+    /// <c>/label/{label}</c> path form cannot express a label containing a slash, and DocuMe's label
+    /// names are consumer-configurable.
+    /// </summary>
+    [Fact]
+    public async Task Removes_a_label_by_query_parameter_and_accepts_an_empty_204()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(LabelPath).UsingDelete())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NoContent));
+
+        using var client = CreateClient(server);
+        await client.RemoveLabelAsync(PageId, "approved", TestContext.Current.CancellationToken);
+
+        var request = LastRequest(server);
+        request.Method.ShouldBe("DELETE");
+        request.Query!["name"].Single().ShouldBe("approved");
+    }
+
+    /// <summary>
+    /// A label name is consumer-configured, so it can carry characters that need escaping. Asserting
+    /// the decoded query value rather than the raw URL keeps this a test of the wire, not of WireMock.
+    /// </summary>
+    [Fact]
+    public async Task A_label_name_needing_escaping_survives_the_query_string()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(LabelPath).UsingDelete())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NoContent));
+
+        using var client = CreateClient(server);
+        await client.RemoveLabelAsync(PageId, "needs review&more", TestContext.Current.CancellationToken);
+
+        LastRequest(server).Query!["name"].Single().ShouldBe("needs review&more");
+    }
+
+    /// <summary>
+    /// A label Confluence refuses arrives as flat prose on a 400, so the message has to name what
+    /// DocuMe was doing for the failure to be actionable.
+    /// </summary>
+    [Fact]
+    public async Task A_rejected_label_names_the_page_and_quotes_confluence()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(LabelPath).UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(HttpStatusCode.BadRequest)
+                .WithBody("""{"message":"The label contains invalid characters"}"""));
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceApiException>(
+            () => client.AddLabelsAsync(PageId, ApprovedLabel, TestContext.Current.CancellationToken));
+
+        exception.Operation.ShouldNotBeNull();
+        exception.Operation!.ShouldContain("approved");
+        exception.Operation.ShouldContain(PageId);
+        exception.Message.ShouldContain("invalid characters");
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
     private static ConfluenceClient CreateClient(
         WireMockServer server,
         int maxRetryAttempts = 2,
@@ -662,6 +1015,15 @@ public sealed class ConfluenceClientTests
     }
 
     private static string ApiPath(string endpoint) => $"/wiki/api/v2/{endpoint}";
+
+    /// <summary>
+    /// The v1 root, which shares the <c>/wiki/</c> base with v2 and differs only after it.
+    /// </summary>
+    private static string LegacyPath(string endpoint) => $"/wiki/rest/api/content/{PageId}/{endpoint}";
+
+    private static string AttachmentPath => LegacyPath("child/attachment");
+
+    private static string LabelPath => LegacyPath("label");
 
     private static IRequestMessage LastRequest(WireMockServer server)
     {
@@ -687,6 +1049,22 @@ public sealed class ConfluenceClientTests
         using var document = JsonDocument.Parse(body!);
 
         return document.RootElement.Clone();
+    }
+
+    /// <summary>
+    /// The raw multipart body of one logged request. Read as bytes rather than text because that is
+    /// what a file upload is; decoding it here keeps the assertions readable, and the fixtures are
+    /// UTF-8 by construction.
+    /// </summary>
+    private static string MultipartBody(WireMockServer server, int index = 0)
+    {
+        var request = server.LogEntries[index].RequestMessage;
+        request.ShouldNotBeNull();
+
+        var bytes = request!.BodyAsBytes;
+        bytes.ShouldNotBeNull();
+
+        return Encoding.UTF8.GetString(bytes!);
     }
 
     private static IResponseBuilder Json(string body)
@@ -769,6 +1147,42 @@ public sealed class ConfluenceClientTests
           "parentId": "131074",
           "version": { "number": 8 },
           "body": { "storage": { "value": "<p>Fresh</p>", "representation": "storage" } }
+        }
+        """;
+
+    /// <summary>
+    /// The v1 <c>ContentArray</c> shape: the same <c>results</c> envelope as v2, plus the paging
+    /// members DocuMe does not read. Version 2 because the interesting upload is a re-upload.
+    /// </summary>
+    private static string AttachmentBody =>
+        """
+        {
+          "results": [
+            {
+              "id": "att77830",
+              "type": "attachment",
+              "status": "current",
+              "title": "docs_architecture_data_flow.svg",
+              "version": { "number": 2 }
+            }
+          ],
+          "start": 0,
+          "limit": 200,
+          "size": 1,
+          "_links": {}
+        }
+        """;
+
+    private static string LabelsBody =>
+        """
+        {
+          "results": [
+            { "prefix": "global", "name": "approved", "id": "10001", "label": "approved" }
+          ],
+          "start": 0,
+          "limit": 200,
+          "size": 1,
+          "_links": {}
         }
         """;
 

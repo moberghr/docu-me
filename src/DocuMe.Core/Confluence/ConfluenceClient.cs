@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -7,9 +8,9 @@ using System.Text.Json.Serialization;
 namespace DocuMe.Core.Confluence;
 
 /// <summary>
-/// Thin client over the Confluence Cloud REST v2 API (PLAN.md §4): the page reads and the page
-/// upsert the publish pipeline is built on (§6.2 step 5). Attachments and labels are still to come,
-/// on v1 endpoints v2 has no equivalent for.
+/// Thin client over the Confluence Cloud REST API (PLAN.md §4): the page reads, the page upsert, the
+/// attachment upsert and the label add/remove the publish and approval pipelines are built on
+/// (§6.2 step 5, §6.3, §8).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,11 +22,21 @@ namespace DocuMe.Core.Confluence;
 /// package would have to be worked around on both counts for the ~12 endpoints DocuMe needs.
 /// </para>
 /// <para>
-/// Endpoints and response shapes are taken from Atlassian's published OpenAPI document rather than
+/// Endpoints and response shapes are taken from Atlassian's published OpenAPI documents rather than
 /// from memory: <c>GET /api/v2/spaces</c> filters by <c>keys</c>, <c>GET /api/v2/pages</c> by
 /// <c>space-id</c> + <c>title</c> + <c>status</c>, both answering
 /// <c>{"results": [...], "_links": {...}}</c>, and <c>body-format=storage</c> is what populates
 /// <c>body.storage.value</c>.
+/// </para>
+/// <para>
+/// Attachments and labels are the "v1 only where v2 lacks" case §4 anticipates, and the only one so
+/// far. It is not a preference: in the v2 document every attachment path is a <c>GET</c> apart from
+/// <c>DELETE /attachments/{id}</c>, and every label path is a <c>GET</c>. So the upload and the label
+/// write go to <c>/rest/api/content/{id}/…</c>, off the same <c>/wiki/</c> base address as the v2
+/// calls. Both carry <c>X-Atlassian-Token: nocheck</c>, which v1 documents as mandatory for the
+/// multipart upload — it accepts <c>multipart/form-data</c> and would otherwise be blocked as
+/// suspected XSRF. The label write is not documented as needing it; it is sent there too because the
+/// header is inert on a JSON body and the alternative is finding out from a blocked bulk publish.
 /// </para>
 /// <para>
 /// The writes go through the same retry pipeline as the reads, which is worth defending because a
@@ -63,8 +74,33 @@ public sealed class ConfluenceClient : IDisposable
     /// <summary>Spelled as a segment rather than a path so the endpoint constants carry no separator.</summary>
     private const string PagesSegment = "pages";
 
-    /// <summary>Content type for every write body.</summary>
+    /// <summary>Content type for every JSON write body.</summary>
     private const string JsonMediaType = "application/json";
+
+    /// <summary>
+    /// The header v1 requires on a <c>multipart/form-data</c> write, without which Confluence blocks
+    /// the request as suspected XSRF. Spelled <c>nocheck</c>, not <c>no-check</c>.
+    /// </summary>
+    private const string XsrfHeader = "X-Atlassian-Token";
+
+    private const string XsrfHeaderValue = "nocheck";
+
+    /// <summary>The multipart part name v1 requires for the file itself.</summary>
+    private const string FilePart = "file";
+
+    /// <summary>
+    /// Required by the v1 schema alongside the file. Always <c>true</c>: an ~80-page publish uploading
+    /// 59 rendered diagrams would otherwise raise 59 notifications and activity-stream entries, which
+    /// is the machine churn the sandbox space exists to keep off people's feeds.
+    /// </summary>
+    private const string MinorEditPart = "minorEdit";
+
+    private const string MinorEditValue = "true";
+
+    private const string CommentPart = "comment";
+
+    /// <summary>The namespace an ordinary, human-visible Confluence label lives in.</summary>
+    private const string GlobalLabelPrefix = "global";
 
     /// <summary>
     /// Web defaults: camelCase, case-insensitive, and a number readable from a JSON string. The
@@ -85,6 +121,20 @@ public sealed class ConfluenceClient : IDisposable
 
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
+
+    /// <summary>
+    /// Which REST surface a request goes to. It decides exactly one thing — whether the XSRF opt-out
+    /// header rides along — but it is spelled out at every call site rather than inferred from the
+    /// path, because "which requests are v1" is the kind of fact that should be stated, not parsed.
+    /// </summary>
+    private enum ApiSurface
+    {
+        /// <summary>REST v2: spaces and pages.</summary>
+        V2,
+
+        /// <summary>REST v1: attachments and labels, which v2 exposes read-only.</summary>
+        V1,
+    }
 
     /// <summary>
     /// Wraps a caller-owned <see cref="HttpClient"/>, which must already carry the base address and
@@ -237,6 +287,7 @@ public sealed class ConfluenceClient : IDisposable
                 path,
                 request,
                 $"creating page '{draft.Title}' in space {draft.SpaceId}",
+                ApiSurface.V2,
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -279,10 +330,157 @@ public sealed class ConfluenceClient : IDisposable
                 path,
                 request,
                 $"updating page {revision.PageId} '{revision.Title}' to version {nextVersion}",
+                ApiSurface.V2,
                 cancellationToken)
             .ConfigureAwait(false);
 
         return MapPage(page, path);
+    }
+
+    /// <summary>
+    /// Uploads a file to a page, replacing whatever is already attached under that name (PLAN.md §6.2
+    /// step 5).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>PUT</c>, not <c>POST</c>, and the difference is the whole point. v1 offers both on the same
+    /// path: <c>POST</c> is "Create attachment", documented to answer <b>400 if the content already has
+    /// an attachment with the same filename</b>, while <c>PUT</c> is "Create or update attachment",
+    /// which stores a new version of an existing name. §6.2 uploads only the attachments whose hash
+    /// changed, so by construction almost every upload DocuMe performs is to a name that already
+    /// exists — the create-only verb would fail exactly the requests that matter and succeed only on
+    /// first publish.
+    /// </para>
+    /// <para>
+    /// That makes this the same shape of upsert as the page write, with one difference worth knowing:
+    /// there is no version to send and so no optimistic lock. A concurrent edit of an attachment
+    /// cannot be detected here the way <see cref="ConfluenceConflictException"/> detects one on a page.
+    /// Attachments are machine-owned (rendered diagrams and repo images), so nothing is expected to be
+    /// racing — but nothing would report it if something were.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired, or attachments are disabled.</exception>
+    /// <exception cref="ConfluenceApiException">
+    /// Any other non-success status, including a page the account cannot see (404) and a file over the
+    /// space's attachment size limit (404, per v1's own documentation).
+    /// </exception>
+    /// <exception cref="ConfluenceProtocolException">The response body is not the documented shape.</exception>
+    public async Task<ConfluenceAttachment> UploadAttachmentAsync(
+        ConfluenceAttachmentUpload upload,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(upload);
+        Validate(upload, nameof(upload));
+
+        var path = $"rest/api/content/{Uri.EscapeDataString(upload.PageId)}/child/attachment";
+        var operation = $"uploading attachment '{upload.FileName}' to page {upload.PageId}";
+
+        using var content = BuildUpload(upload);
+        var response = await SendContentAsync<MultiEntityResult<ContentBulk>>(
+                HttpMethod.Put,
+                path,
+                content,
+                operation,
+                ApiSurface.V1,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var attachments = RequireResults(response, path);
+        if (attachments.Count == 0)
+        {
+            throw new ConfluenceProtocolException(
+                path,
+                $"Confluence accepted the upload of '{upload.FileName}' but returned no attachment");
+        }
+
+        return MapAttachment(attachments[0], path);
+    }
+
+    /// <summary>
+    /// Adds labels to a page without touching the ones already on it, and returns what came back.
+    /// This is the machine half of the approval gesture (PLAN.md §8) and how <c>drift --mark</c> marks
+    /// a page stale (§6.4).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Labels rather than page-body edits is a product invariant, not an implementation choice: a body
+    /// edit bumps the page version, which invalidates the approval it was trying to record
+    /// (.claude/rules/project-specific.md §9.3).
+    /// </para>
+    /// <para>
+    /// v1 documents this as "Does not modify the existing labels", so re-adding a label a page already
+    /// carries is not an error — which is what lets a re-run of <c>drift --mark</c> be safe. Whether
+    /// the response lists only the added labels or every label on the page is not stated; the caller
+    /// gets what Confluence returned rather than an assumption about which.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired, or read-but-not-edit permission.</exception>
+    /// <exception cref="ConfluenceApiException">
+    /// Any other non-success status, including a label with characters Confluence rejects (400).
+    /// </exception>
+    /// <exception cref="ConfluenceProtocolException">The response body is not the documented shape.</exception>
+    public async Task<IReadOnlyList<ConfluenceLabel>> AddLabelsAsync(
+        string pageId,
+        IReadOnlyList<string> labels,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
+        ArgumentNullException.ThrowIfNull(labels);
+        ValidateLabels(labels, nameof(labels));
+
+        var path = $"rest/api/content/{Uri.EscapeDataString(pageId)}/label";
+        var request = labels
+            .Select(label => new LabelCreate(GlobalLabelPrefix, label))
+            .ToArray();
+
+        var response = await WriteAsync<IReadOnlyList<LabelCreate>, MultiEntityResult<LabelBulk>>(
+                HttpMethod.Post,
+                path,
+                request,
+                $"adding label(s) {Quote(labels)} to page {pageId}",
+                ApiSurface.V1,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return RequireResults(response, path)
+            .Select(label => MapLabel(label, path))
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Removes one label from a page. Approval invalidation (PLAN.md §8): once a republish changes
+    /// <c>contentHash</c>, the <c>approved</c> label asserts something that is no longer true, and its
+    /// absence is the re-approval trigger.
+    /// </summary>
+    /// <remarks>
+    /// The <c>?name=</c> spelling rather than the <c>/label/{label}</c> path segment, which Atlassian
+    /// recommends for exactly the reason it matters here: a label containing a <c>/</c> is
+    /// unrepresentable in the path form. DocuMe's own labels are configurable
+    /// (<c>docume.json → labels</c>, §5.1), so the name is not one this client gets to assume.
+    /// </remarks>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired, or read-but-not-edit permission.</exception>
+    /// <exception cref="ConfluenceApiException">Any other non-success status, including an unknown page (404).</exception>
+    public async Task RemoveLabelAsync(
+        string pageId,
+        string label,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(label);
+
+        var path = $"rest/api/content/{Uri.EscapeDataString(pageId)}/label"
+            + $"?name={Uri.EscapeDataString(label)}";
+
+        var (statusCode, body) = await SendAsync(
+                HttpMethod.Delete,
+                path,
+                content: null,
+                ApiSurface.V1,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        // 204 with an empty body is the documented success, and it needs no deserialization.
+        ThrowIfFailed(path, statusCode, body, $"removing label '{label}' from page {pageId}");
     }
 
     public void Dispose()
@@ -295,6 +493,34 @@ public sealed class ConfluenceClient : IDisposable
 
     private static PageNestedBodyWrite StorageBody(string storage)
         => new(new PageBodyWrite(StorageRepresentation, storage));
+
+    /// <summary>
+    /// Builds the <c>multipart/form-data</c> body v1 requires.
+    /// </summary>
+    /// <remarks>
+    /// Every part is a <see cref="ByteArrayContent"/> or a <see cref="StringContent"/>, which is what
+    /// keeps the whole request replayable: those serialize from a buffer, so the resilience handler can
+    /// re-send the same message after a 429. A <see cref="StreamContent"/> part would be drained by the
+    /// first attempt and write nothing on the second, and the upload would "succeed" as an empty file.
+    /// The text parts are UTF-8 <c>text/plain</c>, which is the charset RFC 7578 asks for and
+    /// Atlassian's own note repeats.
+    /// </remarks>
+    private static MultipartFormDataContent BuildUpload(ConfluenceAttachmentUpload upload)
+    {
+        var content = new MultipartFormDataContent();
+
+        var file = new ByteArrayContent(upload.Content.ToArray());
+        file.Headers.ContentType = new MediaTypeHeaderValue(upload.ContentType);
+        content.Add(file, FilePart, upload.FileName);
+        content.Add(new StringContent(MinorEditValue, Encoding.UTF8), MinorEditPart);
+
+        if (upload.Comment is not null)
+        {
+            content.Add(new StringContent(upload.Comment, Encoding.UTF8), CommentPart);
+        }
+
+        return content;
+    }
 
     private static void Validate(ConfluencePageDraft draft, string parameterName)
     {
@@ -315,6 +541,38 @@ public sealed class ConfluenceClient : IDisposable
                 parameterName,
                 revision.CurrentVersion,
                 "A page version read from Confluence is at least 1, and an update sends it incremented by one.");
+        }
+    }
+
+    private static void Validate(ConfluenceAttachmentUpload upload, string parameterName)
+    {
+        RequireField(upload.PageId, "page id", parameterName);
+        RequireField(upload.FileName, "attachment file name", parameterName);
+        RequireField(upload.ContentType, "attachment content type", parameterName);
+
+        // Unlike a page body, an empty attachment has no legitimate meaning: DocuMe only ever uploads
+        // rendered diagrams and repo images, so zero bytes means the producer failed. Uploading it
+        // would not fail — it would store a new version of a working attachment containing nothing.
+        if (upload.Content.IsEmpty)
+        {
+            throw new ArgumentException(
+                $"The attachment '{upload.FileName}' is empty. DocuMe uploads rendered diagrams and "
+                + "repo images, so zero bytes means whatever produced the file failed; publishing it "
+                + "would replace a working attachment with a broken one.",
+                parameterName);
+        }
+    }
+
+    private static void ValidateLabels(IReadOnlyList<string> labels, string parameterName)
+    {
+        if (labels.Count == 0)
+        {
+            throw new ArgumentException("Adding no labels is a request worth not sending.", parameterName);
+        }
+
+        if (labels.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ArgumentException("A label cannot be null or blank.", parameterName);
         }
     }
 
@@ -358,7 +616,12 @@ public sealed class ConfluenceClient : IDisposable
     private async Task<T> ReadAsync<T>(string path, CancellationToken cancellationToken)
         where T : class
     {
-        var (statusCode, body) = await SendAsync(HttpMethod.Get, path, payload: null, cancellationToken)
+        var (statusCode, body) = await SendAsync(
+                HttpMethod.Get,
+                path,
+                content: null,
+                ApiSurface.V2,
+                cancellationToken)
             .ConfigureAwait(false);
 
         ThrowIfFailed(path, statusCode, body);
@@ -369,7 +632,12 @@ public sealed class ConfluenceClient : IDisposable
     private async Task<T?> ReadOrNullWhenMissingAsync<T>(string path, CancellationToken cancellationToken)
         where T : class
     {
-        var (statusCode, body) = await SendAsync(HttpMethod.Get, path, payload: null, cancellationToken)
+        var (statusCode, body) = await SendAsync(
+                HttpMethod.Get,
+                path,
+                content: null,
+                ApiSurface.V2,
+                cancellationToken)
             .ConfigureAwait(false);
 
         if (statusCode == HttpStatusCode.NotFound)
@@ -387,11 +655,29 @@ public sealed class ConfluenceClient : IDisposable
         string path,
         TRequest request,
         string operation,
+        ApiSurface surface,
         CancellationToken cancellationToken)
         where TResponse : class
     {
         var payload = JsonSerializer.Serialize(request, WriteSerializerOptions);
-        var (statusCode, body) = await SendAsync(method, path, payload, cancellationToken)
+
+        // StringContent buffers, so the resilience handler can replay this request on a 429 or 5xx.
+        using var content = new StringContent(payload, Encoding.UTF8, JsonMediaType);
+
+        return await SendContentAsync<TResponse>(method, path, content, operation, surface, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<TResponse> SendContentAsync<TResponse>(
+        HttpMethod method,
+        string path,
+        HttpContent content,
+        string operation,
+        ApiSurface surface,
+        CancellationToken cancellationToken)
+        where TResponse : class
+    {
+        var (statusCode, body) = await SendAsync(method, path, content, surface, cancellationToken)
             .ConfigureAwait(false);
 
         ThrowIfFailed(path, statusCode, body, operation);
@@ -402,17 +688,18 @@ public sealed class ConfluenceClient : IDisposable
     private async Task<(HttpStatusCode StatusCode, string Body)> SendAsync(
         HttpMethod method,
         string path,
-        string? payload,
+        HttpContent? content,
+        ApiSurface surface,
         CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(method, new Uri(path, UriKind.Relative));
-
-        // StringContent buffers, so the resilience handler can replay this request on a 429 or 5xx.
-        // A streamed body would be consumed by the first attempt and silently send nothing on the
-        // second.
-        if (payload is not null)
+        using var request = new HttpRequestMessage(method, new Uri(path, UriKind.Relative))
         {
-            request.Content = new StringContent(payload, Encoding.UTF8, JsonMediaType);
+            Content = content,
+        };
+
+        if (surface == ApiSurface.V1)
+        {
+            request.Headers.Add(XsrfHeader, XsrfHeaderValue);
         }
 
         using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
@@ -488,6 +775,20 @@ public sealed class ConfluenceClient : IDisposable
             page.ParentId,
             page.Version?.Number ?? throw new ConfluenceProtocolException(path, MissingVersionDetail),
             page.Body?.Storage?.Value);
+
+    private static ConfluenceAttachment MapAttachment(ContentBulk attachment, string path)
+        => new(
+            Require(attachment.Id, "id", path),
+            Require(attachment.Title, "title", path),
+            attachment.Version?.Number);
+
+    private static ConfluenceLabel MapLabel(LabelBulk label, string path)
+        => new(
+            Require(label.Name, "name", path),
+            Require(label.Prefix, "prefix", path));
+
+    private static string Quote(IReadOnlyList<string> labels)
+        => string.Join(", ", labels.Select(label => $"'{label}'"));
 
     private static string Require(string? value, string field, string path)
         => string.IsNullOrEmpty(value)

@@ -83,3 +83,49 @@ public sealed record ConfluencePageRevision(
     int CurrentVersion,
     string? ParentId = null,
     string? VersionMessage = null);
+
+/// <summary>
+/// A file to publish alongside a page: a rendered mermaid diagram or a repo image (PLAN.md §6.2
+/// step 5).
+/// </summary>
+/// <param name="PageId">The page to attach it to.</param>
+/// <param name="FileName">
+/// The attachment name, which is what <c>&lt;ri:attachment ri:filename="…"/&gt;</c> in the page body
+/// refers to. DocuMe derives it from the file's path, so it carries underscores and can be long
+/// (the flattening rule in <c>AttachmentName</c>).
+/// </param>
+/// <param name="Content">
+/// The bytes. Deliberately not a <see cref="Stream"/>: the transport replays a rate-limited request,
+/// and a stream would be drained by the first attempt and send nothing on the second. The publish
+/// pipeline has the bytes in hand anyway, having just hashed them to decide the upload was needed.
+/// </param>
+/// <param name="ContentType">
+/// The media type of the part, e.g. <c>image/svg+xml</c>. Load-bearing rather than cosmetic:
+/// Confluence records it as the attachment's media type, and it is what decides whether an
+/// <c>&lt;ac:image&gt;</c> renders inline or degrades to a download link.
+/// </param>
+/// <param name="Comment">
+/// An optional note stored with the attachment version. Omitted from the request entirely when
+/// absent, rather than sent empty.
+/// </param>
+public sealed record ConfluenceAttachmentUpload(
+    string PageId,
+    string FileName,
+    ReadOnlyMemory<byte> Content,
+    string ContentType,
+    string? Comment = null);
+
+/// <summary>An attachment as Confluence stored it.</summary>
+/// <param name="Id">The attachment id, e.g. <c>att77830</c>.</param>
+/// <param name="Title">The stored file name, which is what the page body references.</param>
+/// <param name="Version">
+/// The attachment's version number, or <c>null</c> when the response omitted it. Nullable where a
+/// page's version is not, because the upsert never has to send one back: Confluence versions an
+/// attachment server-side, so a missing number costs an observation, not a publish.
+/// </param>
+public sealed record ConfluenceAttachment(string Id, string Title, int? Version);
+
+/// <summary>A label on a page — the whole of the human approval gesture (PLAN.md §8).</summary>
+/// <param name="Name">The label as a reviewer types it, e.g. <c>approved</c>.</param>
+/// <param name="Prefix">The namespace Confluence files it under; <c>global</c> for a normal label.</param>
+public sealed record ConfluenceLabel(string Name, string Prefix);
