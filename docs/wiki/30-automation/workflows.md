@@ -8,8 +8,16 @@ sources:
 
 [TOC]
 
-Six templates, scaffolded by `docume init`. Each runs `dotnet tool restore` and then the CLI through
-the repo-local tool manifest, so a workflow and a laptop run the same pinned version.
+Six templates, scaffolded by `docume init`. Each adds the DocuMe package feed, runs
+`dotnet tool restore` and then the CLI through the repo-local tool manifest, so a workflow and a laptop
+run the same pinned version.
+
+The feed step is not optional plumbing. `DocuMe.Cli` is published to GitHub Packages rather than
+nuget.org, and GitHub Packages authenticates every read including a public package, so a restore with no
+feed configured resolves the pin against nuget.org alone and fails. Each template reads
+`DOCUME_PACKAGES_TOKEN` and falls back to the workflow's own `GITHUB_TOKEN`, which is enough from a
+repository in the same organisation as the package; from another org, add that secret holding a personal
+access token with `read:packages`.
 
 | Workflow | Fires on | Does |
 |---|---|---|
@@ -68,9 +76,9 @@ the diff.
 
 ## Writing a docs job of your own
 
-Every template opens with the same three lines: install the SDK, `dotnet tool restore`, run `docume`
-through the manifest. A composite action wraps them, so a job you write yourself does not have to get
-them right a seventh time.
+Every template opens with the same four lines: install the SDK, add the package feed,
+`dotnet tool restore`, run `docume` through the manifest. A composite action wraps them, so a job you
+write yourself does not have to get them right a seventh time.
 
 ```yaml
 jobs:
@@ -84,11 +92,13 @@ jobs:
       - uses: moberghr/docu-me/actions@v0
         with:
           args: publish --dry-run
+          packages-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 | Input | Required | Does |
 |---|---|---|
 | `args` | yes | Everything after `docume`, as one string |
+| `packages-token` | no | Token for the GitHub Packages feed, empty by default |
 | `dotnet-version` | no | SDK to install, `10.0.x` by default |
 | `mermaid` | no | Diagram renderer, `auto` by default |
 
@@ -96,6 +106,12 @@ The action names no DocuMe version. It restores your `.config/dotnet-tools.json`
 anything, so the CLI it runs is the one your repo pinned and a DocuMe release cannot change the version
 your CI runs. A repo with no manifest stops with an error naming `docume init`, because the SDK's own
 wording for a missing manifest does not mention DocuMe.
+
+`packages-token` is optional in the schema and needed in practice. A composite action cannot read
+`secrets` for itself, so the feed the CLI lives on has to be handed to it; leave it empty only when your
+repo names that feed in a committed `NuGet.config`. Get it wrong either way and the restore stops with an
+error naming the token, rather than with NuGet's own wording about a package it could not find on
+nuget.org.
 
 `publish` is the only command that renders diagrams, and it renders them by shelling out to Node. Neither
 Node nor `beautiful-mermaid` is on a runner by default, so `mermaid: auto` installs both when `args`

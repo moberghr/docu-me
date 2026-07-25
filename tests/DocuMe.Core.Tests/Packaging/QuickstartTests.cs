@@ -169,7 +169,17 @@ public sealed partial class QuickstartTests
         // Both directions, because each name appears more than once (the export block and the repository
         // secrets). Asserting only that the right names are present lets a typo in the block a reader
         // actually copies pass, which is the one place it costs anything.
-        string[] read = [ConfluenceCredentials.EmailVariable, ConfluenceCredentials.TokenVariable];
+        //
+        // Not every DOCUME_ name belongs to the CLI. The scaffolded workflows read their own secrets —
+        // DOCUME_PACKAGES_TOKEN opens the GitHub Packages feed the pinned tool is restored from, and no
+        // CLI ever sees it. Those are derived from the templates rather than listed here, so the guard
+        // keeps its teeth: a name the README invents is still a name nothing in the tree reads.
+        string[] read =
+        [
+            ConfluenceCredentials.EmailVariable,
+            ConfluenceCredentials.TokenVariable,
+            .. WorkflowVariables(),
+        ];
 
         var invented = CredentialVariable()
             .Matches(readme)
@@ -178,9 +188,10 @@ public sealed partial class QuickstartTests
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        var message = $"README.md tells the reader to set [{string.Join(", ", invented)}], and the CLI reads "
-            + $"only [{string.Join(", ", read)}]. An exported variable nobody reads looks exactly like a "
-            + "missing credential.";
+        var message = $"README.md tells the reader to set [{string.Join(", ", invented)}], and nothing "
+            + $"that ships reads any of them — the CLI and the scaffolded workflows between them read "
+            + $"[{string.Join(", ", read)}]. A variable nobody reads looks exactly like a missing "
+            + "credential.";
 
         invented.ShouldBeEmpty(message);
 
@@ -433,6 +444,22 @@ public sealed partial class QuickstartTests
 
     [GeneratedRegex(@"\bDOCUME_[A-Z0-9_]+", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
     private static partial Regex CredentialVariable();
+
+    /// <summary>
+    /// Every <c>DOCUME_</c> variable the shipped workflow templates read. Read off the templates so a
+    /// secret added to them lands here without anyone remembering to, and a name that appears in neither
+    /// the CLI nor a template is still an invention.
+    /// </summary>
+    private static IEnumerable<string> WorkflowVariables()
+    {
+        var templates = Path.Combine(RepoRoot, "templates", "workflows");
+
+        return Directory
+            .EnumerateFiles(templates, "*.yml")
+            .SelectMany(file => CredentialVariable().Matches(File.ReadAllText(file)).Cast<Match>())
+            .Select(match => match.Value)
+            .Distinct(StringComparer.Ordinal);
+    }
 
     [GeneratedRegex(@"`(?<code>[^`\n]+)`", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
     private static partial Regex CodeSpan();

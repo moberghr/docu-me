@@ -509,6 +509,40 @@ public sealed class CompositeActionTests : IDisposable
     }
 
     /// <summary>
+    /// The other way a restore fails, and the one a consumer cannot diagnose alone: the manifest is
+    /// there, but nothing configured the feed the pinned tool lives on.
+    /// </summary>
+    /// <remarks>
+    /// <c>DocuMe.Cli</c> goes to GitHub Packages and never to nuget.org
+    /// (<c>.github/workflows/release.yml</c>), and GitHub Packages authenticates every read. So a runner
+    /// that adds no feed restores against nuget.org alone and gets "is not found in NuGet feeds
+    /// https://api.nuget.org/v3/index.json" — a message naming the feed it did look in, never the one it
+    /// should have, and never the token that would have opened it. Passing that through unannotated is
+    /// how a consumer's first docs job becomes an unanswerable red check.
+    /// </remarks>
+    [Fact]
+    public void The_restore_step_names_the_feed_when_the_pinned_tool_cannot_be_restored()
+    {
+        var repo = NewConsumerRepo(withManifest: true);
+        var run = RunStep(RestoreStep, repo, dotnetExit: 1);
+
+        run.Code.ShouldNotBe(0, $"A failed restore was allowed to continue.\n{run.Diagnostics}");
+        run.Argv.ShouldBe(["tool", "restore"], "The step no longer reaches `dotnet tool restore`.");
+
+        var annotation = run.Output
+            .Split('\n')
+            .FirstOrDefault(line => line.StartsWith("::error::", StringComparison.Ordinal));
+
+        annotation.ShouldNotBeNull($"The failed restore wrote no ::error:: annotation. Got:\n{run.Output}");
+        annotation.ShouldContain(
+            "packages-token",
+            customMessage: "The refusal does not name the input that fixes it.");
+        annotation.ShouldContain(
+            "read:packages",
+            customMessage: "The refusal does not name the scope a cross-org token needs.");
+    }
+
+    /// <summary>
     /// The drift guard for the executed steps: they are found by name, so a rename fails here rather
     /// than turning every execution test above into a vacuous pass on an empty script.
     /// </summary>
@@ -572,7 +606,12 @@ public sealed class CompositeActionTests : IDisposable
     /// Runs the shipped shell of one step against <paramref name="repo"/>, with a <c>dotnet</c> on
     /// <c>PATH</c> that records its argument list and nothing else.
     /// </summary>
-    private static StepRun RunStep(int step, string repo, string? args = null, string? mermaid = null)
+    private static StepRun RunStep(
+        int step,
+        string repo,
+        string? args = null,
+        string? mermaid = null,
+        int dotnetExit = 0)
     {
         var argv = Path.Combine(repo, "dotnet-argv.txt");
         var outputs = Path.Combine(repo, "github-output.txt");
@@ -580,7 +619,7 @@ public sealed class CompositeActionTests : IDisposable
         {
             // Cleared down to what a runner guarantees, so a variable this repository happens to export
             // cannot stand in for one the action must set itself.
-            ["PATH"] = $"{StubDotnet(repo, argv)}{Path.PathSeparator}{Environment.GetEnvironmentVariable("PATH")}",
+            ["PATH"] = $"{StubDotnet(repo, argv, dotnetExit)}{Path.PathSeparator}{Environment.GetEnvironmentVariable("PATH")}",
             ["HOME"] = repo,
 
             // The runner creates this file before the step; a step appending to an unset path is the
@@ -632,16 +671,18 @@ public sealed class CompositeActionTests : IDisposable
     }
 
     /// <summary>
-    /// A <c>dotnet</c> that records its arguments one per line and exits 0. One per line so the word
-    /// splitting of <c>$ARGS</c> is visible: an argument carrying a space would show up as one line.
+    /// A <c>dotnet</c> that records its arguments one per line and exits
+    /// <paramref name="exitCode"/>. One per line so the word splitting of <c>$ARGS</c> is visible: an
+    /// argument carrying a space would show up as one line. A non-zero code stands in for the failures
+    /// the step has to recognise rather than pass on — a restore that found no feed, above all.
     /// </summary>
-    private static string StubDotnet(string root, string argv)
+    private static string StubDotnet(string root, string argv, int exitCode)
     {
         var bin = Path.Combine(root, "stub-bin");
         var script = $"""
             #!/bin/bash
             printf '%s\n' "$@" > '{argv}'
-            exit 0
+            exit {exitCode}
             """;
         var path = CreateFile(bin, "dotnet", script);
 

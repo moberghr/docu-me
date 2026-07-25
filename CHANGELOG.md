@@ -75,6 +75,11 @@ First release. Everything below is new, so it is grouped by what it does rather 
   a deploy, nightly refresh, and feedback. The publish job closes the feedback loop: after republishing it
   runs `sync --reply`, then carries the state file and the `repliedAt`-stamped items into the `docs/sync` PR
   together, so a reviewer is answered once and only once.
+- Every scaffolded workflow adds the GitHub Packages feed before restoring the pinned CLI. `DocuMe.Cli` is
+  published there and not to nuget.org, and GitHub Packages authenticates every read including a public
+  package, so a restore with no feed configured resolves the pin against a feed that has never held it.
+  The templates read a `DOCUME_PACKAGES_TOKEN` secret and fall back to the job's own `GITHUB_TOKEN`, which
+  is enough within the organisation that owns the package.
 - Every `docume` step in the publish job holds its exit code and one final step turns a failure into a red
   check, after the state has been carried. A publish that fails half way still records the page ids it
   earned, so the next run continues instead of creating those pages a second time; a failed publish also

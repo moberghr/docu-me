@@ -61,6 +61,10 @@ Per-repository pinning is the other half of this and it is what `init` scaffolds
 `.config/dotnet-tools.json` naming the exact version, restored with `dotnet tool restore`. That is how the
 workflows get the CLI, and it is why two repos can sit on different DocuMe versions.
 
+The feed has to be added on the runner too, for the same reason it has to be added here, and the
+scaffolded workflows do it themselves — they read a `DOCUME_PACKAGES_TOKEN` secret and fall back to the
+job's own `GITHUB_TOKEN`. See step 4.
+
 ### 2. Install the Claude Code plugin
 
 The repository is its own marketplace, so it installs directly:
@@ -114,6 +118,12 @@ export DOCUME_CONFLUENCE_TOKEN="<your Atlassian API token>"
 
 For the workflows, as repository secrets: `DOCUME_CONFLUENCE_EMAIL`, `DOCUME_CONFLUENCE_TOKEN`, and
 `ANTHROPIC_API_KEY` for the two that call a skill (`docs-feedback`, `docs-refresh`).
+
+One more, and only from outside Moberg: `DOCUME_PACKAGES_TOKEN`, a PAT with `read:packages`. Every
+scaffolded workflow adds the GitHub Packages feed before restoring the pinned CLI, and it falls back to
+the job's own `GITHUB_TOKEN` — which can read the package from a repository in the same organisation and
+cannot from another one. Without a feed the restore fails on the first docs job with NuGet's own wording,
+which never mentions DocuMe.
 
 **Never put either credential in `docume.json`.** That file is committed. DocuMe reads credentials from the
 environment and from nowhere else.

@@ -29,6 +29,17 @@ inputs:
       a newer SDK alongside.
     required: false
     default: '10.0.x'
+  packages-token:
+    description: >-
+      Token for the GitHub Packages feed DocuMe.Cli is published to (PLAN.md §12). GitHub Packages
+      authenticates every read, including a public package, so without it the restore below sees
+      nuget.org alone and cannot find the pinned tool. The calling workflow's own GITHUB_TOKEN is
+      enough from a repository in the same organisation as the package; from another org, a PAT with
+      `read:packages`. A composite action cannot read `secrets` itself, which is why this is an input
+      rather than something the action could have arranged on its own. Leave it empty only when the
+      repo configures the feed another way, e.g. a committed NuGet.config.
+    required: false
+    default: ''
   mermaid:
     description: >-
       Whether to install the diagram renderer's toolchain (Node + beautiful-mermaid).
@@ -45,9 +56,30 @@ runs:
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
 
+    # DocuMe.Cli is on GitHub Packages, not nuget.org (PLAN.md §12), and GitHub Packages authenticates
+    # every read — a public package included. Skipped when no token is passed, because a repo whose
+    # committed NuGet.config already names the feed needs nothing from us; the restore below is what
+    # says so when that assumption turns out to be wrong.
+    - name: Configure the DocuMe package feed
+      if: inputs.packages-token != ''
+      shell: bash
+      env:
+        FEED_USER: ${{ github.actor }}
+        FEED_TOKEN: ${{ inputs.packages-token }}
+      run: >-
+        dotnet nuget add source https://nuget.pkg.github.com/moberghr/index.json
+        --name docume
+        --username "$FEED_USER"
+        --password "$FEED_TOKEN"
+        --store-password-in-clear-text
+
     # The guard, not decoration: `dotnet tool restore` in a repo with no manifest fails with the SDK's
     # own wording, which says nothing about DocuMe. A consumer who copied a workflow in by hand
     # instead of running `docume init` lands here, so this is the one place that can name the fix.
+    #
+    # The second refusal is the same argument for the other half. A restore that resolves the pin
+    # against nuget.org alone fails with NuGet's "is not found in NuGet feeds", which names the feed it
+    # DID look in and never the one it should have — so the consumer learns nothing about the token.
     - name: Restore the pinned docume
       shell: bash
       run: |
@@ -58,7 +90,10 @@ runs:
           exit 1
         fi
 
-        dotnet tool restore
+        if ! dotnet tool restore; then
+          echo "::error::\`dotnet tool restore\` could not restore docume. DocuMe.Cli is published to GitHub Packages, which authenticates every read: pass the \`packages-token\` input (this repo's GITHUB_TOKEN in the same organisation as the package, otherwise a PAT with read:packages), or name the feed in a committed NuGet.config."
+          exit 1
+        fi
 
     # Publish is the ONLY DocuMe command that renders diagrams: it shells out to Node and the renderer
     # named by `mermaid.renderer` once per ```mermaid fence (PLAN.md §4, §6.2 step 3). Neither half is on

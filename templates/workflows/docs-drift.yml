@@ -41,6 +41,26 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # DocuMe.Cli is published to GitHub Packages, not nuget.org (PLAN.md §12), and GitHub Packages
+      # authenticates every read — including a public package. Without this step the restore below sees
+      # nuget.org alone and fails with NuGet's own wording, which names neither DocuMe nor the feed it
+      # should have looked in. That failure is a consumer's FIRST docs job, on their first push.
+      #
+      # EDIT BEFORE USE only in two cases. `secrets.GITHUB_TOKEN` is enough from a repository in the same
+      # organisation as the package; from another org, add a `DOCUME_PACKAGES_TOKEN` secret holding a PAT
+      # with `read:packages`. And if this repo commits a NuGet.config containing <clear />, add the feed
+      # there instead — a repo-level clear discards the source this step writes at the user level.
+      - name: Configure the DocuMe package feed
+        env:
+          FEED_USER: ${{ github.actor }}
+          FEED_TOKEN: ${{ secrets.DOCUME_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+        run: >-
+          dotnet nuget add source https://nuget.pkg.github.com/moberghr/index.json
+          --name docume
+          --username "$FEED_USER"
+          --password "$FEED_TOKEN"
+          --store-password-in-clear-text
+
       # §12: consumers pin the tool version in .config/dotnet-tools.json, so every workflow restores
       # the manifest instead of installing a floating latest.
       - name: Restore tools
