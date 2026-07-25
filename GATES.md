@@ -10,9 +10,13 @@ Tick a box (`- [x]`) and the loop picks it up within ~30 minutes. Each gate also
   **Do not commit those files into this repo** — they belong to AurServices. A path outside the repo, or the gitignored `.mtk/aurservices/`, is what the loop expects.
   **What the loop does with it:** read-only. Loads the tree, converts all 79 pages, and reports failures grouped by construct and by dialect. No Confluence access, no publishing, nothing written back to those files. It settles two open questions at once: how many pages use a code-fence dialect that now fails loud, and how many of the 59 mermaid diagrams use spellings `beautiful-mermaid` rejects (`graph TD;` with a trailing semicolon, `pie`) — the single highest-risk unknown left in M1.
 
+- [ ] **gate-m2-aur-review** (opened 2026-07-25 iter 42) — **M2's feature work is finished; its acceptance needs you.** Every named M2 deliverable is built and green: the Confluence client, the publish pipeline (upsert, attachments, hashing, banner, dry-run, changed-since, orphan report, prune, child-order, open-comment guard, `ac:width`) and now `docume status` (§6.6). What is left in the milestone is only its acceptance criterion — "publish DocuMe's own docs to a sandbox space; then **Aur bulk publish (79 pages), human-reviewed page-by-page**" (PLAN.md §14) — and the loop cannot do any of it alone.
+  **What to do, in order:** (1) the three sandbox items under "Setup Mirko must do before M2" below — create the `DOCUMESBX` space, set `confluence.sandboxSpaceKey`, set `confluence.sandboxBaseUrl`; (2) **gate-m1-aurservices-files** above, so the 79 pages exist on this machine; (3) tick this box once you have walked the published sandbox pages and are satisfied with how they render.
+  **What the loop does once (1) and (2) land:** threads `sandboxBaseUrl` through the config loader as its own slice, publishes DocuMe's own docs to `DOCUMESBX`, then bulk-publishes the 79 Aur pages *to the sandbox only*, and reports what to look at page by page. It will not touch the production `AUR` space — that needs `confluence.productionAllowed: true` and **gate-m7-production**.
+  **Why it is not blocking the loop right now:** M3 (§6.3 label sync, §6.5 dashboard, §8 approval state machine) is buildable offline against WireMock exactly as M2's client was, so the loop moves there and this gate waits.
+
 ## Anticipated (for orientation, not yet open)
 
-- **gate-m2-aur-review** — page-by-page human review of the 79-page AurServices bulk publish in the sandbox space (PLAN.md §14 M2 acceptance)
 - **gate-m3-approval-roundtrip** — a human adds the `approved` label to verify the approval → invalidation → re-approval cycle (M3 acceptance)
 - **gate-m7-production** — permission to publish to the production AUR space + team onboarding (M7). Ticking this also requires setting `confluence.productionAllowed: true` in `tools/loop/state.json`.
 
