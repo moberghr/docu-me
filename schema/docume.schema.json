@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/moberghr/docu-me/main/schema/docume.schema.json",
+  "title": "docume.json",
+  "description": "Configuration for a repo whose markdown wiki is published to Confluence Cloud by the DocuMe CLI (PLAN.md §5.1). Committed to the repo, and therefore secret-free: credentials come from DOCUME_CONFLUENCE_EMAIL and DOCUME_CONFLUENCE_TOKEN only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["confluence", "wiki"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "This schema's URL. Written by `docume init`; ignored by the loader."
+    },
+    "confluence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseUrl", "spaceKey"],
+      "properties": {
+        "baseUrl": {
+          "type": "string",
+          "description": "Confluence wiki base URL, e.g. https://example.atlassian.net/wiki. Required."
+        },
+        "spaceKey": {
+          "type": "string",
+          "description": "Space key to publish into, e.g. DOCS. Required."
+        },
+        "spaceId": {
+          "type": ["string", "null"],
+          "description": "Numeric space id. Resolved from spaceKey when absent."
+        },
+        "rootPageId": {
+          "type": ["string", "null"],
+          "description": "Page the wiki tree is published under. The space root when absent."
+        },
+        "protectedSpaces": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Space keys this repo is not cleared to publish into. A run targeting one refuses to write unless a human passes --allow-protected-space for that single run."
+        }
+      }
+    },
+    "wiki": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root"],
+      "properties": {
+        "root": {
+          "type": "string",
+          "description": "Root of the markdown wiki within the repo. Required.",
+          "default": "docs/wiki"
+        },
+        "exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Globs, relative to wiki.root, that are not published.",
+          "default": ["_meta/**"]
+        },
+        "extraPages": {
+          "type": "array",
+          "description": "Excluded files republished anyway, each under a chosen title.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": ["string", "null"],
+                "description": "Path relative to wiki.root."
+              },
+              "title": {
+                "type": ["string", "null"],
+                "description": "Confluence page title. Must be unique across the space."
+              }
+            }
+          }
+        },
+        "homePage": {
+          "type": "string",
+          "description": "Index filename. Applies per directory, not only at the root: a directory's index page is the parent of its pages in Confluence.",
+          "default": "README.md"
+        }
+      }
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "approved": {
+          "type": "string",
+          "description": "Label a reviewer adds to accept a page. Removed automatically when the page's content changes.",
+          "default": "approved"
+        },
+        "stale": {
+          "type": "string",
+          "description": "Label added by `docume drift --mark` to a page whose sources changed.",
+          "default": "stale"
+        }
+      }
+    },
+    "dashboard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Title of the generated status page.",
+          "default": "Documentation Status"
+        }
+      }
+    },
+    "drift": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "defaultBranch": {
+          "type": "string",
+          "description": "Branch a pull-request drift check diffs against.",
+          "default": "dev"
+        }
+      }
+    },
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repoBlobUrl": {
+          "type": ["string", "null"],
+          "description": "Optional base URL for linkifying source references at the baseline commit.",
+          "default": null
+        }
+      }
+    },
+    "mermaid": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "renderer": {
+          "type": "string",
+          "description": "Path to the render-mermaid.mjs wrapper that turns a mermaid fence into an SVG attachment.",
+          "default": "tools/render-mermaid.mjs"
+        }
+      }
+    }
+  }
+}

@@ -45,7 +45,7 @@ public static class ProjectScaffolder
         "S1075:URIs should not be hardcoded",
         Justification = "The published $schema location is a fixed identifier, not a configurable endpoint (PLAN.md §5.1).")]
     private const string SchemaUrl =
-        "https://raw.githubusercontent.com/moberg/docu-me/main/schema/docume.schema.json";
+        "https://raw.githubusercontent.com/moberghr/docu-me/main/schema/docume.schema.json";
 
     [SuppressMessage(
         "Major Code Smell",
