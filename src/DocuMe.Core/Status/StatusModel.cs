@@ -245,15 +245,20 @@ public static class StatusModel
     }
 
     /// <summary>
-    /// The dashboard columns (§6.5) this build cannot fill, and why. Derived rather than hardcoded, so
-    /// an entry stops being printed the moment the milestone behind it starts writing data.
+    /// The dashboard columns (§6.5) this build cannot fill, and why. The feedback entry is
+    /// unconditional because nothing here reads the inbox; the approvals entry is derived from the
+    /// pages, so it stops being printed the moment a run records an approval.
     /// </summary>
     private static List<string> Gaps(IReadOnlyList<StatusPage> pages)
     {
         var gaps = new List<string>
         {
-            "open feedback per page: the comment reader is `docume sync --comments` (§6.3), which is not "
-            + "built yet. The column is left out rather than printed as a zero nothing has looked for.",
+            // Says what is missing, not that the ingester is missing: `docume sync --comments` has
+            // written the inbox since M4. What no build reads back is the inbox itself, and a gap note
+            // that names the wrong absence sends a reader to fix something that already works.
+            "open feedback per page: `docume sync --comments` (§6.3) ingests comments into the feedback "
+            + "inbox, but neither this report nor the dashboard reads that inbox back. The column is "
+            + "left out rather than printed as a zero nothing has looked for.",
         };
 
         // Only worth saying once something is published: on a pre-first-publish repo an empty approval

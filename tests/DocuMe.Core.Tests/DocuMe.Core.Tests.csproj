@@ -22,6 +22,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\DocuMe.Core\DocuMe.Core.csproj" />
+    <!-- Build order only. CliExecutionTests drives `docume` as a process, the way a user runs it, so the
+         CLI has to be built before the suite runs; ReferenceOutputAssembly=false keeps its assembly out
+         of the reference set, because a test that could call into it would stop testing the entry point. -->
+    <ProjectReference Include="..\..\src\DocuMe.Cli\DocuMe.Cli.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
