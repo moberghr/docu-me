@@ -117,8 +117,22 @@ jobs:
           set -euo pipefail
           dotnet tool run docume drift --baseline "${{ steps.baseline.outputs.sha }}" --format json \
             > "$DRIFT_FILE"
-          echo "has=$(jq -r '.hasDrift' "$DRIFT_FILE")" >> "$GITHUB_OUTPUT"
-          echo "affected=$(jq -r '.affectedCount' "$DRIFT_FILE")" >> "$GITHUB_OUTPUT"
+
+          # Read into variables first. `echo "has=$(jq …)"` looks equivalent and is not: a
+          # substitution nested inside an argument is invisible to `set -e`, so a report jq cannot
+          # read writes `has=` and exits 0 — and every `if:` below reads that as "nothing drifted",
+          # so the job goes green having skipped the work it exists to do. A bare assignment IS
+          # seen, which is why every other jq read in these templates is spelled this way.
+          # The emptiness checks are not belt-and-braces: jq on an empty document exits 0 and prints
+          # nothing, so without them a zero-byte report reaches the same green "nothing drifted".
+          if ! has=$(jq -r '.hasDrift' "$DRIFT_FILE") \
+            || ! affected=$(jq -r '.affectedCount' "$DRIFT_FILE") \
+            || [ -z "$has" ] || [ -z "$affected" ]; then
+            echo "::error title=DocuMe::\`docume drift\` exited 0 but jq could not read its report (see the error above). That report is this job's only answer to whether there is work, so it stops here rather than reporting no drift."
+            exit 1
+          fi
+          echo "has=$has" >> "$GITHUB_OUTPUT"
+          echo "affected=$affected" >> "$GITHUB_OUTPUT"
           jq -r '.sourcesUndeclared' "$DRIFT_FILE" | grep -qx true && \
             echo "::warning title=DocuMe::No page declares 'sources', so drift detection is off for this \
             wiki. Add sources to page frontmatter (§5.2) — a /docs-loop job." || true
