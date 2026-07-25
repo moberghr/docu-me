@@ -123,27 +123,41 @@ jobs:
           set -euo pipefail
           state='${{ steps.paths.outputs.state }}'
           inbox='${{ steps.paths.outputs.inbox }}'
-          if git diff --quiet -- "$state" && [ -z "$(git status --porcelain -- "$inbox")" ]; then
+
+          # `git status --porcelain`, not `git diff --quiet` — as in docs-publish.yml, and this job needed
+          # it more. An untracked file is in no diff, so `git diff --quiet` reports SUCCESS for a
+          # state.json git has never tracked, and that is the ordinary state of this repo until the first
+          # docs/sync PR is merged. This step read a brand-new state file as "No label changes and no new
+          # feedback" and exited 0, dropping the approvals the sync had just read — every six hours, for as
+          # long as the PR sat unmerged, while saying the opposite in the log. The header above names what
+          # that costs: an approval state does not know about is re-derived with this run's timestamp, so
+          # the dashboard spends a page version per run.
+          if [ -z "$(git status --porcelain -- "$state" "$inbox")" ]; then
             echo "::notice title=DocuMe::No label changes and no new feedback — nothing to commit."
             exit 0
           fi
 
-          # Copy both artifacts aside, then hand git a clean tree before switching branches. Switching to
-          # an existing docs/sync would otherwise abort: the branch holds its own state.json (which is
-          # locally modified here) and, while its PR is unmerged, inbox items this run has just written
-          # again as untracked files. Both refusals read as a mystifying red check on a cron job.
+          # Copy both artifacts aside, then switch with the copies in hand. Switching to an existing
+          # docs/sync would otherwise abort: the branch holds its own state.json (locally modified here)
+          # and, while its PR is unmerged, inbox items this run has just written again as untracked files.
+          # Both refusals read as a mystifying red check on a cron job.
           cp "$state" "$RUNNER_TEMP/state.json"
           rm -rf "$RUNNER_TEMP/inbox"
           mkdir -p "$RUNNER_TEMP/inbox"
           if [ -d "$inbox" ]; then cp -R "$inbox/." "$RUNNER_TEMP/inbox/"; fi
-          git checkout -- "$state" || echo "::notice title=DocuMe::state.json is not tracked yet."
-          git clean -fdq -- "$inbox"
 
           git fetch origin "$STATE_BRANCH" || true
+          # Forced, as in docs-publish.yml. The guard above now lets through the case that makes it
+          # necessary: state.json untracked here and tracked on the branch, where an unforced switch
+          # refuses with "untracked working tree files would be overwritten" — after the copy-aside has
+          # already made the overwrite harmless. `-f` also covers the tracked-and-modified state file and
+          # the re-written inbox items, which is why the `git checkout --` and `git clean` lines this
+          # replaced are gone rather than moved: the forced switch does both, and the `git checkout --`
+          # spelling printed a bare `error: pathspec ... did not match` on exactly the untracked run.
           if git rev-parse --verify "origin/$STATE_BRANCH" >/dev/null 2>&1; then
-            git checkout -B "$STATE_BRANCH" "origin/$STATE_BRANCH"
+            git checkout -f -B "$STATE_BRANCH" "origin/$STATE_BRANCH"
           else
-            git checkout -B "$STATE_BRANCH"
+            git checkout -f -B "$STATE_BRANCH"
           fi
           cp "$RUNNER_TEMP/state.json" "$state"
           mkdir -p "$inbox"

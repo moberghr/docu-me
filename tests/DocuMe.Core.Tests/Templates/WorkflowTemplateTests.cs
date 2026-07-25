@@ -706,6 +706,55 @@ public sealed class WorkflowTemplateTests
     }
 
     [Fact]
+    public void A_state_file_nothing_has_committed_yet_still_reaches_the_PR()
+    {
+        // Both templates carry the state file into the docs/sync PR, and until that PR is merged the path
+        // is UNTRACKED on the default branch — which is the window this test is about, because the two
+        // templates were not reading it the same way. Measured, not reasoned about
+        // (.mtk/paths-64/probe-guard.mjs): `git diff --quiet -- <path>` reports SUCCESS for a file git has
+        // never tracked, because an untracked file is in no diff. `git status --porcelain` prints `??`.
+        // On a tracked-and-unmodified file both report nothing, so the porcelain spelling is a strict
+        // improvement rather than a trade.
+        //
+        // What the diff spelling cost: a six-hourly cron whose whole job is to make a reviewer's label
+        // durable read a brand-new state.json as "No label changes and no new feedback" and exited 0. The
+        // approvals it had just read were dropped on the runner, every run, for as long as the PR sat
+        // unmerged — and the header of docs-sync.yml names the consequence: an approval state does not
+        // know about is re-derived with this run's timestamp, so the dashboard spends a page version per
+        // run. Silent, and the annotation actively said the opposite.
+        foreach (var (name, job) in new[] { ("docs-publish.yml", "publish"), ("docs-sync.yml", "sync") })
+        {
+            var carry = Steps(name, job)
+                .Single(step => step.Run.Contains("git add \"$state\"", StringComparison.Ordinal));
+
+            var blind =
+                $"{name}: the \"{carry.Name}\" step must decide whether there is anything to commit with "
+                + "`git status --porcelain`, which sees a file git does not track yet. `git diff --quiet` "
+                + "reports success for an untracked state.json, so the first run on a repo whose docs/sync "
+                + "PR is still open throws its own state file away and says nothing was there.";
+
+            carry.Run.ShouldContain("git status --porcelain -- \"$state\"", customMessage: blind);
+            carry.Run.ShouldNotContain("git diff --quiet -- \"$state\"", customMessage: blind);
+
+            // And the switch has to survive what the guard now lets through. Same probe
+            // (.mtk/paths-64/probe-collision.mjs): with the state file untracked here and tracked on
+            // origin/docs/sync — one repository, mid-window, which is the ordinary case — a plain
+            // `git checkout -B` refuses with "untracked working tree files would be overwritten" and the
+            // job goes red. `-f` clobbers the collision, which is safe precisely because the step copied
+            // the file aside first and copies it back after. Fixing the guard without this would trade a
+            // silent skip for a red cron job.
+            var refuses =
+                $"{name}: the \"{carry.Name}\" step must force the branch switch (`git checkout -f -B`). "
+                + "The state file it carries can be untracked here and tracked on the branch it switches "
+                + "to, and an unforced switch refuses rather than overwrite it — after the copy-aside has "
+                + "already made the overwrite harmless.";
+
+            carry.Run.ShouldContain("git checkout -f -B \"$STATE_BRANCH\" \"origin/$STATE_BRANCH\"", customMessage: refuses);
+            carry.Run.ShouldContain("git checkout -f -B \"$STATE_BRANCH\"", customMessage: refuses);
+        }
+    }
+
+    [Fact]
     public void The_sticky_comment_marker_matches_the_one_the_CLI_writes()
     {
         var env = Mapping(Mapping(Mapping(Root("docs-drift-pr.yml"), "jobs"), "comment"), "env");
