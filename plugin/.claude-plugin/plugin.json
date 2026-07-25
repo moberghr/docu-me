@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "docume",
+  "displayName": "DocuMe",
+  "version": "0.1.0",
+  "description": "The generative half of the DocuMe docs lifecycle: write, refresh and correct a repo-based wiki that publishes to Confluence. Every skill's output is a pull request, and only the `docume` CLI talks to Confluence.",
+  "author": {
+    "name": "Moberg",
+    "email": "mirko.budimir@moberg.hr"
+  },
+  "homepage": "https://github.com/moberghr/docu-me",
+  "repository": "https://github.com/moberghr/docu-me",
+  "keywords": [
+    "documentation",
+    "confluence",
+    "docs-as-code",
+    "wiki",
+    "dotnet"
+  ]
+}
