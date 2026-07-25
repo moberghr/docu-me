@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using DocuMe.Core.Drift;
 using DocuMe.Core.Feedback;
 using Shouldly;
@@ -311,6 +312,43 @@ public sealed class WorkflowTemplateTests
                 $"{name} opens a PR; docs-publish.yml publishes it and answers the reviewers after the "
                     + "merge (§9 step 5, §10).");
         }
+    }
+
+    [Fact]
+    public void Every_repository_a_template_checks_out_is_the_one_this_repo_is()
+    {
+        var declared = DeclaredRepository();
+
+        var checkouts = Templates
+            .SelectMany(name => CheckedOutRepositories(name).Select(repository => (Template: name, Repository: repository)))
+            .ToList();
+
+        // Vacuous-pass guard. The two model-driven templates fetch the plugin out of this repository and
+        // no other template checks out anything but its own, so an empty find means the walk stopped
+        // reading the yaml rather than that the templates are clean.
+        var lost = "The two model-driven templates fetch the DocuMe plugin from this repository. "
+            + $"Checkouts found: [{string.Join(", ", checkouts.Select(entry => entry.Template))}], expected "
+            + $"[{string.Join(", ", ModelDriven)}].";
+
+        checkouts
+            .Select(entry => entry.Template)
+            .Order(StringComparer.Ordinal)
+            .ShouldBe(ModelDriven.Order(StringComparer.Ordinal), lost);
+
+        // The bug this exists for, found at iter80 and shipped since the templates were written: both of
+        // them named `moberg/docu-me` and the org is `moberghr`. `actions/checkout` cannot resolve it, so
+        // the nightly refresh and every feedback triage in every consumer repo died at the checkout —
+        // and because the step is `if:`-gated on drift, a repo with no drift stayed green and told nobody.
+        // The same typo reached the scaffolded `$schema` URL (iter67, ConfigSchemaTests), which is why
+        // this reads the slug off plugin.json rather than retyping it a fourth time.
+        var wrong = checkouts
+            .Where(entry => !string.Equals(entry.Repository, declared, StringComparison.Ordinal))
+            .Select(entry => $"{entry.Template} → {entry.Repository}")
+            .ToList();
+
+        wrong.ShouldBeEmpty(
+            $"A checkout naming a repository that is not this one ({declared}, per plugin.json) fails in "
+                + "the consumer's runner, not here. Offenders:");
     }
 
     [Fact]
@@ -847,6 +885,57 @@ public sealed class WorkflowTemplateTests
         }
 
         return families;
+    }
+
+    /// <summary>
+    /// Every repository <paramref name="name"/> hands to a checkout step, read out of the step's
+    /// <c>with</c> mapping. Structural rather than a text match on <c>repository:</c>, because these
+    /// templates explain themselves at length and a comment naming a repo is not a checkout.
+    /// </summary>
+    private static IEnumerable<string> CheckedOutRepositories(string name)
+    {
+        var jobs = Mapping(Root(name), "jobs").Children.Select(child => Mapping(child.Value));
+
+        foreach (var job in jobs)
+        {
+            if (job.Children.FirstOrDefault(child => IsKey(child.Key, "steps")).Value
+                is not YamlSequenceNode steps)
+            {
+                continue;
+            }
+
+            foreach (var step in steps.Children.OfType<YamlMappingNode>())
+            {
+                if (step.Children.FirstOrDefault(child => IsKey(child.Key, "with")).Value
+                    is not YamlMappingNode inputs)
+                {
+                    continue;
+                }
+
+                var repository = Value(inputs, "repository");
+
+                if (repository.Length > 0)
+                {
+                    yield return repository;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// <c>owner/repo</c> as <c>plugin/.claude-plugin/plugin.json</c> declares it: the single spelling
+    /// <see cref="Config.ConfigSchemaTests"/> already pins the scaffolded <c>$schema</c> URL to.
+    /// </summary>
+    private static string DeclaredRepository()
+    {
+        var path = Path.GetFullPath(
+            Path.Combine(Directory, "..", "..", "plugin", ".claude-plugin", "plugin.json"));
+        var url = JsonNode.Parse(File.ReadAllText(path))!["repository"]!.GetValue<string>();
+
+        const string prefix = "https://github.com/";
+        url.ShouldStartWith(prefix, Case.Sensitive, "plugin.json's repository is not a github.com URL.");
+
+        return url[prefix.Length..].TrimEnd('/');
     }
 
     private static string Directory { get; } = Locate();

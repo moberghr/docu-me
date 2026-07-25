@@ -173,7 +173,7 @@ jobs:
         if: steps.drift.outputs.has == 'true'
         uses: actions/checkout@v4
         with:
-          repository: moberg/docu-me
+          repository: moberghr/docu-me
           ref: main
           path: .docume-plugin
           sparse-checkout: plugin
