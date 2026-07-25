@@ -1,8 +1,6 @@
-using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Xml.Linq;
 using Shouldly;
 
 namespace DocuMe.Core.Tests.Cli;
@@ -14,10 +12,8 @@ namespace DocuMe.Core.Tests.Cli;
 /// until this class; the first run of it found the root command naming itself after the package id.
 /// </summary>
 /// <remarks>
-/// The CLI is referenced for build order only (see the csproj), never as an assembly: a test that could
-/// call <c>InitCommand.Build()</c> in-process would stop covering the entry point that composes them.
-/// Only the commands that need no network are driven here — `publish`, `sync` and `dashboard` are
-/// WireMock's job at the Core level.
+/// Only the commands that need no network are driven here; the Confluence-facing three are
+/// <see cref="CliConfluenceTests"/>, which points the same process at a local server.
 /// </remarks>
 public sealed partial class CliExecutionTests : IDisposable
 {
@@ -25,11 +21,6 @@ public sealed partial class CliExecutionTests : IDisposable
     // milliseconds against the loopback rather than sending anything anywhere.
     private const string BaseUrl = "http://127.0.0.1:1/wiki";
     private const string SpaceKey = "SBX";
-
-    // Placeholders, not credentials (rule §1.1): status reports "no credentials" and skips its probe
-    // when the variables are absent, which would let a --offline regression pass for the wrong reason.
-    private const string Email = "bot@example.com";
-    private const string ApiToken = "not-a-real-token";
 
     private readonly string _root = Directory.CreateTempSubdirectory("docume-cli-tests").FullName;
 
@@ -431,127 +422,18 @@ public sealed partial class CliExecutionTests : IDisposable
         return work;
     }
 
-    private static CliRun Invoke(string workingDirectory, params string[] args)
-    {
-        var info = new ProcessStartInfo("dotnet")
-        {
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
+    private static CliRun Invoke(string workingDirectory, params string[] args) =>
+        DocumeCli.Invoke(workingDirectory, args);
 
-        info.ArgumentList.Add(CliAssembly);
+    private static string RepoRoot => DocumeCli.RepoRoot;
 
-        foreach (var arg in args)
-        {
-            info.ArgumentList.Add(arg);
-        }
+    private static string SolutionVersion => DocumeCli.SolutionVersion;
 
-        // Inherited, with the credentials overwritten rather than inherited or removed: a suite whose
-        // output depends on whether the developer exported a token is a suite that passes locally only.
-        info.Environment["DOCUME_CONFLUENCE_EMAIL"] = Email;
-        info.Environment["DOCUME_CONFLUENCE_TOKEN"] = ApiToken;
-
-        using var process = Process.Start(info)
-            ?? throw new InvalidOperationException("dotnet did not start.");
-
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-
-        return new CliRun(process.ExitCode, output, error, string.Join(' ', args));
-    }
-
-    // Declaration order is initialization order, and the three below all read RepoRoot.
-    private static string RepoRoot { get; } = Locate();
-
-    private static string CliAssembly { get; } = LocateCli();
-
-    private static string SolutionVersion { get; } = ReadSolutionVersion();
-
-    private static string ToolCommandName { get; } = ReadToolCommandName();
-
-    /// <summary>
-    /// The CLI built beside this test assembly: both live under <c>bin/&lt;configuration&gt;/&lt;tfm&gt;</c>,
-    /// and the csproj's build-order reference is what guarantees it is there.
-    /// </summary>
-    private static string LocateCli()
-    {
-        var here = new DirectoryInfo(AppContext.BaseDirectory);
-        var configuration = here.Parent?.Name
-            ?? throw new InvalidOperationException($"No configuration directory above {here.FullName}.");
-
-        var dll = Path.Combine(RepoRoot, "src", "DocuMe.Cli", "bin", configuration, here.Name, "DocuMe.Cli.dll");
-
-        if (!File.Exists(dll))
-        {
-            throw new InvalidOperationException(
-                $"No CLI to run at {dll}. DocuMe.Core.Tests.csproj references DocuMe.Cli for build order, "
-                + "so a plain `dotnet build` should have produced it.");
-        }
-
-        return dll;
-    }
-
-    private static string ReadToolCommandName()
-    {
-        var csproj = XDocument.Load(Path.Combine(RepoRoot, "src", "DocuMe.Cli", "DocuMe.Cli.csproj"));
-        var name = csproj.Descendants("ToolCommandName").SingleOrDefault()
-            ?? throw new InvalidOperationException("DocuMe.Cli.csproj declares no <ToolCommandName>.");
-
-        return name.Value.Trim();
-    }
-
-    private static string ReadSolutionVersion()
-    {
-        var props = XDocument.Load(Path.Combine(RepoRoot, "Directory.Build.props"));
-        var version = props.Descendants("Version").SingleOrDefault()
-            ?? throw new InvalidOperationException("Directory.Build.props declares no <Version> (§12).");
-
-        return version.Value.Trim();
-    }
-
-    private static string Locate()
-    {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
-             directory is not null;
-             directory = directory.Parent)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "DocuMe.slnx")))
-            {
-                return directory.FullName;
-            }
-        }
-
-        throw new InvalidOperationException(
-            $"No DocuMe.slnx above {AppContext.BaseDirectory}, so the CLI cannot be found.");
-    }
+    private static string ToolCommandName => DocumeCli.ToolCommandName;
 
     [GeneratedRegex(@"(?<name>\w+)Command\.Build\(\)", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
     private static partial Regex CommandRegistration();
 
     [GeneratedRegex(@"`docume (?<name>[a-z][a-z-]*)", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
     private static partial Regex CommandMention();
-
-    [GeneratedRegex(@"\s+", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex WhitespaceRun();
-
-    private sealed record CliRun(int Code, string Output, string Error, string Arguments)
-    {
-        /// <summary>Everything a failure needs; the interesting half is often on stderr.</summary>
-        internal string Diagnostics => $"""
-            `docume {Arguments}` exited {Code}.
-            --- stdout ---
-            {Output}
-            --- stderr ---
-            {Error}
-            """;
-
-        /// <summary>
-        /// Spectre.Console wraps at 80 columns once stdout is redirected, so a sentence assertion has to
-        /// read across the wrap it inserted.
-        /// </summary>
-        internal string Flowed => WhitespaceRun().Replace(Output, " ");
-    }
 }
