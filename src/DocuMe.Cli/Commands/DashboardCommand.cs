@@ -7,7 +7,6 @@ using DocuMe.Core.Markdown;
 using DocuMe.Core.Publishing;
 using DocuMe.Core.State;
 using DocuMe.Core.Status;
-using DocuMe.Core.Sync;
 using Spectre.Console;
 
 namespace DocuMe.Cli.Commands;
@@ -242,7 +241,8 @@ internal static class DashboardCommand
     }
 
     /// <summary>
-    /// The label read, the in-memory reconcile, the render, and the one upsert.
+    /// The label read, the in-memory reconcile, the render, and the one upsert — all four in
+    /// <see cref="DashboardPublisher"/>, because <c>drift --mark</c> refreshes the same page (§6.4).
     /// </summary>
     private static async Task<int> PublishAsync(
         ConfluenceClient client,
@@ -257,30 +257,32 @@ internal static class DashboardCommand
     {
         AnsiConsole.MarkupLine($"Reading labels from [blue]{spaceKey.EscapeMarkup()}[/]…");
 
-        var observedAt = DateTimeOffset.UtcNow;
-        var read = await LabelReader
-            .ReadAsync(client, config, state, spaceKey, observedAt, cancellationToken)
+        var render = await DashboardPublisher
+            .RenderAsync(
+                client,
+                config,
+                paths,
+                tree,
+                state,
+                spaceKey,
+                DateTimeOffset.UtcNow,
+                cancellationToken)
             .ConfigureAwait(false);
 
-        var plan = LabelSyncPlanner.Plan(state, read.Observation);
-        var reconciled = LabelSyncPlanner.Apply(state, plan);
-
         AnsiConsole.MarkupLine(
-            $"[green]{read.ApprovedCount}[/] page(s) labelled "
+            $"[green]{render.Read.ApprovedCount}[/] page(s) labelled "
             + $"[blue]{config.Labels.Approved.EscapeMarkup()}[/], "
-            + $"[green]{read.StaleCount}[/] labelled [blue]{config.Labels.Stale.EscapeMarkup()}[/].");
+            + $"[green]{render.Read.StaleCount}[/] labelled [blue]{config.Labels.Stale.EscapeMarkup()}[/].");
 
-        if (plan.HasChanges)
+        if (render.Plan.HasChanges)
         {
             AnsiConsole.MarkupLine(
-                $"[grey]{plan.ChangeCount} label change(s) are reflected on the page but not written to "
-                + $"{paths.StatePath.EscapeMarkup()} — `docume sync --labels` owns that file (§6.3).[/]");
+                $"[grey]{render.Plan.ChangeCount} label change(s) are reflected on the page but not "
+                + $"written to {paths.StatePath.EscapeMarkup()} — `docume sync --labels` owns that file "
+                + "(§6.3).[/]");
         }
 
-        var report = StatusModel.Build(paths, config, tree, reconciled);
-        var body = new DashboardPage { Report = report, GeneratedAt = observedAt }.Render();
-
-        RenderSummary(report);
+        RenderSummary(render.Report);
 
         if (dryRun)
         {
@@ -292,107 +294,16 @@ internal static class DashboardCommand
 
             // Console.WriteLine, not AnsiConsole: Spectre wraps to the terminal width, which would put
             // newlines inside the markup and hand a reader a body Confluence would reject.
-            Console.WriteLine(body);
+            Console.WriteLine(render.Body);
 
             return 0;
         }
 
-        return await UpsertAsync(client, config, spaceKey, pageTitle, body, cancellationToken)
-            .ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Find-or-create by title, then overwrite (§6.5).
-    /// </summary>
-    /// <remarks>
-    /// The read asks for the body so an unchanged page can be left alone — see the type's remarks on
-    /// why that deviation from "full overwrite each run" is the right one. The comparison is ordinal
-    /// over <see cref="DashboardPage.WithoutProvenance"/>: exact bytes, minus the one line carrying the
-    /// run's own timestamp, which would otherwise make every run differ from every other. A body
-    /// Confluence did not return at all compares against the empty string and so counts as changed.
-    /// </remarks>
-    private static async Task<int> UpsertAsync(
-        ConfluenceClient client,
-        DocumeConfig config,
-        string spaceKey,
-        string pageTitle,
-        string body,
-        CancellationToken cancellationToken)
-    {
-        var spaceId = await ResolveSpaceIdAsync(client, config.Confluence, spaceKey, cancellationToken)
+        var result = await DashboardPublisher
+            .UpsertAsync(client, config.Confluence, spaceKey, pageTitle, render.Body, cancellationToken)
             .ConfigureAwait(false);
 
-        if (spaceId is null)
-        {
-            return Fail(
-                $"Confluence has no space with key '{spaceKey}', or this account cannot see it. Check "
-                + "confluence.spaceKey in docume.json (§5.1).");
-        }
-
-        var existing = await client
-            .FindPageByTitleAsync(spaceId, pageTitle, includeBody: true, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (existing is null)
-        {
-            var draft = new ConfluencePageDraft(spaceId, pageTitle, body, config.Confluence.RootPageId);
-            var created = await client.CreatePageAsync(draft, cancellationToken).ConfigureAwait(false);
-
-            AnsiConsole.MarkupLine(
-                $"[green]CREATED[/] [blue]{pageTitle.EscapeMarkup()}[/] "
-                + $"[grey](page {created.Id.EscapeMarkup()})[/]");
-
-            return 0;
-        }
-
-        if (string.Equals(
-                DashboardPage.WithoutProvenance(existing.Storage ?? string.Empty),
-                DashboardPage.WithoutProvenance(body),
-                StringComparison.Ordinal))
-        {
-            AnsiConsole.MarkupLine(
-                $"[green]UNCHANGED[/] [blue]{pageTitle.EscapeMarkup()}[/] "
-                + $"[grey](page {existing.Id.EscapeMarkup()}, v{existing.Version}) — the rendered body "
-                + "matches what is published, so no version was spent.[/]");
-
-            return 0;
-        }
-
-        var revision = new ConfluencePageRevision(
-            existing.Id,
-            pageTitle,
-            body,
-            existing.Version,
-            VersionMessage: "docume dashboard");
-
-        var updated = await client.UpdatePageAsync(revision, cancellationToken).ConfigureAwait(false);
-
-        AnsiConsole.MarkupLine(
-            $"[green]UPDATED[/] [blue]{pageTitle.EscapeMarkup()}[/] "
-            + $"[grey](page {updated.Id.EscapeMarkup()}, now v{updated.Version})[/]");
-
-        return 0;
-    }
-
-    /// <summary>
-    /// The numeric space id the v2 page endpoints want. A configured <c>confluence.spaceId</c> is
-    /// trusted for the same reason <c>publish</c> trusts it: the config is committed and reviewed, and
-    /// confirming it would cost a request per run to learn nothing.
-    /// </summary>
-    private static async Task<string?> ResolveSpaceIdAsync(
-        ConfluenceClient client,
-        ConfluenceConfig confluence,
-        string spaceKey,
-        CancellationToken cancellationToken)
-    {
-        if (confluence.SpaceId is { Length: > 0 } configured)
-        {
-            return configured;
-        }
-
-        var space = await client.FindSpaceByKeyAsync(spaceKey, cancellationToken).ConfigureAwait(false);
-
-        return space?.Id;
+        return DashboardOutput.Report(AnsiConsole.Console, result, spaceKey, pageTitle);
     }
 
     /// <summary>
