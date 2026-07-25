@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using DocuMe.Core.Confluence;
 using Shouldly;
 using WireMock;
@@ -403,6 +404,246 @@ public sealed class ConfluenceClientTests
         exception.Message.ShouldContain("version.number");
     }
 
+    [Fact]
+    public async Task Creates_a_page_and_returns_the_id_and_version_Confluence_assigned()
+    {
+        using var server = WireMockServer.Start();
+        var body = CreatedPageBody;
+        server
+            .Given(Request.Create().WithPath(ApiPath("pages")).UsingPost())
+            .RespondWith(Json(body));
+
+        var draft = new ConfluencePageDraft(SpaceId, "Costs & billing", "<p>New</p>", ParentId: "131074");
+
+        using var client = CreateClient(server);
+        var page = await client.CreatePageAsync(draft, TestContext.Current.CancellationToken);
+
+        page.Id.ShouldBe("77821");
+        page.Version.ShouldBe(1);
+
+        var payload = Payload(server);
+        payload.GetProperty("spaceId").GetString().ShouldBe(SpaceId);
+        payload.GetProperty("status").GetString().ShouldBe("current");
+        payload.GetProperty("title").GetString().ShouldBe("Costs & billing");
+        payload.GetProperty("parentId").GetString().ShouldBe("131074");
+
+        var storage = payload.GetProperty("body").GetProperty("storage");
+        storage.GetProperty("representation").GetString().ShouldBe("storage");
+        storage.GetProperty("value").GetString().ShouldBe("<p>New</p>");
+    }
+
+    /// <summary>
+    /// An absent <c>parentId</c> is documented as "put it under the space homepage"; a
+    /// <c>"parentId": null</c> is a value the endpoint documents no handling for at all. The
+    /// difference is whether the serializer omits nulls, which is easy to lose in a refactor.
+    /// </summary>
+    [Fact]
+    public async Task A_draft_with_no_parent_omits_the_field_rather_than_sending_null()
+    {
+        using var server = WireMockServer.Start();
+        var body = CreatedPageBody;
+        server
+            .Given(Request.Create().WithPath(ApiPath("pages")).UsingPost())
+            .RespondWith(Json(body));
+
+        var draft = new ConfluencePageDraft(SpaceId, "Costs & billing", "<p>New</p>");
+
+        using var client = CreateClient(server);
+        _ = await client.CreatePageAsync(draft, TestContext.Current.CancellationToken);
+
+        Payload(server).TryGetProperty("parentId", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Updates_a_page_with_the_version_after_the_one_it_read()
+    {
+        using var server = WireMockServer.Start();
+        var body = UpdatedPageBody;
+        server
+            .Given(Request.Create().WithPath(ApiPath("pages/65601")).UsingPut())
+            .RespondWith(Json(body));
+
+        var revision = new ConfluencePageRevision(
+            "65601",
+            "Domain model",
+            "<p>Fresh</p>",
+            CurrentVersion: 7,
+            ParentId: "131074");
+
+        using var client = CreateClient(server);
+        var page = await client.UpdatePageAsync(revision, TestContext.Current.CancellationToken);
+
+        page.Version.ShouldBe(8);
+
+        var payload = Payload(server);
+        payload.GetProperty("id").GetString().ShouldBe("65601");
+        payload.GetProperty("status").GetString().ShouldBe("current");
+        payload.GetProperty("title").GetString().ShouldBe("Domain model");
+        payload.GetProperty("parentId").GetString().ShouldBe("131074");
+        payload.GetProperty("body").GetProperty("storage").GetProperty("value").GetString().ShouldBe("<p>Fresh</p>");
+
+        // The caller passes the version it read; the +1 is the client's job, in one place.
+        payload.GetProperty("version").GetProperty("number").GetInt32().ShouldBe(8);
+
+        // The schema accepts spaceId but its own note says it cannot move a page between spaces, and
+        // an unset version message must not arrive as null.
+        payload.TryGetProperty("spaceId", out _).ShouldBeFalse();
+        payload.GetProperty("version").TryGetProperty("message", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Sends_the_version_message_when_the_caller_supplied_one()
+    {
+        using var server = WireMockServer.Start();
+        var body = UpdatedPageBody;
+        server
+            .Given(Request.Create().WithPath(ApiPath("pages/65601")).UsingPut())
+            .RespondWith(Json(body));
+
+        var revision = new ConfluencePageRevision(
+            "65601",
+            "Domain model",
+            "<p>Fresh</p>",
+            CurrentVersion: 7,
+            VersionMessage: "docume publish 98c6df8");
+
+        using var client = CreateClient(server);
+        _ = await client.UpdatePageAsync(revision, TestContext.Current.CancellationToken);
+
+        Payload(server)
+            .GetProperty("version")
+            .GetProperty("message")
+            .GetString()
+            .ShouldBe("docume publish 98c6df8");
+    }
+
+    /// <summary>
+    /// The case a bulk publish has to survive: a human edited the page between DocuMe's read and its
+    /// write. It must name the page and not push again — see
+    /// <see cref="ConfluenceConflictException"/> for why re-reading the version is the wrong default.
+    /// </summary>
+    [Fact]
+    public async Task A_version_conflict_names_the_page_and_does_not_write_again()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ApiPath("pages/65601")).UsingPut())
+            .RespondWith(Response.Create()
+                .WithStatusCode(HttpStatusCode.Conflict)
+                .WithBody("Version must be incremented when updating a page"));
+
+        var revision = new ConfluencePageRevision("65601", "Domain model", "<p>Fresh</p>", CurrentVersion: 7);
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceConflictException>(
+            () => client.UpdatePageAsync(revision, TestContext.Current.CancellationToken));
+
+        exception.Operation.ShouldContain("65601");
+        exception.Message.ShouldContain("version 8");
+        exception.Message.ShouldContain("Version must be incremented");
+        exception.Message.ShouldContain("Re-run publish");
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Where the read path's title guard deliberately routes a near-miss: rather than updating a page
+    /// it never identified, DocuMe creates, and Confluence's per-space title uniqueness rejects it.
+    /// The report has to carry the title, because the request path is just <c>api/v2/pages</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_rejected_create_is_reported_with_the_title_it_tried()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ApiPath("pages")).UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(HttpStatusCode.BadRequest)
+                .WithBody("""{"errors":[{"title":"A page with this title already exists"}]}"""));
+
+        var draft = new ConfluencePageDraft(SpaceId, "Costs & billing", "<p>New</p>");
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceApiException>(
+            () => client.CreatePageAsync(draft, TestContext.Current.CancellationToken));
+
+        exception.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        exception.Operation.ShouldNotBeNull();
+        exception.Operation!.ShouldContain("Costs & billing");
+        exception.Message.ShouldContain("already exists");
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// A rate limit is a rejection, not a partial apply, so replaying the create is correct — and it
+    /// is what an ~80-page bulk publish depends on (PLAN.md §13 S5). What this pins is that the body
+    /// survives the replay: a streamed content would be consumed by the first attempt and the second
+    /// would silently send nothing.
+    /// </summary>
+    [Fact]
+    public async Task A_rate_limited_create_is_replayed_with_the_same_body()
+    {
+        using var server = WireMockServer.Start();
+        var body = CreatedPageBody;
+        const string scenario = "create-rate-limited";
+        server
+            .Given(Request.Create().WithPath(ApiPath("pages")).UsingPost())
+            .InScenario(scenario)
+            .WillSetStateTo("allowed")
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.TooManyRequests));
+        server
+            .Given(Request.Create().WithPath(ApiPath("pages")).UsingPost())
+            .InScenario(scenario)
+            .WhenStateIs("allowed")
+            .RespondWith(Json(body));
+
+        var draft = new ConfluencePageDraft(SpaceId, "Costs & billing", "<p>New</p>");
+
+        using var client = CreateClient(server);
+        var page = await client.CreatePageAsync(draft, TestContext.Current.CancellationToken);
+
+        page.Id.ShouldBe("77821");
+        server.LogEntries.Count.ShouldBe(2);
+        Payload(server, index: 1).GetProperty("body").GetProperty("storage").GetProperty("value")
+            .GetString()
+            .ShouldBe("<p>New</p>");
+    }
+
+    [Fact]
+    public async Task An_authentication_failure_on_a_write_stops_dead_too()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ApiPath("pages/65601")).UsingPut())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Unauthorized));
+
+        var revision = new ConfluencePageRevision("65601", "Domain model", "<p>Fresh</p>", CurrentVersion: 7);
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceAuthenticationException>(
+            () => client.UpdatePageAsync(revision, TestContext.Current.CancellationToken));
+
+        exception.Message.ShouldNotContain(ApiToken);
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// A version below 1 cannot have come from a page Confluence holds, so it is a caller bug — and
+    /// it is caught before anything reaches the wire, because sending version 1 over an existing page
+    /// is how a publish would blank someone's work.
+    /// </summary>
+    [Fact]
+    public async Task A_version_Confluence_could_never_have_returned_is_refused_before_the_request()
+    {
+        using var server = WireMockServer.Start();
+        var revision = new ConfluencePageRevision("65601", "Domain model", "<p>Fresh</p>", CurrentVersion: 0);
+
+        using var client = CreateClient(server);
+        _ = await Should.ThrowAsync<ArgumentOutOfRangeException>(
+            () => client.UpdatePageAsync(revision, TestContext.Current.CancellationToken));
+
+        server.LogEntries.Count.ShouldBe(0);
+    }
+
     private static ConfluenceClient CreateClient(
         WireMockServer server,
         int maxRetryAttempts = 2,
@@ -428,6 +669,24 @@ public sealed class ConfluenceClientTests
         request.ShouldNotBeNull();
 
         return request!;
+    }
+
+    /// <summary>
+    /// The JSON body of one logged request, cloned so it outlives the <see cref="JsonDocument"/>.
+    /// Asserting on the parsed payload rather than the raw string keeps property order and whitespace
+    /// out of the test.
+    /// </summary>
+    private static JsonElement Payload(WireMockServer server, int index = 0)
+    {
+        var request = server.LogEntries[index].RequestMessage;
+        request.ShouldNotBeNull();
+
+        var body = request!.Body;
+        body.ShouldNotBeNull();
+
+        using var document = JsonDocument.Parse(body!);
+
+        return document.RootElement.Clone();
     }
 
     private static IResponseBuilder Json(string body)
@@ -484,6 +743,32 @@ public sealed class ConfluenceClientTests
             { "id": "65601", "status": "current", "title": "Domain model", "spaceId": "98304" }
           ],
           "_links": {}
+        }
+        """;
+
+    private static string CreatedPageBody =>
+        """
+        {
+          "id": "77821",
+          "status": "current",
+          "title": "Costs & billing",
+          "spaceId": "98304",
+          "parentId": "131074",
+          "version": { "number": 1 },
+          "body": { "storage": { "value": "<p>New</p>", "representation": "storage" } }
+        }
+        """;
+
+    private static string UpdatedPageBody =>
+        """
+        {
+          "id": "65601",
+          "status": "current",
+          "title": "Domain model",
+          "spaceId": "98304",
+          "parentId": "131074",
+          "version": { "number": 8 },
+          "body": { "storage": { "value": "<p>Fresh</p>", "representation": "storage" } }
         }
         """;
 
