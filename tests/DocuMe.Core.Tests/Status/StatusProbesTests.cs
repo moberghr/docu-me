@@ -189,9 +189,10 @@ public sealed class StatusProbesTests
             // A port nothing is listening on: the transport fails before any status code exists.
             BaseUrl = new Uri("http://127.0.0.1:1/wiki"),
 
-            // 1, not 0: ConfluenceClientOptions accepts 0 but Polly's HttpRetryStrategyOptions rejects
-            // it at construction, so a "no retries" client throws instead of not retrying.
-            MaxRetryAttempts = 1,
+            // 0: nothing is listening, so a retry can only spend the clock. Polly's own
+            // HttpRetryStrategyOptions rejects 0 at construction, which is why ConfluenceHttp leaves
+            // the strategy out of the pipeline entirely at that value rather than configuring it.
+            MaxRetryAttempts = 0,
             RetryDelay = TimeSpan.FromMilliseconds(1),
             Timeout = TimeSpan.FromSeconds(5),
         };

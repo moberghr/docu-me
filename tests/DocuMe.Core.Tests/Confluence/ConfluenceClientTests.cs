@@ -357,6 +357,35 @@ public sealed class ConfluenceClientTests
         server.LogEntries.Count.ShouldBe(retries + 1);
     }
 
+    /// <summary>
+    /// Zero retries is the documented meaning of <see cref="ConfluenceClientOptions.MaxRetryAttempts"/>
+    /// at its floor — one attempt, no second one — and a caller that wants a probe rather than a
+    /// persistent call has no other way to say it.
+    /// </summary>
+    /// <remarks>
+    /// Polly's own <c>MaxRetryAttempts</c> has a floor of 1, so handing it a 0 fails the strategy's
+    /// validation while the pipeline is being built: the client would not exist to make the one attempt
+    /// the caller asked for. The retry strategy is therefore left out of the pipeline entirely at 0
+    /// rather than configured with a value the library rejects.
+    /// </remarks>
+    [Fact]
+    public async Task A_client_configured_for_no_retries_makes_exactly_one_attempt()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ApiPath("spaces")).UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(HttpStatusCode.InternalServerError)
+                .WithBody("upstream is unwell"));
+
+        using var client = CreateClient(server, maxRetryAttempts: 0);
+        var exception = await Should.ThrowAsync<ConfluenceApiException>(
+            () => client.FindSpaceByKeyAsync("DOCUMESBX", TestContext.Current.CancellationToken));
+
+        exception.StatusCode.ShouldBe(HttpStatusCode.InternalServerError);
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
     [Fact]
     public async Task A_body_that_is_not_json_fails_loud()
     {

@@ -52,10 +52,23 @@ internal static class ConfluenceHttp
             : new Uri(text + SegmentSeparator, UriKind.Absolute);
     }
 
+    /// <summary>
+    /// The retry pipeline, or no pipeline at all when the caller asked for no retries.
+    /// </summary>
+    /// <remarks>
+    /// Polly's own <c>MaxRetryAttempts</c> carries a <c>[Range(1, int.MaxValue)]</c>, so a configured
+    /// strategy cannot express zero: building one throws a
+    /// <see cref="System.ComponentModel.DataAnnotations.ValidationException"/> and the client never
+    /// exists to make the single attempt that was asked for. Leaving the strategy out says the same
+    /// thing in the shape Polly accepts — one attempt, no second one.
+    /// </remarks>
     private static ResilienceHandler CreateHandler(ConfluenceClientOptions options)
     {
-        var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
-            .AddRetry(new HttpRetryStrategyOptions
+        var builder = new ResiliencePipelineBuilder<HttpResponseMessage>();
+
+        if (options.MaxRetryAttempts > 0)
+        {
+            builder.AddRetry(new HttpRetryStrategyOptions
             {
                 MaxRetryAttempts = options.MaxRetryAttempts,
                 Delay = options.RetryDelay,
@@ -66,10 +79,10 @@ internal static class ConfluenceHttp
                 // guessing, and PLAN.md §13 S5 expects a bulk publish to lean on it.
                 ShouldRetryAfterHeader = true,
                 ShouldHandle = arguments => ValueTask.FromResult(IsRetryable(arguments.Outcome)),
-            })
-            .Build();
+            });
+        }
 
-        return new ResilienceHandler(pipeline)
+        return new ResilienceHandler(builder.Build())
         {
             InnerHandler = new SocketsHttpHandler(),
         };

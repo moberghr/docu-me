@@ -16,7 +16,8 @@ public sealed record ConfluenceClientOptions
 
     /// <summary>
     /// Retries after the first attempt, for transient failures only (429, 408, 5xx, network).
-    /// Never applied to 401/403 — see <see cref="ConfluenceAuthenticationException"/>.
+    /// Never applied to 401/403 — see <see cref="ConfluenceAuthenticationException"/>. Zero is a
+    /// valid floor and means one attempt with no second one, which is what a probe wants.
     /// </summary>
     public int MaxRetryAttempts { get; init; } = 3;
 
