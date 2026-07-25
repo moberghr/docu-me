@@ -52,6 +52,27 @@ jobs:
       - name: Restore tools
         run: dotnet tool restore
 
+      # Publish is the ONLY DocuMe command that renders diagrams: it shells out to Node and
+      # tools/render-mermaid.mjs once per ```mermaid fence and uploads each SVG as a page attachment
+      # (PLAN.md §4, §6.2 step 3). Neither half is on a runner by default — the Node an image happens to
+      # ship is not a version this job chose, and `beautiful-mermaid` is a dependency `docume init`
+      # gitignores rather than installs, because it belongs to the consumer repo and not to the tool.
+      # Without both steps a wiki containing one diagram fails the whole publish with the renderer's
+      # exit 3, "cannot load beautiful-mermaid".
+      #
+      # SAFE TO DELETE BOTH if your wiki has no ```mermaid fences. Nothing else here needs Node.
+      # The version is the one templates/tools/render-mermaid.mjs is written against; the renderer
+      # accepts a subset of the mermaid dialect and that subset moves between releases, so a floating
+      # install would change which of your diagrams render, on a nightly, with no commit to blame.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # At the workspace root, not in tools/: Node resolves a dependency from the importing script's own
+      # directory upwards, so a root node_modules/ is what tools/render-mermaid.mjs actually finds.
+      - name: Install the mermaid renderer's dependency
+        run: npm install --no-save beautiful-mermaid@1.1.3
+
       # Every path this job uses is derived here, so this step is also where a repo that is not set up
       # says so. Both guards below replace a bare `jq:` line — the whole log a consumer used to get —
       # with a message naming the command that fixes it.

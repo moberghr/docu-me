@@ -79,6 +79,7 @@ public sealed class WorkflowTemplateTests
     private const string ConfigRead = "jq -r '.wiki.root // \"docs/wiki\"' docume.json";
     private const string ConfigGuard = "if [ ! -f docume.json ]; then";
     private const string Annotation = "::error title=DocuMe::";
+    private const string MermaidPackage = "beautiful-mermaid";
 
     [Fact]
     public void Every_template_PLAN_10_names_is_present()
@@ -858,6 +859,188 @@ public sealed class WorkflowTemplateTests
     }
 
     /// <summary>
+    /// <c>docs-publish.yml</c> installs both halves of the mermaid toolchain, because publish is the one
+    /// scaffolded job that renders a diagram.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The regression test for a bug that shipped: this template set up neither Node nor
+    /// <c>beautiful-mermaid</c>, so a consumer whose wiki held one <c>```mermaid</c> fence had every
+    /// publish die on the renderer's exit 3. It failed loudly, which is why nothing here caught it — the
+    /// suite reads <c>run:</c> blocks, and what was missing was a step, not a wrong line. It also read as
+    /// deliberate from the outside: <c>docs-refresh.yml</c> installs Node and says in a comment that the
+    /// renderer "runs in the publish path, not here", and <c>init</c> gitignores the very
+    /// <c>node_modules/</c> the publish path needs.
+    /// </para>
+    /// <para>
+    /// Asserted as an ordering against the publish step rather than as presence, because a toolchain
+    /// installed after the command that uses it is the same outage with a longer log.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_publish_template_installs_the_toolchain_its_render_path_shells_out_to()
+    {
+        const string name = "docs-publish.yml";
+        var steps = Steps(name, "publish");
+        var publish = steps.FindIndex(step => step.Run.Contains($"{ToolRun} publish", StringComparison.Ordinal));
+
+        publish.ShouldBeGreaterThanOrEqualTo(0, $"{name} no longer runs `{ToolRun} publish`.");
+
+        var node = StepInputs(name).ToList();
+        var installsNode = node.Any(input => input.Uses.StartsWith("actions/setup-node@", StringComparison.Ordinal));
+
+        installsNode.ShouldBeTrue(
+            $"{name} runs the only DocuMe command that shells out to Node (PLAN.md §6.2 step 3) without "
+            + "installing one, so the version rendering a consumer's diagrams is whatever the runner "
+            + "image happens to ship.");
+
+        var install = steps.FindIndex(step => step.Run.Contains(MermaidPackage, StringComparison.Ordinal));
+        const string uninstalled = $"{name} never installs {MermaidPackage}. `docume init` gitignores node_modules/ "
+            + "rather than populating it, so on a runner the renderer's `import('beautiful-mermaid')` finds "
+            + "nothing and exit 3 fails the whole publish for any wiki holding one ```mermaid fence.";
+
+        install.ShouldBeGreaterThanOrEqualTo(0, uninstalled);
+
+        install.ShouldBeLessThan(
+            publish,
+            $"{name} installs the renderer's dependency after the publish that needs it.");
+    }
+
+    /// <summary>
+    /// The dependency <c>docs-publish.yml</c> installs is the one the shipped render script is written
+    /// against, and is pinned rather than floating.
+    /// </summary>
+    /// <remarks>
+    /// <c>beautiful-mermaid</c> is a reimplementation of mermaid that accepts a subset of the dialect, and
+    /// the subset moves between releases (the script's own header records <c>pie</c> and <c>graph TD;</c>
+    /// as rejected at 1.1.3). A template floating the version would change which of a consumer's diagrams
+    /// render, on a nightly, with no commit to blame — and a template pinned to a *different* version than
+    /// the script was verified against is the same surprise with an audit trail that lies.
+    /// </remarks>
+    [Fact]
+    public void The_renderer_dependency_is_pinned_to_the_version_the_render_script_was_written_against()
+    {
+        var pinned = PinnedMermaidVersion();
+        var installed = Runnable("docs-publish.yml")
+            .Where(line => line.Contains(MermaidPackage, StringComparison.Ordinal))
+            .ToList();
+
+        installed.ShouldNotBeEmpty($"docs-publish.yml installs no {MermaidPackage}.");
+
+        foreach (var line in installed)
+        {
+            var at = line.IndexOf($"{MermaidPackage}@", StringComparison.Ordinal);
+
+            at.ShouldBeGreaterThanOrEqualTo(
+                0,
+                $"docs-publish.yml installs {MermaidPackage} without pinning a version:\n{line.Trim()}");
+
+            var tail = line[(at + MermaidPackage.Length + 1)..];
+            var end = tail.IndexOfAny([' ', '\'', '"']);
+            var version = end < 0 ? tail.TrimEnd() : tail[..end];
+            var drifted = $"docs-publish.yml installs {MermaidPackage}@{version}, but package.json pins "
+                + $"{pinned} — the version templates/tools/render-mermaid.mjs is written against.";
+
+            version.ShouldBe(pinned, drifted);
+        }
+    }
+
+    /// <summary>
+    /// Every template installs an SDK that can run the tool it then restores.
+    /// </summary>
+    /// <remarks>
+    /// The band is derived from <c>Directory.Build.props</c> rather than written down a seventh time. A
+    /// consumer's runner has whatever SDK its image ships; these templates are the only thing that puts
+    /// the right one there, and <c>dotnet tool restore</c> against a manifest targeting a newer framework
+    /// fails with the SDK's own wording, in someone else's CI. Nothing coupled the two until now — every
+    /// <c>with:</c> value in these templates was unread by any assertion — so a TFM bump would have left
+    /// six templates installing an SDK too old to run what they restore.
+    /// </remarks>
+    [Fact]
+    public void Every_template_installs_an_SDK_that_can_run_the_tool_this_repo_builds()
+    {
+        var expected = SdkBand();
+        var installed = Templates
+            .SelectMany(name => StepInputs(name)
+                .Where(input => input.Uses.StartsWith("actions/setup-dotnet@", StringComparison.Ordinal))
+                .Where(input => string.Equals(input.Key, "dotnet-version", StringComparison.Ordinal))
+                .Select(input => (Name: name, input.Setting)))
+            .ToList();
+
+        // Vacuous-pass guard: all six restore the pinned tool, so one installing no SDK at all has lost
+        // the step rather than satisfied this.
+        var covered = installed.Select(entry => entry.Name).Distinct(StringComparer.Ordinal).ToList();
+        var silent = Templates.Except(covered, StringComparer.Ordinal).ToList();
+
+        silent.ShouldBeEmpty(
+            $"Template(s) restoring `{ToolRestore}` without installing an SDK: {string.Join(", ", silent)}.");
+
+        var wrong = installed
+            .Where(entry => !string.Equals(entry.Setting, expected, StringComparison.Ordinal))
+            .Select(entry => $"{entry.Name} installs {entry.Setting}")
+            .ToList();
+
+        wrong.ShouldBeEmpty(
+            $"DocuMe targets {TargetFramework()}, so a scaffolded workflow must install {expected}: "
+            + string.Join("; ", wrong));
+    }
+
+    /// <summary>
+    /// The SDK band really is derived from the TFM, not a hardcoded <c>10.0.x</c> that happens to be right
+    /// today.
+    /// </summary>
+    /// <remarks>
+    /// The assertion above cannot be mutation-tested the obvious way: bumping
+    /// <c>Directory.Build.props</c> to a framework this machine has no targeting pack for stops the suite
+    /// from running at all, so "did it go red" has no answer (<c>.mtk/paths-81/mutate-tfm.mjs</c> records
+    /// the attempt). This covers the same ground by asserting the mapping directly — replace the
+    /// derivation with a constant and the <c>net11.0</c> case fails here.
+    /// </remarks>
+    [Theory]
+    [InlineData("net10.0", "10.0.x")]
+    [InlineData("net11.0", "11.0.x")]
+    [InlineData("net9.0", "9.0.x")]
+    public void The_SDK_band_follows_from_the_TFM(string tfm, string expected)
+        => BandOf(tfm).ShouldBe(expected);
+
+    /// <summary>
+    /// Any Node a template installs satisfies the renderer's floor.
+    /// </summary>
+    /// <remarks>
+    /// PLAN.md §4 and <c>MermaidRenderer</c>'s own diagnostic both name Node ≥ 20. Asserted over every
+    /// template rather than the two that name a version today, so the floor covers the next one too.
+    /// </remarks>
+    [Fact]
+    public void Every_Node_a_template_installs_can_run_the_mermaid_renderer()
+    {
+        const int floor = 20;
+        var stale = new List<string>();
+
+        foreach (var name in Templates)
+        {
+            var versions = StepInputs(name)
+                .Where(input => input.Uses.StartsWith("actions/setup-node@", StringComparison.Ordinal))
+                .Where(input => string.Equals(input.Key, "node-version", StringComparison.Ordinal))
+                .Select(input => input.Setting);
+
+            foreach (var version in versions)
+            {
+                var major = version.Split('.')[0];
+
+                if (int.TryParse(major, out var parsed) && parsed >= floor)
+                {
+                    continue;
+                }
+
+                stale.Add($"{name} installs Node {version}");
+            }
+        }
+
+        stale.ShouldBeEmpty(
+            $"PLAN.md §4 requires Node ≥ {floor} for the mermaid renderer: {string.Join("; ", stale)}.");
+    }
+
+    /// <summary>
     /// The branch prefixes <paramref name="name"/> asks git about — one entry per <c>refs/heads/</c>
     /// mention in a line a runner acts on, in file order.
     /// </summary>
@@ -939,6 +1122,124 @@ public sealed class WorkflowTemplateTests
     }
 
     private static string Directory { get; } = Locate();
+
+    /// <summary>The repository root, which both <see cref="Directory"/> and the tree below sit under.</summary>
+    private static string RepoRoot { get; } = Path.GetFullPath(Path.Combine(Directory, "..", ".."));
+
+    /// <summary>
+    /// Every <c>with:</c> input a template hands to a <c>uses:</c> step, across every job, tagged with the
+    /// action it configures.
+    /// </summary>
+    /// <remarks>
+    /// Read structurally, like <see cref="CheckedOutRepositories"/> and for the same reason: these
+    /// templates carry a lot of prose, and a comment naming a version is not a step installing one. This
+    /// exists because an audit of the shipped templates found every <c>with:</c> mapping in them unread by
+    /// any assertion — the tests here checked <c>run:</c> blocks, <c>env:</c>, <c>on:</c> and step order,
+    /// and nothing looked at what a <c>uses:</c> step was configured with.
+    /// </remarks>
+    private static IEnumerable<StepInput> StepInputs(string name)
+    {
+        var jobs = Mapping(Root(name), "jobs").Children.Select(child => Mapping(child.Value));
+
+        foreach (var job in jobs)
+        {
+            if (job.Children.FirstOrDefault(child => IsKey(child.Key, "steps")).Value
+                is not YamlSequenceNode steps)
+            {
+                continue;
+            }
+
+            foreach (var step in steps.Children.OfType<YamlMappingNode>())
+            {
+                var uses = Value(step, "uses");
+
+                if (uses.Length is 0)
+                {
+                    continue;
+                }
+
+                if (step.Children.FirstOrDefault(child => IsKey(child.Key, "with")).Value
+                    is not YamlMappingNode inputs)
+                {
+                    continue;
+                }
+
+                foreach (var input in inputs.Children)
+                {
+                    yield return new StepInput(uses, Scalar(input.Key), Scalar(input.Value));
+                }
+            }
+        }
+    }
+
+    /// <summary>The TFM every project in the tree builds against, from the one place that declares it.</summary>
+    private static string TargetFramework()
+    {
+        var props = Path.Combine(RepoRoot, "Directory.Build.props");
+        var declared = PropsValue(props, nameof(TargetFramework));
+
+        declared.ShouldNotBeNullOrEmpty($"No <TargetFramework> in {props}.");
+
+        return declared;
+    }
+
+    /// <summary>
+    /// The <c>actions/setup-dotnet</c> band that can run <see cref="TargetFramework"/>: <c>net10.0</c>
+    /// needs <c>10.0.x</c>. Derived rather than written down, so a TFM bump moves the assertion with it.
+    /// </summary>
+    private static string SdkBand() => BandOf(TargetFramework());
+
+    /// <summary>
+    /// <c>net10.0</c> → <c>10.0.x</c>. Split out from <see cref="SdkBand"/> so the derivation can be
+    /// asserted on a TFM this machine has no targeting pack for.
+    /// </summary>
+    private static string BandOf(string tfm)
+    {
+        var wrong = $"'{tfm}' is not a .NET 5+ TFM, so no SDK band follows from it.";
+
+        tfm.ShouldStartWith("net", Case.Sensitive, wrong);
+        tfm.ShouldContain(".", customMessage: wrong);
+
+        return $"{tfm["net".Length..]}.x";
+    }
+
+    /// <summary>
+    /// The <c>beautiful-mermaid</c> version <c>package.json</c> pins — which exists, by its own
+    /// description, only to record the version <c>templates/tools/render-mermaid.mjs</c> is written
+    /// against.
+    /// </summary>
+    private static string PinnedMermaidVersion()
+    {
+        var path = Path.Combine(RepoRoot, "package.json");
+        var pinned = JsonNode.Parse(File.ReadAllText(path))?["devDependencies"]?[MermaidPackage]
+            ?.GetValue<string>();
+
+        pinned.ShouldNotBeNullOrEmpty($"{path} no longer pins {MermaidPackage}.");
+
+        return pinned;
+    }
+
+    /// <summary>
+    /// The text inside the first <c>&lt;element&gt;</c> of an msbuild props file. A three-line reader
+    /// rather than an XML parse: one element is wanted, and the alternative pulls a document model in to
+    /// answer a question a substring settles.
+    /// </summary>
+    private static string PropsValue(string path, string element)
+    {
+        var xml = File.ReadAllText(path);
+        var open = $"<{element}>";
+        var at = xml.IndexOf(open, StringComparison.Ordinal);
+
+        if (at < 0)
+        {
+            return string.Empty;
+        }
+
+        var tail = xml[(at + open.Length)..];
+        var end = tail.IndexOf('<', StringComparison.Ordinal);
+
+        return end < 0 ? string.Empty : tail[..end].Trim();
+    }
 
     private static string Text(string name) => File.ReadAllText(Path.Combine(Directory, name));
 
@@ -1041,4 +1342,7 @@ public sealed class WorkflowTemplateTests
 
     /// <summary>One step of a workflow job — the four keys the assertions here read.</summary>
     private sealed record WorkflowStep(string Id, string Name, string Run, string If);
+
+    /// <summary>One <c>with:</c> input, and the <c>uses:</c> step it configures.</summary>
+    private sealed record StepInput(string Uses, string Key, string Setting);
 }

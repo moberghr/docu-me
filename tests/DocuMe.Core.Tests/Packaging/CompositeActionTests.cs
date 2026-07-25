@@ -78,6 +78,64 @@ public sealed class CompositeActionTests : IDisposable
             "The action must install the SDK; a consumer's runner is not guaranteed to have one.");
     }
 
+    /// <summary>
+    /// The default SDK is the one the scaffolded workflows install, which is what this input's own
+    /// description tells a consumer it is.
+    /// </summary>
+    /// <remarks>
+    /// A caller who omits <c>dotnet-version</c> takes this default, and a caller who copied
+    /// <c>templates/workflows/</c> instead takes the templates'. Nothing coupled them until now — every
+    /// <c>with:</c> value in this repository's yaml was unread by any assertion — so bumping one and not
+    /// the other would hand two consumers different SDKs for the same tool while the description here
+    /// claimed otherwise. Compared against the templates rather than the TFM directly, because
+    /// <c>WorkflowTemplateTests</c> already ties those to <c>Directory.Build.props</c>: this asserts the
+    /// one link that class cannot see.
+    /// </remarks>
+    [Fact]
+    public void Its_default_SDK_is_the_one_the_scaffolded_workflows_install()
+    {
+        var scaffolded = ScaffoldedSdkVersion();
+        var input = Mapping(Mapping(Root(), "inputs"), "dotnet-version");
+
+        Value(input, "required").ShouldBe(
+            "false",
+            "An input carrying a default a consumer is told to rely on cannot also be required.");
+
+        var drifted = $"templates/workflows/ installs {scaffolded}, so this action's default must too — its "
+            + "own description promises the two match (PLAN.md §12).";
+
+        Value(input, "default").ShouldBe(scaffolded, drifted);
+    }
+
+    /// <summary>
+    /// The <c>dotnet-version</c> every template in <c>templates/workflows/</c> installs, asserted to be
+    /// one value so this file compares against a single spelling rather than the first one it finds.
+    /// </summary>
+    private static string ScaffoldedSdkVersion()
+    {
+        var directory = Path.Combine(RepoRoot, "templates", "workflows");
+        var versions = new List<string>();
+
+        foreach (var template in Directory.EnumerateFiles(directory, "*.yml"))
+        {
+            var lines = File.ReadAllLines(template)
+                .Where(line => !line.TrimStart().StartsWith('#'))
+                .Where(line => line.Contains("dotnet-version:", StringComparison.Ordinal));
+
+            versions.AddRange(lines.Select(line => line.Split(':')[1].Trim().Trim('\'', '"')));
+        }
+
+        versions.ShouldNotBeEmpty($"No template under {directory} installs an SDK.");
+
+        // WorkflowTemplateTests owns "is it the right band"; here the only question is whether there is
+        // one band to compare against at all.
+        versions.Distinct(StringComparer.Ordinal).Count().ShouldBe(
+            1,
+            $"templates/workflows/ installs more than one SDK: {string.Join(", ", versions.Distinct(StringComparer.Ordinal))}.");
+
+        return versions[0];
+    }
+
     [Fact]
     public void It_pins_no_DocuMe_version_of_its_own()
     {
