@@ -769,9 +769,85 @@ public sealed class WorkflowTemplateTests
         Scalar(marker).ShouldBe(DriftComment.Marker);
     }
 
+    [Fact]
+    public void Every_model_run_looks_for_the_branch_its_own_skill_pushes()
+    {
+        foreach (var name in ModelDriven)
+        {
+            var skill = Path.GetFileNameWithoutExtension(name);
+            var families = BranchFamilies(name);
+
+            // Vacuous-pass guard: these two templates confirm their model run did something by listing
+            // `refs/heads/<family>*` on origin, so a template with no family left to read has lost the
+            // check entirely rather than passed it.
+            var lost = $"{name} names no refs/heads/ branch family, so nothing tells a run that opened a "
+                + "PR from one that did nothing.";
+
+            families.ShouldNotBeEmpty(lost);
+
+            // One family per template, and the ls-remote pattern, the second ls-remote and the `grep -o`
+            // must all be the same one. The two templates' branch blocks are verbatim twins apart from
+            // this string, which is exactly the shape a copy-paste swaps.
+            var swapped = $"{name} greps for more than one branch family ({string.Join(", ", families)}). "
+                + "Its before-list, its after-list and its `grep -o` must all name the same one, or the "
+                + "diff compares two different questions.";
+
+            families.Distinct(StringComparer.Ordinal).Count().ShouldBe(1, swapped);
+
+            // The coupling that makes this load-bearing, and the direction SkillContractTests cannot
+            // check: `Every_skill_names_the_branch_its_PR_is_opened_on` pins the prefix in the SKILL.md,
+            // and nothing pinned the copy in the yaml. Edit the template's pattern (or swap the two
+            // templates') and every test stays green while the job warns "no branch was pushed" on every
+            // run that pushed one — a false alarm on success, which is worse than a missed one because it
+            // teaches the team to ignore the annotation.
+            var uncoupled = $"{name} looks for '{families[0]}' branches but plugin/skills/{skill}/SKILL.md "
+                + "never names that prefix, so the branch the skill pushes is not the branch the workflow "
+                + "looks for (rule §8.4).";
+
+            SkillText(skill).ShouldContain(families[0], customMessage: uncoupled);
+        }
+    }
+
+    /// <summary>
+    /// The branch prefixes <paramref name="name"/> asks git about — one entry per <c>refs/heads/</c>
+    /// mention in a line a runner acts on, in file order.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not a regex: the two spellings differ only in their glob (<c>-*</c> for ls-remote,
+    /// <c>-.*</c> for <c>grep -o</c>), so truncating at the first glob or quote character reads both and
+    /// keeps the assertion free of the <c>[GeneratedRegex]</c> ceremony the analyzers demand.
+    /// </remarks>
+    private static List<string> BranchFamilies(string name)
+    {
+        const string marker = "refs/heads/";
+        var families = new List<string>();
+
+        foreach (var line in Runnable(name))
+        {
+            var at = line.IndexOf(marker, StringComparison.Ordinal);
+            if (at < 0)
+            {
+                continue;
+            }
+
+            var tail = line[(at + marker.Length)..];
+            var end = tail.IndexOfAny(['*', '.', '\'', '"', ' ']);
+            families.Add(end < 0 ? tail : tail[..end]);
+        }
+
+        return families;
+    }
+
     private static string Directory { get; } = Locate();
 
     private static string Text(string name) => File.ReadAllText(Path.Combine(Directory, name));
+
+    /// <summary>
+    /// The SKILL.md of <paramref name="skill"/>. Derived from <see cref="Directory"/> rather than located
+    /// again: both live under the repository root this class already found.
+    /// </summary>
+    private static string SkillText(string skill) => File.ReadAllText(
+        Path.GetFullPath(Path.Combine(Directory, "..", "..", "plugin", "skills", skill, "SKILL.md")));
 
     /// <summary>
     /// The lines of <paramref name="name"/> that a runner acts on: everything except a whole-line
