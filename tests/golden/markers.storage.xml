@@ -1,0 +1,5 @@
+<p>⚠️ UNVERIFIED: the retry count is read from config, not hard-coded.</p>
+<p>The disbursement window is 24 hours ⚠️ AMBIGUOUS: two services disagree.</p>
+<ul>
+<li>⚠️ UNVERIFIED: no test covers the fallback path.</li>
+</ul>
