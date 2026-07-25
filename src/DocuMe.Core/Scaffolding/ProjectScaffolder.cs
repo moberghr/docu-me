@@ -9,13 +9,13 @@ using DocuMe.Core.State;
 namespace DocuMe.Core.Scaffolding;
 
 /// <summary>
-/// Scaffolds a consumer repo for DocuMe (PLAN.md §6.1): a minimal <c>docume.json</c>, a
-/// <c>docs/wiki</c> skeleton, the <c>.github/workflows/docs-*.yml</c> lifecycle jobs of §10, the
-/// mermaid render script of §4, the <c>.config/dotnet-tools.json</c> pin of §12 and the
+/// Scaffolds a consumer repo for DocuMe (PLAN.md §6.1): a minimal <c>docume.json</c>, a wiki
+/// skeleton under <c>wiki.root</c>, the <c>.github/workflows/docs-*.yml</c> lifecycle jobs of §10,
+/// the mermaid render script of §4, the <c>.config/dotnet-tools.json</c> pin of §12 and the
 /// <c>.gitignore</c> entry the render script needs. Idempotent — a file DocuMe owns is never
 /// overwritten, and a file it only contributes to is added to rather than replaced; every target is
 /// reported as <see cref="ScaffoldAction.Created"/>, <see cref="ScaffoldAction.Updated"/> or
-/// <see cref="ScaffoldAction.Skipped"/> (rule §9.4). <c>--adopt</c> mode is still outstanding.
+/// <see cref="ScaffoldAction.Skipped"/> (rule §9.4).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -30,6 +30,12 @@ namespace DocuMe.Core.Scaffolding;
 /// <c>dotnet tool restore</c> before <c>dotnet tool run docume</c>, and <c>dotnet tool restore</c>
 /// in a repo with no manifest fails — so without this a fresh consumer would run <c>init</c>, push,
 /// and get a red check on its first docs job.
+/// </para>
+/// <para>
+/// <c>--adopt</c> changes two of the targets and nothing else: the state file is built from the wiki
+/// the repo already has (<see cref="WikiAdopter"/>) instead of written empty, and the skeleton
+/// <c>README.md</c> is not written at all — it would be a <em>page</em>, and adoption exists to take
+/// an existing wiki as it is rather than to add DocuMe's opinion to it.
 /// </para>
 /// </remarks>
 public static class ProjectScaffolder
@@ -51,6 +57,19 @@ public static class ProjectScaffolder
 
     /// <summary>Where GitHub Actions looks; not configurable, so neither is this (PLAN.md §10).</summary>
     private const string WorkflowDirectory = ".github/workflows";
+
+    /// <summary>
+    /// The state file's path within the wiki root (PLAN.md §5.3). Public because <c>--adopt</c> reports
+    /// through this one row, so a caller has to be able to find it among the results.
+    /// </summary>
+    public const string StateFile = "_meta/state.json";
+
+    private const string StyleFile = "_meta/STYLE.md";
+
+    private const string HomePageFile = "README.md";
+
+    /// <summary>Where the skeleton goes when no readable <c>docume.json</c> names somewhere else.</summary>
+    private static readonly string DefaultWikiRoot = new WikiConfig().Root;
 
     /// <summary>Where <c>dotnet tool restore</c> looks; likewise fixed by the SDK, not by us.</summary>
     private const string ToolManifestPath = ".config/dotnet-tools.json";
@@ -101,18 +120,39 @@ public static class ProjectScaffolder
     /// when supplied (placeholders otherwise). Returns one result per target file,
     /// in creation order.
     /// </summary>
+    /// <param name="targetDir">The consumer repo's root.</param>
+    /// <param name="spaceKey">Confluence space key for the scaffolded config, or null for a placeholder.</param>
+    /// <param name="baseUrl">Confluence base URL for the scaffolded config, or null for a placeholder.</param>
+    /// <param name="adopt">
+    /// <c>--adopt</c> (PLAN.md §6.1): build the state file from the wiki this repo already has instead
+    /// of writing an empty one. The row for <see cref="StateFile"/> reports
+    /// <see cref="ScaffoldAction.Skipped"/> with a note when the adoption was refused.
+    /// </param>
+    /// <param name="legacyMapPath">
+    /// Optional path to a legacy page-id map to seed <c>pageId</c>s from, relative to
+    /// <paramref name="targetDir"/> or absolute. Only read when <paramref name="adopt"/> is set.
+    /// </param>
     public static IReadOnlyList<ScaffoldResult> Scaffold(
         string targetDir,
         string? spaceKey = null,
-        string? baseUrl = null)
+        string? baseUrl = null,
+        bool adopt = false,
+        string? legacyMapPath = null)
     {
-        List<ScaffoldResult> results =
-        [
-            Write(targetDir, ConfigLoader.DefaultFileName, () => BuildConfigJson(spaceKey, baseUrl)),
-            Write(targetDir, "docs/wiki/README.md", BuildReadme),
-            Write(targetDir, "docs/wiki/_meta/STYLE.md", BuildStyleGuide),
-            WriteState(targetDir, "docs/wiki/_meta/state.json"),
-        ];
+        var config = Write(targetDir, ConfigLoader.DefaultFileName, () => BuildConfigJson(spaceKey, baseUrl));
+
+        // Read back the config just written — or the consumer's own, when it already had one — because
+        // three targets hang off it: where the wiki lives, the state file inside it, and the renderer.
+        var loaded = ReadConfig(targetDir);
+        var wikiRoot = ResolveConfiguredPath(targetDir, loaded.Config?.Wiki.Root, DefaultWikiRoot, "wiki.root");
+
+        // Settled before anything is written under the wiki root, because --adopt reads the tree that
+        // is already there: a STYLE.md this run created is a file the adoption would have to consider.
+        var state = StateTarget(targetDir, wikiRoot, loaded, adopt, legacyMapPath);
+
+        List<ScaffoldResult> results = [config, HomePage(targetDir, wikiRoot.Path, adopt)];
+        results.Add(Write(targetDir, $"{wikiRoot.Path}/{StyleFile}", BuildStyleGuide));
+        results.Add(state);
 
         results.AddRange(BundledTemplates.WorkflowFileNames.Select(name => Copy(
             targetDir,
@@ -122,19 +162,149 @@ public static class ProjectScaffolder
         // Directly after the workflows, because it is what makes them run at all.
         results.Add(MergeToolManifest(targetDir));
 
-        // After the config write, so a fresh repo reads the file it just got rather than a
-        // duplicate of the defaults that built it.
-        var renderer = ResolveRendererPath(targetDir);
+        var renderer = ResolveConfiguredPath(
+            targetDir,
+            loaded.Config?.Mermaid.Renderer,
+            new MermaidConfig().Renderer,
+            "mermaid.renderer");
+
         results.Add(Copy(
             targetDir,
-            renderer.RelativePath,
+            renderer.Path,
             BundledTemplates.ReadRenderScript,
-            renderer.Note));
+            renderer.Note ?? loaded.Failure));
 
         // Last, and after the render script, since the entry exists for that script's dependencies.
         results.Add(MergeGitignore(targetDir));
 
         return results;
+    }
+
+    /// <summary>
+    /// The wiki's root page. Not written under <c>--adopt</c>: it is the one skeleton file that becomes
+    /// a published <em>page</em>, and a repo with an existing wiki has its own root page — inventing one
+    /// would add DocuMe's boilerplate to somebody's documentation tree. Reported as a skip rather than
+    /// dropped from the results, so the run says what it did not do.
+    /// </summary>
+    private static ScaffoldResult HomePage(string targetDir, string wikiRoot, bool adopt)
+    {
+        var relativePath = $"{wikiRoot}/{HomePageFile}";
+
+        if (!adopt)
+        {
+            return Write(targetDir, relativePath, BuildReadme);
+        }
+
+        return new ScaffoldResult(
+            relativePath,
+            ScaffoldAction.Skipped,
+            "not written: --adopt takes the existing wiki's own root page rather than adding one.");
+    }
+
+    /// <summary>
+    /// The state file (PLAN.md §5.3): empty for a plain <c>init</c>, built from the existing wiki for
+    /// <c>--adopt</c> (<see cref="WikiAdopter"/>).
+    /// </summary>
+    private static ScaffoldResult StateTarget(
+        string targetDir,
+        (string Path, string? Note) wikiRoot,
+        (DocumeConfig? Config, string? Failure) loaded,
+        bool adopt,
+        string? legacyMapPath)
+    {
+        var relativePath = $"{wikiRoot.Path}/{StateFile}";
+        var fullPath = Combine(targetDir, relativePath);
+
+        if (!adopt)
+        {
+            if (File.Exists(fullPath))
+            {
+                return new ScaffoldResult(relativePath, ScaffoldAction.Skipped, wikiRoot.Note);
+            }
+
+            StateStore.Save(fullPath, new DocumeState());
+            return new ScaffoldResult(relativePath, ScaffoldAction.Created, wikiRoot.Note);
+        }
+
+        if (loaded.Config is null)
+        {
+            var unusable = $"nothing was adopted: {loaded.Failure} --adopt needs docume.json to know "
+                + "where the existing wiki is and which files in it are pages.";
+
+            return new ScaffoldResult(relativePath, ScaffoldAction.Skipped, unusable);
+        }
+
+        var existing = ReadState(fullPath);
+        if (existing.Failure is { } unreadable)
+        {
+            return new ScaffoldResult(relativePath, ScaffoldAction.Skipped, unreadable);
+        }
+
+        var adoption = WikiAdopter.Adopt(new AdoptionRequest(
+            Combine(targetDir, wikiRoot.Path),
+            wikiRoot.Path,
+            loaded.Config.Wiki,
+            existing.State ?? new DocumeState())
+        {
+            LegacyMapPath = ResolveMapPath(targetDir, legacyMapPath),
+            LegacyMapLabel = legacyMapPath,
+        });
+
+        if (adoption.State is null)
+        {
+            return new ScaffoldResult(relativePath, ScaffoldAction.Skipped, adoption.Note);
+        }
+
+        StateStore.Save(fullPath, adoption.State);
+
+        // Updated rather than Created when the file was already there: --adopt fills in the empty state
+        // a plain init writes, which is the normal way a consumer reaches this path.
+        return new ScaffoldResult(
+            relativePath,
+            existing.State is null ? ScaffoldAction.Created : ScaffoldAction.Updated,
+            adoption.Note);
+    }
+
+    /// <summary>
+    /// The state file as it stands: <c>null</c> state when there is none, or a one-line failure when
+    /// there is one that cannot be read. Unreadable is a refusal, never a fresh start — the file may
+    /// hold the only record of what is published, and a hand-edited <c>version</c> is a typo to fix,
+    /// not a reason to overwrite 79 page ids.
+    /// </summary>
+    private static (DocumeState? State, string? Failure) ReadState(string fullPath)
+    {
+        if (!File.Exists(fullPath))
+        {
+            return (null, null);
+        }
+
+        try
+        {
+            return (StateStore.Load(fullPath), null);
+        }
+        catch (Exception exception) when (exception is JsonException
+            or StateVersionException
+            or InvalidOperationException)
+        {
+            // InvalidOperationException included on purpose: StateStore reads "version" off a JsonNode,
+            // which throws that rather than a JsonException when the member is a string.
+            var failure = $"could not be read ({exception.Message.ReplaceLineEndings(" ")}), so nothing "
+                + "was adopted. Fix or delete the file, then run init --adopt again.";
+
+            return (null, failure);
+        }
+    }
+
+    private static string? ResolveMapPath(string targetDir, string? legacyMapPath)
+    {
+        if (string.IsNullOrWhiteSpace(legacyMapPath))
+        {
+            return null;
+        }
+
+        return System.IO.Path.IsPathRooted(legacyMapPath)
+            ? legacyMapPath
+            : Combine(targetDir, legacyMapPath.Replace('\\', '/'));
     }
 
     /// <summary>
@@ -323,39 +493,53 @@ public static class ProjectScaffolder
     };
 
     /// <summary>
-    /// Where the mermaid render script goes: wherever the target repo's <c>docume.json</c> points
-    /// <c>mermaid.renderer</c>, since that is the path <c>docume publish</c> will run (PLAN.md §5.1,
-    /// §6.2 step 3). Scaffolding it to the default while the config named somewhere else would ship
-    /// a script nothing ever executes.
+    /// The target repo's config, or a one-line failure when it cannot be read. <c>init</c> is the
+    /// command a consumer runs to get <em>out</em> of a broken setup, so an unreadable config is not
+    /// fatal here — but it is never silent either: every other command will refuse outright, and this
+    /// note is the only hint <c>init</c> can give about why.
     /// </summary>
-    private static (string RelativePath, string? Note) ResolveRendererPath(string targetDir)
+    private static (DocumeConfig? Config, string? Failure) ReadConfig(string targetDir)
     {
         var configPath = System.IO.Path.Combine(targetDir, ConfigLoader.DefaultFileName);
-        var fallback = new MermaidConfig().Renderer;
 
-        string configured;
         try
         {
-            configured = ConfigLoader.Load(configPath).Mermaid.Renderer;
+            return (ConfigLoader.Load(configPath), null);
         }
         catch (Exception exception) when (exception is ConfigNotFoundException
             or ConfigValidationException
             or JsonException)
         {
-            // init is the command a consumer runs to get *out* of a broken setup, so an unreadable
-            // config cannot be fatal here. It is still said out loud: every other command will
-            // refuse outright, and the note is the only hint init can give about why.
-            return (fallback, $"docume.json could not be read ({exception.Message.ReplaceLineEndings(" ")}), "
-                + $"so the default renderer path was used. Move the script if mermaid.renderer names another.");
+            return (null, $"docume.json could not be read ({exception.Message.ReplaceLineEndings(" ")}), "
+                + "so the defaults were used for where the wiki and the render script go. Move them if "
+                + "wiki.root or mermaid.renderer name other paths.");
+        }
+    }
+
+    /// <summary>
+    /// Where a config-driven target goes: wherever <c>docume.json</c> points, since that is the path
+    /// the other commands will use (PLAN.md §5.1) — scaffolding to the default while the config named
+    /// somewhere else would ship files nothing ever reads. Falls back with a note when the value is
+    /// missing or escapes the target directory.
+    /// </summary>
+    private static (string Path, string? Note) ResolveConfiguredPath(
+        string targetDir,
+        string? configured,
+        string fallback,
+        string field)
+    {
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return (fallback, null);
         }
 
         if (!IsInsideTarget(targetDir, configured))
         {
-            return (fallback, $"docume.json names mermaid.renderer '{configured}', which is not a path "
-                + "inside this directory; the default was used instead.");
+            return (fallback, $"docume.json names {field} '{configured}', which is not a path inside "
+                + "this directory; the default was used instead.");
         }
 
-        return (configured.Replace('\\', '/'), null);
+        return (configured.Replace('\\', '/').Trim('/'), null);
     }
 
     /// <summary>
@@ -413,18 +597,6 @@ public static class ProjectScaffolder
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath)!);
         File.WriteAllBytes(fullPath, content());
         return new ScaffoldResult(relativePath, ScaffoldAction.Created, note);
-    }
-
-    private static ScaffoldResult WriteState(string targetDir, string relativePath)
-    {
-        var fullPath = Combine(targetDir, relativePath);
-        if (File.Exists(fullPath))
-        {
-            return new ScaffoldResult(relativePath, ScaffoldAction.Skipped);
-        }
-
-        StateStore.Save(fullPath, new DocumeState());
-        return new ScaffoldResult(relativePath, ScaffoldAction.Created);
     }
 
     private static string Combine(string targetDir, string relativePath)

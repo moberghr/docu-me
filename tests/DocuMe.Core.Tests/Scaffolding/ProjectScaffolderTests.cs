@@ -183,6 +183,56 @@ public sealed class ProjectScaffolderTests : IDisposable
         File.Exists(Full("tools/render-mermaid.mjs")).ShouldBeFalse();
     }
 
+    /// <summary>
+    /// Same reasoning as the render script, on the three files that make up the wiki: the skeleton has
+    /// to land in the tree the other commands read, which is whatever <c>wiki.root</c> names (PLAN.md
+    /// §5.1). A <c>docs/wiki/README.md</c> written while the config points at <c>documentation/</c> is a
+    /// page nothing ever publishes and a state file nothing ever loads.
+    /// </summary>
+    [Fact]
+    public void Scaffold_puts_the_skeleton_where_an_existing_config_points()
+    {
+        WriteConfig("""{"confluence":{"baseUrl":"https://x.atlassian.net/wiki","spaceKey":"SBX"},"wiki":{"root":"documentation"}}""");
+
+        var results = ProjectScaffolder.Scaffold(_dir);
+
+        results.Select(r => r.RelativePath).ShouldBe(
+        [
+            "docume.json",
+            "documentation/README.md",
+            "documentation/_meta/STYLE.md",
+            "documentation/_meta/state.json",
+            .. ExpectedFiles[4..],
+        ]);
+
+        File.Exists(Full("documentation/_meta/state.json")).ShouldBeTrue();
+        Directory.Exists(Full("docs")).ShouldBeFalse("the default root was scaffolded as well");
+    }
+
+    [Fact]
+    public void Scaffold_refuses_a_wiki_root_that_escapes_the_target_directory()
+    {
+        // One level down, for the reason the renderer's escape test explains: the escape then lands in
+        // this test's own temp directory rather than the parent every other instance shares.
+        var repo = System.IO.Path.Combine(_dir, "repo");
+        Directory.CreateDirectory(repo);
+        File.WriteAllText(
+            System.IO.Path.Combine(repo, "docume.json"),
+            """{"confluence":{"baseUrl":"https://x.atlassian.net/wiki","spaceKey":"SBX"},"wiki":{"root":"../escaped"}}""");
+
+        var results = ProjectScaffolder.Scaffold(repo);
+
+        var state = results.Single(r => r.RelativePath.EndsWith(
+            ProjectScaffolder.StateFile,
+            StringComparison.Ordinal));
+
+        state.RelativePath.ShouldBe("docs/wiki/_meta/state.json");
+        state.Note.ShouldNotBeNull().ShouldContain("wiki.root");
+        Directory
+            .Exists(System.IO.Path.Combine(_dir, "escaped"))
+            .ShouldBeFalse("the scaffolder wrote outside the directory it was given");
+    }
+
     [Fact]
     public void Scaffold_refuses_a_renderer_path_that_escapes_the_target_directory()
     {
