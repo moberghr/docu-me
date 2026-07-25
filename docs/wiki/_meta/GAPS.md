@@ -14,17 +14,16 @@ and `/docs-loop` reads it to find the next page worth writing.
 
 ## Shipped but no page describes it
 
-- [ ] **The composite GitHub Action.** `actions/action.yml` exists now: it installs the repo-pinned CLI
-      (`dotnet tool restore` over `.config/dotnet-tools.json`, erroring by name when that manifest is
-      missing) and runs `docume` with an `args` string. No page mentions it. The versioning question
-      that kept it out is settled in `PLAN.md` §12: a floating major tag, force-moved by the release
-      workflow's last step, `@v0` until 1.0.0 ships, and a prerelease tag moves nothing. Not urgent,
-      because none of the six scaffolded workflows uses it: five call `dotnet tool run docume`
-      directly and `docs-feedback.yml` reaches the CLI through the skill it runs. It will not arrive
-      as drift either, since `30-automation/workflows.md` declares only `templates/workflows/*.yml`
-      and no page's `sources` cover `actions/`.
+Nothing today. The check that finds the next one is to compare what the repo ships against the union of
+every page's `sources`: a shipped path no glob covers can never arrive as drift, so it stays undocumented
+without anything reporting it.
 
 ## Answered, kept for the reasoning
+
+- **The composite GitHub Action.** Documented on `30-automation/workflows.md`, under "Writing a docs job
+  of your own", and `actions/*.yml` is in that page's `sources` so a change to it now surfaces as drift.
+  It was invisible for exactly the reason above: the page declared only `templates/workflows/*.yml`, and
+  no other page's globs reached `actions/`.
 
 - **Why `approvedBy` is always `unknown`.** Confluence Cloud exposes no label author through any API
   DocuMe can reach. Documented on the approval page rather than left as a puzzle, because it reads like

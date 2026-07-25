@@ -8,9 +8,10 @@
 # CLI a consumer's CI runs is the one their repo chose, not whatever is newest — and this action never
 # names a DocuMe version, which is why it can float on `@v1` without pretending to pin anything.
 #
-# THE REF. `@v1` is a floating major tag, force-moved by the final step of
-# `.github/workflows/release.yml` on each release (rule §8.2a). It tracks the newest 1.x. Before 1.0.0
-# there is no `v1` to resolve: pin the exact release instead, `moberghr/docu-me/actions@v0.1.0`.
+# THE REF. The floating major tag is force-moved by the final step of `.github/workflows/release.yml` on
+# each release (rule §8.2a), and the major is derived from the version rather than hardcoded: `@v0`
+# tracks the newest 0.x today, §12's `@v1` goes live at 1.0.0, and a prerelease moves neither. An exact
+# release tag, `moberghr/docu-me/actions@v0.1.0`, is there for a consumer who wants no float at all.
 name: DocuMe
 description: Run the repo-pinned DocuMe CLI — restores .config/dotnet-tools.json, then invokes docume.
 
