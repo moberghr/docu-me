@@ -29,6 +29,14 @@ inputs:
       a newer SDK alongside.
     required: false
     default: '10.0.x'
+  mermaid:
+    description: >-
+      Whether to install the diagram renderer's toolchain (Node + beautiful-mermaid).
+      `auto`, the default, installs it when `args` invokes `publish` and skips it otherwise,
+      because publish is the only command that renders diagrams. `false` never installs it —
+      correct, and a little faster, for a wiki with no ```mermaid fences. `true` always does.
+    required: false
+    default: 'auto'
 
 runs:
   using: composite
@@ -51,6 +59,62 @@ runs:
         fi
 
         dotnet tool restore
+
+    # Publish is the ONLY DocuMe command that renders diagrams: it shells out to Node and the renderer
+    # named by `mermaid.renderer` once per ```mermaid fence (PLAN.md §4, §6.2 step 3). Neither half is on
+    # a runner by default, so an action that installs only the SDK fails a wiki holding one diagram with
+    # the renderer's exit 3, "cannot load beautiful-mermaid" — which is exactly the bug the scaffolded
+    # docs-publish.yml shipped with. This action is the OTHER way a consumer runs publish, so it carries
+    # the same two steps rather than leaving them for a seventh consumer to get right.
+    #
+    # Decided in a step rather than an `if:` on the two below: the condition is the first word of an
+    # argument string, which an expression cannot parse, and an unrecognised `mermaid` value must be a
+    # refusal rather than a silent false — a typo that reads as "no renderer" rebuilds the same bug.
+    - name: Decide whether the diagram renderer is needed
+      id: renderer
+      shell: bash
+      env:
+        ARGS: ${{ inputs.args }}
+        MERMAID: ${{ inputs.mermaid }}
+      run: |
+        set -euo pipefail
+
+        # The same word splitting the run step below relies on, used here to read the subcommand.
+        # Positional, not `${ARGS%% *}`, so a leading space does not read as an empty first word.
+        set -- $ARGS
+        subcommand="${1:-}"
+
+        case "$MERMAID" in
+          true)  needed=true ;;
+          false) needed=false ;;
+          auto)
+            needed=false
+            if [ "$subcommand" = 'publish' ]; then
+              needed=true
+            fi
+            ;;
+          *)
+            echo "::error::mermaid must be auto, true or false — got '$MERMAID'."
+            exit 1
+            ;;
+        esac
+
+        echo "needed=$needed" >> "$GITHUB_OUTPUT"
+
+    # The version is the one templates/tools/render-mermaid.mjs is written against; the renderer accepts a
+    # subset of the mermaid dialect and that subset moves between releases, so a floating install would
+    # change which of a consumer's diagrams render, on a nightly, with no commit to blame.
+    - if: steps.renderer.outputs.needed == 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    # At the workspace root, not beside the renderer: Node resolves a dependency from the importing
+    # script's own directory upwards, so a root node_modules/ is what the renderer actually finds.
+    - name: Install the mermaid renderer's dependency
+      if: steps.renderer.outputs.needed == 'true'
+      shell: bash
+      run: npm install --no-save beautiful-mermaid@1.1.3
 
     # `args` arrives as an environment variable rather than through `${{ }}` interpolated into the
     # script: a value spliced into the shell is a command-injection surface, and the caller of this

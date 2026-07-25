@@ -90,11 +90,18 @@ jobs:
 |---|---|---|
 | `args` | yes | Everything after `docume`, as one string |
 | `dotnet-version` | no | SDK to install, `10.0.x` by default |
+| `mermaid` | no | Diagram renderer, `auto` by default |
 
 The action names no DocuMe version. It restores your `.config/dotnet-tools.json` rather than installing
 anything, so the CLI it runs is the one your repo pinned and a DocuMe release cannot change the version
 your CI runs. A repo with no manifest stops with an error naming `docume init`, because the SDK's own
 wording for a missing manifest does not mention DocuMe.
+
+`publish` is the only command that renders diagrams, and it renders them by shelling out to Node. Neither
+Node nor `beautiful-mermaid` is on a runner by default, so `mermaid: auto` installs both when `args`
+invokes a publish and skips them otherwise. Set it to `false` if your wiki has no ` ```mermaid ` fences
+and you would rather not pay for the install; a value the action does not recognise stops the job rather
+than quietly leaving the renderer out.
 
 > [!NOTE]
 > `args` is split on whitespace into the argument list, which is what turns one input string into a

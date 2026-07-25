@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json.Nodes;
 using Shouldly;
 using YamlDotNet.RepresentationModel;
 
@@ -29,6 +30,8 @@ namespace DocuMe.Core.Tests.Packaging;
 public sealed class CompositeActionTests : IDisposable
 {
     private const string ToolManifest = ".config/dotnet-tools.json";
+
+    private const string MermaidPackage = "beautiful-mermaid";
 
     private readonly List<string> _scratch = [];
 
@@ -108,10 +111,38 @@ public sealed class CompositeActionTests : IDisposable
     }
 
     /// <summary>
+    /// The <c>beautiful-mermaid</c> version <c>package.json</c> pins: the one
+    /// <c>templates/tools/render-mermaid.mjs</c> is written against, and the single source every place
+    /// that names the dependency is held to.
+    /// </summary>
+    private static string PinnedMermaidVersion()
+    {
+        var path = Path.Combine(RepoRoot, "package.json");
+        var pinned = JsonNode.Parse(File.ReadAllText(path))?["devDependencies"]?[MermaidPackage]
+            ?.GetValue<string>();
+
+        pinned.ShouldNotBeNullOrEmpty($"{path} no longer pins {MermaidPackage}.");
+
+        return pinned;
+    }
+
+    /// <summary>
+    /// The <c>node-version</c> the scaffolded templates install, on the same one-value bar as
+    /// <see cref="ScaffoldedSdkVersion"/>.
+    /// </summary>
+    private static string ScaffoldedNodeVersion() => ScaffoldedWith("node-version");
+
+    /// <summary>
     /// The <c>dotnet-version</c> every template in <c>templates/workflows/</c> installs, asserted to be
     /// one value so this file compares against a single spelling rather than the first one it finds.
     /// </summary>
-    private static string ScaffoldedSdkVersion()
+    private static string ScaffoldedSdkVersion() => ScaffoldedWith("dotnet-version");
+
+    /// <summary>
+    /// The single value <c>templates/workflows/</c> gives a <c>with:</c> key, so this file compares
+    /// against one spelling rather than the first one it happens to find.
+    /// </summary>
+    private static string ScaffoldedWith(string key)
     {
         var directory = Path.Combine(RepoRoot, "templates", "workflows");
         var versions = new List<string>();
@@ -120,20 +151,159 @@ public sealed class CompositeActionTests : IDisposable
         {
             var lines = File.ReadAllLines(template)
                 .Where(line => !line.TrimStart().StartsWith('#'))
-                .Where(line => line.Contains("dotnet-version:", StringComparison.Ordinal));
+                .Where(line => line.Contains($"{key}:", StringComparison.Ordinal));
 
             versions.AddRange(lines.Select(line => line.Split(':')[1].Trim().Trim('\'', '"')));
         }
 
-        versions.ShouldNotBeEmpty($"No template under {directory} installs an SDK.");
+        versions.ShouldNotBeEmpty($"No template under {directory} sets {key}.");
 
         // WorkflowTemplateTests owns "is it the right band"; here the only question is whether there is
         // one band to compare against at all.
         versions.Distinct(StringComparer.Ordinal).Count().ShouldBe(
             1,
-            $"templates/workflows/ installs more than one SDK: {string.Join(", ", versions.Distinct(StringComparer.Ordinal))}.");
+            $"templates/workflows/ sets more than one {key}: {string.Join(", ", versions.Distinct(StringComparer.Ordinal))}.");
 
         return versions[0];
+    }
+
+    /// <summary>
+    /// The action provisions the diagram renderer for a <c>publish</c>, because it is the second way a
+    /// consumer runs one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>docs-publish.yml</c> shipped without these two steps and could not publish a wiki holding a
+    /// single ```mermaid fence: publish shells out to Node once per fence, and neither Node nor
+    /// <c>beautiful-mermaid</c> is on a runner by default. This action is the other route to the same
+    /// command — its own documented example is <c>args: publish --dry-run</c> — so it inherited the same
+    /// bug from the same cause, an install step nobody asserted the absence of.
+    /// </para>
+    /// <para>
+    /// Asserted against the scaffolded template rather than against literals: the two publish paths have
+    /// to agree about what a publish needs, and the failure of one to follow the other is the thing worth
+    /// catching.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_publish_path_provisions_the_renderer_the_scaffolded_publish_provisions()
+    {
+        var steps = Steps();
+        var node = steps.FindIndex(step =>
+            Value(step, "uses", fallback: string.Empty).StartsWith("actions/setup-node@", StringComparison.Ordinal));
+        var install = steps.FindIndex(step => Run(step).Contains(MermaidPackage, StringComparison.Ordinal));
+
+        const string missing = "The action installs the SDK but not the diagram renderer, so `args: publish` — "
+            + "the example in its own documentation — fails any wiki holding one ```mermaid fence with the "
+            + "renderer's exit 3. templates/workflows/docs-publish.yml carries both steps; this is the other "
+            + "way a consumer runs publish (PLAN.md §4, §6.2 step 3, §12).";
+
+        node.ShouldBeGreaterThanOrEqualTo(0, missing);
+        install.ShouldBeGreaterThanOrEqualTo(0, missing);
+
+        var run = IndexOfRun("dotnet tool run docume");
+
+        node.ShouldBeLessThan(run, "The action sets Node up after the docume run that needs it.");
+        install.ShouldBeLessThan(run, "The action installs the renderer's dependency after the run that needs it.");
+
+        // The same version, from the same source of truth, as every other place that names it.
+        var pinned = PinnedMermaidVersion();
+        var drifted = $"The action installs a {MermaidPackage} other than the {pinned} package.json pins — "
+            + "the version templates/tools/render-mermaid.mjs is written against.";
+
+        Text().ShouldContain($"{MermaidPackage}@{pinned}", customMessage: drifted);
+
+        var with = steps[node].Children
+            .Where(child => IsKey(child.Key, "with"))
+            .Select(child => (YamlMappingNode)child.Value)
+            .Single();
+
+        Value(with, "node-version").ShouldBe(
+            ScaffoldedNodeVersion(),
+            "The action installs a Node other than the templates'.");
+
+        // And it is on by default for a publish. An opt-in renderer is the same bug behind an input:
+        // the consumer who hits it is precisely the one who has not read far enough to know it exists.
+        var mermaid = Mapping(Mapping(Root(), "inputs"), "mermaid");
+
+        const string optIn = "The renderer is no longer provisioned by default, so `args: publish` fails a "
+            + "wiki with a diagram unless the consumer knew to ask for it.";
+
+        Value(mermaid, "required").ShouldBe("false", "An input carrying a working default cannot be required.");
+        Value(mermaid, "default").ShouldBe("auto", optIn);
+    }
+
+    /// <summary>
+    /// Both renderer steps are gated on the decision step, so a <c>drift</c> or a <c>sync</c> does not pay
+    /// for a toolchain it never uses.
+    /// </summary>
+    [Fact]
+    public void The_renderer_steps_are_gated_on_the_decision_step()
+    {
+        var gated = Steps()
+            .Where(step =>
+                Value(step, "uses", fallback: string.Empty).StartsWith("actions/setup-node@", StringComparison.Ordinal)
+                || Run(step).Contains(MermaidPackage, StringComparison.Ordinal))
+            .ToList();
+
+        gated.Count.ShouldBe(2, "The renderer is no longer two steps; this test names them by shape.");
+
+        const string ungated = "A renderer step runs unconditionally, so every non-publish invocation "
+            + "installs a toolchain it does not use.";
+
+        foreach (var step in gated)
+        {
+            Value(step, "if", fallback: string.Empty)
+                .ShouldContain("steps.renderer.outputs.needed", customMessage: ungated);
+        }
+    }
+
+    /// <summary>
+    /// Every input the action accepts appears in the table on the page that teaches consumers to use it,
+    /// and every row of that table is an input the action still has.
+    /// </summary>
+    /// <remarks>
+    /// The wiki page is the only prose describing this action, and its example is the publish this slice
+    /// fixed. An input added here and not there is invisible to the reader who needs it — which is how
+    /// the renderer went missing in the first place — and a row describing an input that no longer exists
+    /// is worse, since a consumer copying it gets an "unexpected input" warning and no behaviour.
+    /// </remarks>
+    [Fact]
+    public void Its_inputs_are_the_ones_the_wiki_documents()
+    {
+        var page = Path.Combine(RepoRoot, "docs", "wiki", "30-automation", "workflows.md");
+
+        File.Exists(page).ShouldBeTrue($"{page} is where this action is documented.");
+
+        // The page carries several tables; only the one under this header describes the action's inputs.
+        var lines = File.ReadAllLines(page).ToList();
+        var header = lines.FindIndex(line => line.StartsWith("| Input | Required |", StringComparison.Ordinal));
+
+        header.ShouldBeGreaterThanOrEqualTo(0, $"{page} no longer has the action's input table.");
+
+        var documented = lines
+            .Skip(header)
+            .TakeWhile(line => line.StartsWith('|'))
+            .Where(line => line.StartsWith("| `", StringComparison.Ordinal))
+            .Select(line => line.Split('`')[1])
+            .ToList();
+
+        documented.ShouldNotBeEmpty($"{page}'s input table has no rows.");
+
+        var declared = Mapping(Root(), "inputs").Children.Select(child => Scalar(child.Key)).ToList();
+
+        foreach (var input in declared)
+        {
+            var undocumented = $"The action accepts `{input}` and {page} never mentions it, so nobody "
+                + "reading the docs knows it exists.";
+
+            documented.ShouldContain(input, undocumented);
+        }
+
+        foreach (var row in documented.Where(row => !declared.Contains(row, StringComparer.Ordinal)))
+        {
+            declared.ShouldContain(row, $"{page} documents an input `{row}` the action does not accept.");
+        }
     }
 
     [Fact]
@@ -277,23 +447,87 @@ public sealed class CompositeActionTests : IDisposable
     }
 
     /// <summary>
-    /// The drift guard for the two executed steps: they are found by name, so a rename fails here rather
+    /// The decision the two renderer steps are gated on, executed: <c>auto</c> reads the subcommand out of
+    /// the argument string, and publish is the only one that renders anything.
+    /// </summary>
+    /// <remarks>
+    /// An expression on the steps themselves cannot do this — <c>args</c> is one string and the condition
+    /// is its first word — so the branch is shell, and shell that decides whether a publish works is shell
+    /// worth running rather than reading. The leading-space case is why it splits positionally instead of
+    /// trimming to the first space.
+    /// </remarks>
+    [Theory]
+    [InlineData("auto", "publish", "true")]
+    [InlineData("auto", "publish --dry-run --tree", "true")]
+    [InlineData("auto", "   publish --dry-run", "true")]
+    [InlineData("auto", "drift --format json", "false")]
+    [InlineData("auto", "sync --comments", "false")]
+    [InlineData("auto", "status", "false")]
+    [InlineData("auto", "", "false")]
+    [InlineData("false", "publish --dry-run", "false")]
+    [InlineData("true", "drift --format json", "true")]
+    public void The_renderer_is_provisioned_exactly_when_a_publish_needs_it(
+        string mermaid,
+        string args,
+        string expected)
+    {
+        var repo = NewConsumerRepo(withManifest: true);
+        var run = RunStep(RendererStep, repo, args, mermaid);
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        var wrong = $"mermaid={mermaid} with args '{args}' decided needed={run.Outputs.GetValueOrDefault("needed")}, "
+            + $"expected {expected}.\n{run.Diagnostics}";
+
+        run.Outputs.GetValueOrDefault("needed").ShouldBe(expected, wrong);
+    }
+
+    /// <summary>
+    /// A <c>mermaid</c> value the step does not recognise stops the action rather than falling through to
+    /// "no renderer" — that fallthrough is the shipped bug rebuilt out of a typo.
+    /// </summary>
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("True")]
+    [InlineData("")]
+    public void An_unrecognised_mermaid_value_is_a_refusal_rather_than_a_silent_skip(string mermaid)
+    {
+        var repo = NewConsumerRepo(withManifest: true);
+        var run = RunStep(RendererStep, repo, "publish", mermaid);
+
+        run.Code.ShouldNotBe(0, $"mermaid='{mermaid}' was accepted.\n{run.Diagnostics}");
+        run.Outputs.ShouldNotContainKey(
+            "needed",
+            $"The refusal still wrote a decision, which the steps below would act on.\n{run.Diagnostics}");
+
+        var annotation = run.Output
+            .Split('\n')
+            .FirstOrDefault(line => line.StartsWith("::error::", StringComparison.Ordinal));
+
+        annotation.ShouldNotBeNull($"The refusal wrote no ::error:: annotation. Got:\n{run.Output}");
+        annotation.ShouldContain("auto", customMessage: "The refusal does not name the values it accepts.");
+    }
+
+    /// <summary>
+    /// The drift guard for the executed steps: they are found by name, so a rename fails here rather
     /// than turning every execution test above into a vacuous pass on an empty script.
     /// </summary>
     [Fact]
     public void The_executed_steps_are_the_ones_the_action_still_ships()
     {
-        var scripts = new[] { RestoreStep, DocumeStep }.Select(ScriptAt).ToList();
+        var scripts = new[] { RestoreStep, DocumeStep, RendererStep }.Select(ScriptAt).ToList();
 
         scripts.ShouldAllBe(script => script.Length != 0, "A step this file executes no longer has a shell.");
     }
 
     // ---- fixtures and process plumbing -------------------------------------------------------------
 
-    /// <summary>Position of the restore step and of the docume step among <see cref="Steps"/>.</summary>
+    /// <summary>Position of the executed steps among <see cref="Steps"/>.</summary>
     private static int RestoreStep => IndexOfRun("dotnet tool restore");
 
     private static int DocumeStep => IndexOfRun("dotnet tool run docume");
+
+    private static int RendererStep => IndexOfRun("needed=$needed");
 
     private static string RepoRoot { get; } = Locate();
 
@@ -338,20 +572,32 @@ public sealed class CompositeActionTests : IDisposable
     /// Runs the shipped shell of one step against <paramref name="repo"/>, with a <c>dotnet</c> on
     /// <c>PATH</c> that records its argument list and nothing else.
     /// </summary>
-    private static StepRun RunStep(int step, string repo, string? args = null)
+    private static StepRun RunStep(int step, string repo, string? args = null, string? mermaid = null)
     {
         var argv = Path.Combine(repo, "dotnet-argv.txt");
+        var outputs = Path.Combine(repo, "github-output.txt");
         var environment = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             // Cleared down to what a runner guarantees, so a variable this repository happens to export
             // cannot stand in for one the action must set itself.
             ["PATH"] = $"{StubDotnet(repo, argv)}{Path.PathSeparator}{Environment.GetEnvironmentVariable("PATH")}",
             ["HOME"] = repo,
+
+            // The runner creates this file before the step; a step appending to an unset path is the
+            // failure being tested for elsewhere, not one to introduce here.
+            ["GITHUB_OUTPUT"] = outputs,
         };
+
+        File.WriteAllText(outputs, string.Empty);
 
         if (args is not null)
         {
             environment["ARGS"] = args;
+        }
+
+        if (mermaid is not null)
+        {
+            environment["MERMAID"] = mermaid;
         }
 
         var result = Shell(ScriptAt(step), repo, environment);
@@ -360,7 +606,29 @@ public sealed class CompositeActionTests : IDisposable
             result.Code,
             result.Output,
             result.Error,
-            File.Exists(argv) ? File.ReadAllLines(argv).ToList() : []);
+            File.Exists(argv) ? File.ReadAllLines(argv).ToList() : [],
+            StepOutputs(outputs));
+    }
+
+    /// <summary>
+    /// The <c>key=value</c> lines a step appended to <c>$GITHUB_OUTPUT</c>, which is how the runner
+    /// carries a decision from one step to the next step's <c>if:</c>.
+    /// </summary>
+    private static Dictionary<string, string> StepOutputs(string path)
+    {
+        var written = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var line in File.Exists(path) ? File.ReadAllLines(path) : [])
+        {
+            var split = line.IndexOf('=', StringComparison.Ordinal);
+
+            if (split > 0)
+            {
+                written[line[..split]] = line[(split + 1)..];
+            }
+        }
+
+        return written;
     }
 
     /// <summary>
@@ -527,7 +795,12 @@ public sealed class CompositeActionTests : IDisposable
 
     private sealed record ProcessResult(int Code, string Output, string Error);
 
-    private sealed record StepRun(int Code, string Output, string Error, List<string> Argv)
+    private sealed record StepRun(
+        int Code,
+        string Output,
+        string Error,
+        List<string> Argv,
+        Dictionary<string, string> Outputs)
     {
         /// <summary>Everything a failure needs, since the interesting half is usually on stderr.</summary>
         internal string Diagnostics => $"""
