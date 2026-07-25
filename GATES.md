@@ -15,9 +15,14 @@ Tick a box (`- [x]`) and the loop picks it up within ~30 minutes. Each gate also
   **What the loop does once (1) and (2) land:** threads `sandboxBaseUrl` through the config loader as its own slice, publishes DocuMe's own docs to `DOCUMESBX`, then bulk-publishes the 79 Aur pages *to the sandbox only*, and reports what to look at page by page. It will not touch the production `AUR` space — that needs `confluence.productionAllowed: true` and **gate-m7-production**.
   **Why it is not blocking the loop right now:** M3 (§6.3 label sync, §6.5 dashboard, §8 approval state machine) is buildable offline against WireMock exactly as M2's client was, so the loop moves there and this gate waits.
 
+- [ ] **gate-m3-approval-roundtrip** (opened 2026-07-25 iter 44) — **M3's feature work is finished; its acceptance needs your hands on a label.** Every named M3 deliverable is built and green: label sync (`docume sync --labels`), the approval state machine (§8: record, invalidate, revoke, with history preserved), the `docume dashboard` page (§6.5), and the status table. What is left is only the acceptance criterion — "Sandbox e2e: approve → republish changed page → label removed → re-approve; dashboard correct" (PLAN.md §14) — and the loop cannot add a label as a human reviewer.
+  **What to do, in order:** (1) the three sandbox items under "Setup Mirko must do before M2" below — the same ones **gate-m2-aur-review** is waiting on, so doing them once unblocks both; (2) let the loop publish to `DOCUMESBX`; (3) open one published page in Confluence and add the **`approved`** label to it; (4) tick this box.
+  **What the loop does then:** runs `docume sync --labels` (which records the approval into `state.json`), republishes that page with a content change so §8 invalidates the approval and strips the label, regenerates the dashboard, and reports each step. You re-approve once more to close the cycle.
+  **Expect `approvedBy` to read `unknown` — that is correct, not a bug.** Confluence Cloud exposes no label author anywhere the tool can reach (spike S3, settled iter43: not on CQL search results, not on `content/{id}/label`, not on v2 `/pages/{id}/labels`). Filling it with the account DocuMe authenticates as would put a fabricated approver in an audit trail, so it stays honest instead. The label itself is the gesture §8 keys on.
+  **Why it is not blocking the loop right now:** §14 runs M4 and M5 in parallel after M3, and both are buildable offline, so the loop moved to M5 (§6.4 drift engine) and this gate waits.
+
 ## Anticipated (for orientation, not yet open)
 
-- **gate-m3-approval-roundtrip** — a human adds the `approved` label to verify the approval → invalidation → re-approval cycle (M3 acceptance)
 - **gate-m7-production** — permission to publish to the production AUR space + team onboarding (M7). Ticking this also requires setting `confluence.productionAllowed: true` in `tools/loop/state.json`.
 
 ## Setup Mirko must do before M2 (the loop will BLOCK on these otherwise)
