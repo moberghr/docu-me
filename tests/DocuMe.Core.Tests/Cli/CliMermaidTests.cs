@@ -56,6 +56,15 @@ public sealed partial class CliMermaidTests : IDisposable
     private const string DiagramSource = "graph TD\n  A[Loan request] --> B{Approved?}";
 
     /// <summary>
+    /// Two more fence bodies, distinct from <see cref="DiagramSource"/> and from each other, so a run can
+    /// hold three diagrams whose attachment names are three different hashes. Multi-line like the first,
+    /// which is what makes the appended marker's record separator load-bearing.
+    /// </summary>
+    private const string BuildSource = "graph LR\n  C[Build] --> D[Deploy]";
+
+    private const string HandoffSource = "sequenceDiagram\n  Alice->>Bob: Ship it";
+
+    /// <summary>
     /// The width the stub SVG carries. Fractional on purpose: <c>ac:width</c> is a whole pixel count
     /// rounded up, so 240.4 → 241 distinguishes a measured width from a copied string.
     /// </summary>
@@ -69,6 +78,9 @@ public sealed partial class CliMermaidTests : IDisposable
 
     /// <summary>Page title → the id the fake Confluence invented for it.</summary>
     private readonly Dictionary<string, string> _created = new(StringComparer.Ordinal);
+
+    /// <summary>The same ids in the order they were handed out, which is the order the run publishes in.</summary>
+    private readonly List<string> _createdIds = [];
 
     private int _nextPageId = 810000;
 
@@ -206,9 +218,11 @@ public sealed partial class CliMermaidTests : IDisposable
         real.Code.ShouldBe(0, real.Diagnostics);
         File.Exists(marker).ShouldBeTrue(real.Diagnostics);
 
-        // And the fence body reached the script verbatim, which is what makes the attachment name a
-        // function of the source rather than of the file it came from.
-        File.ReadAllText(marker).ShouldBe(DiagramSource, real.Diagnostics);
+        // And the fence body reached the script verbatim — once — which is what makes the attachment
+        // name a function of the source rather than of the file it came from.
+        var only = new List<string> { DiagramSource };
+
+        Rendered(marker).ShouldBe(only, real.Diagnostics);
     }
 
     /// <summary>
@@ -251,6 +265,133 @@ public sealed partial class CliMermaidTests : IDisposable
         forced.Code.ShouldBe(0, forced.Diagnostics);
         File.Exists(marker).ShouldBeTrue($"--force did not re-render.{Environment.NewLine}{forced.Diagnostics}");
         Uploads().Count.ShouldBe(2, $"--force did not re-upload.{Environment.NewLine}{forced.Diagnostics}");
+    }
+
+    /// <summary>
+    /// What a run spends on diagrams, at the only shape where its rates can be told apart: one fence body
+    /// repeated across three pages, and a fourth page carrying two fences of its own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every other test in this class publishes one page holding one fence, where "once for the run",
+    /// "once per distinct diagram", "once per page" and "once per page-and-attachment pair" are all the
+    /// number 1 and no assertion can distinguish them. <see cref="PublishExecutor"/> states two
+    /// <em>different</em> denominators in the same breath — a diagram repeated across pages costs one Node
+    /// process "rather than one per page", while the upload is per page because a Confluence attachment
+    /// belongs to a page — and at N=1 nothing executable could fail on either half.
+    /// </para>
+    /// <para>
+    /// So the fixture makes the numbers differ: 5 pages, 4 of them carrying diagrams, 3 distinct sources,
+    /// 5 page-and-attachment pairs. A render cache keyed per page would start Node 5 times; one that
+    /// outlived the attachment name would start it once and publish two pages pointing at the wrong image;
+    /// an upload hoisted out of the page loop would send 3 and leave two pages with a broken image.
+    /// </para>
+    /// <para>
+    /// The render count is only visible because the stub renderer appends (<see cref="Rendered"/>). A
+    /// marker that truncates answers "Node started" and cannot fail a claim whose subject is how often.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_diagram_on_three_pages_starts_node_once_for_it_and_uploads_it_to_each()
+    {
+        var work = Scaffolded(nameof(A_diagram_on_three_pages_starts_node_once_for_it_and_uploads_it_to_each));
+
+        var marker = StubRenderer(work, Renders());
+
+        WriteDiagramPage(work, "architecture/api.md", "Api", DiagramSource);
+        WriteDiagramPage(work, DiagramPath, DiagramTitle, DiagramSource);
+        WriteDiagramPage(work, "architecture/overview.md", "Overview", DiagramSource);
+        WriteDiagramPage(work, "guides/deploy.md", "Deploy", BuildSource, HandoffSource);
+
+        StubSpace();
+        StubCreate();
+        StubChildren();
+        StubAttachmentUpload();
+
+        var run = Invoke(work, "publish");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        // Named first and on its own, because this is the number the one-page tests cannot see and the
+        // list below would report as a diff rather than as a sentence.
+        var rendered = Rendered(marker);
+
+        var perSource = $"Node was started {rendered.Count} time(s) for 3 distinct diagrams spread over 4 "
+            + "pages. Rendering is cached by attachment name for the whole run (PublishExecutor), so it is "
+            + "one process per distinct source, not one per page — and a Node start is the most expensive "
+            + "thing a publish does."
+            + Environment.NewLine + run.Diagnostics;
+
+        rendered.Count.ShouldBe(3, perSource);
+
+        // And on which sources, in the order the run reached them: the shared diagram is rendered on the
+        // first page that shows it and never again, so a cache that keyed on anything else shows up here
+        // as a different list rather than as a different count.
+        var sources = new List<string> { DiagramSource, BuildSource, HandoffSource };
+
+        rendered.ShouldBe(sources, run.Diagnostics);
+
+        // The other denominator, and it is deliberately not the same one: a Confluence attachment belongs
+        // to a page, so the diagram three pages show is uploaded three times even though it rendered once.
+        var uploads = Uploads()
+            .Select(upload => $"{UploadedTo(upload)} → {UploadedFilename(Multipart(upload))}")
+            .ToList();
+
+        var perPair = $"The run sent {uploads.Count} attachment upload(s): [{string.Join(", ", uploads)}]."
+            + Environment.NewLine + run.Diagnostics;
+
+        var shared = MermaidAttachmentName.ForSource(DiagramSource);
+
+        var expected = new List<string>
+        {
+            $"Api → {shared}",
+            $"{DiagramTitle} → {shared}",
+            $"Overview → {shared}",
+            $"Deploy → {MermaidAttachmentName.ForSource(BuildSource)}",
+            $"Deploy → {MermaidAttachmentName.ForSource(HandoffSource)}",
+        };
+
+        uploads.ShouldBe(expected, perPair);
+
+        // The report counts what was sent, not what was rendered: an operator reading "3" here would be
+        // told a five-upload run was a three-upload one.
+        run.Flowed.ShouldContain("Attachments uploaded: 5", customMessage: run.Diagnostics);
+
+        // Vacuity guard. The two counts above only mean something if the pages really published and each
+        // body points at the file its own page received — three uploads of one diagram is correct only
+        // because three bodies reference it.
+        var pages = State(work).Pages;
+        var recorded = pages.Keys.Order(StringComparer.Ordinal).ToList();
+
+        var all = new List<string>
+        {
+            "README.md",
+            "architecture/api.md",
+            DiagramPath,
+            "architecture/overview.md",
+            "guides/deploy.md",
+        };
+
+        recorded.ShouldBe(all.Order(StringComparer.Ordinal).ToList(), perPair);
+
+        foreach (var title in new[] { "Api", DiagramTitle, "Overview" })
+        {
+            var missing = $"'{title}' does not reference the diagram it shares with two other pages."
+                + Environment.NewLine + run.Diagnostics;
+
+            CreatedBody(title).ShouldContain($"<ri:attachment ri:filename=\"{shared}\"/>", customMessage: missing);
+        }
+
+        // And the page with two of its own records both, so "one page, one attachment" is not the shape
+        // the state writer quietly assumes either.
+        var both = new List<string>
+        {
+            MermaidAttachmentName.ForSource(BuildSource),
+            MermaidAttachmentName.ForSource(HandoffSource),
+        };
+
+        pages["guides/deploy.md"].Attachments.Keys.Order(StringComparer.Ordinal).ToList()
+            .ShouldBe(both.Order(StringComparer.Ordinal).ToList(), perPair);
     }
 
     /// <summary>
@@ -435,6 +576,28 @@ public sealed partial class CliMermaidTests : IDisposable
         File.WriteAllText(full, markdown);
     }
 
+    /// <summary>A page carrying one <c>```mermaid</c> fence per source, in the order given.</summary>
+    private static void WriteDiagramPage(string work, string path, string title, params string[] sources)
+    {
+        var full = Path.Combine(work, "docs", "wiki", path.Replace('/', Path.DirectorySeparatorChar));
+
+        var fences = sources.Select(source => $"```mermaid{Environment.NewLine}{source}{Environment.NewLine}```");
+
+        var markdown = $"""
+            ---
+            title: {title}
+            ---
+
+            # {title}
+
+            {string.Join($"{Environment.NewLine}{Environment.NewLine}", fences)}
+
+            """;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        File.WriteAllText(full, markdown);
+    }
+
     private static void SetRenderer(string work, string path) =>
         Reconfigure(work, config =>
         {
@@ -460,8 +623,9 @@ public sealed partial class CliMermaidTests : IDisposable
     /// <param name="directory">The directory holding <c>tools/</c>, which is the repo root for a real run.</param>
     /// <param name="ending">What the script does once it has recorded the source (<see cref="Renders"/>).</param>
     /// <param name="marker">
-    /// The marker filename, relative to <paramref name="directory"/>. The source is written into it, so a
-    /// test can also assert what the CLI fed the script.
+    /// The marker filename, relative to <paramref name="directory"/>. Every source the script is fed is
+    /// <em>appended</em> to it, so a test can assert what the CLI fed the script and — the part a
+    /// truncating marker cannot answer — how many times it started Node (<see cref="Rendered"/>).
     /// </param>
     /// <remarks>
     /// The path is left at the scaffolded default so the config under test is the one a consumer gets.
@@ -474,10 +638,14 @@ public sealed partial class CliMermaidTests : IDisposable
         var markerPath = Path.Combine(directory, marker);
         var script = Path.Combine(directory, "tools", "render-mermaid.mjs");
 
+        // Appended, not written: a truncating marker answers "did Node start" and nothing else, and the
+        // property that matters is a count — a diagram repeated across pages costs one Node process
+        // rather than one per page (PublishExecutor's `_content` cache). Separated by ASCII RS, which no
+        // mermaid source can contain, because the sources themselves are multi-line.
         var source = $$"""
-            import { writeFileSync } from 'node:fs';
+            import { appendFileSync } from 'node:fs';
             {{BundledRenderScript.ReadSourceFromStdin}}
-            writeFileSync({{JsonSerializer.Serialize(markerPath)}}, source);
+            appendFileSync({{JsonSerializer.Serialize(markerPath)}}, source + '\u001e');
             {{ending}}
             """;
 
@@ -486,6 +654,15 @@ public sealed partial class CliMermaidTests : IDisposable
 
         return markerPath;
     }
+
+    /// <summary>
+    /// Every diagram source the stub renderer was handed, in the order Node was started on them — so a
+    /// test can assert how many processes a run spent as well as on what.
+    /// </summary>
+    private static List<string> Rendered(string marker) =>
+        !File.Exists(marker)
+            ? []
+            : [.. File.ReadAllText(marker).Split('\u001e', StringSplitOptions.RemoveEmptyEntries)];
 
     /// <summary>A script that answers with an SVG, the way a rendered diagram arrives.</summary>
     private static string Renders() =>
@@ -523,6 +700,27 @@ public sealed partial class CliMermaidTests : IDisposable
             .Where(request => string.Equals(request.Method, "PUT", StringComparison.OrdinalIgnoreCase)
                 && request.Path.EndsWith("/child/attachment", StringComparison.Ordinal))
             .ToList();
+
+    /// <summary>
+    /// The title of the page an upload was addressed to, resolved from the id in its path — so a
+    /// footprint reads as page names rather than as invented numbers.
+    /// </summary>
+    private string UploadedTo(IRequestMessage upload)
+    {
+        var id = upload.Path.Split('/')[^3];
+
+        lock (_created)
+        {
+            var match = _created
+                .Where(entry => string.Equals(entry.Value, id, StringComparison.Ordinal))
+                .Select(entry => entry.Key)
+                .FirstOrDefault();
+
+            match.ShouldNotBeNull($"An upload was addressed to page id '{id}', which no create handed out.");
+
+            return match;
+        }
+    }
 
     /// <summary>The id the fake Confluence handed back for the page it created under <paramref name="title"/>.</summary>
     private string PageId(string title)
@@ -593,6 +791,7 @@ public sealed partial class CliMermaidTests : IDisposable
                 lock (_created)
                 {
                     _created[title] = id;
+                    _createdIds.Add(id);
                 }
 
                 return $$"""
@@ -640,6 +839,38 @@ public sealed partial class CliMermaidTests : IDisposable
           "version": { "number": {{version.ToString(CultureInfo.InvariantCulture)}} }
         }
         """;
+
+    /// <summary>
+    /// Answers §6.2's child-order read with the children already in the order the source tree wants, so
+    /// the post-pass has nothing to move and the request log stays the one the page loop left. Needed as
+    /// soon as a fixture hangs more than one page under the home page.
+    /// </summary>
+    private void StubChildren() =>
+        _server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/children"))
+                .UsingGet())
+            .AtPriority(-1)
+            .RespondWith(Json(request =>
+            {
+                var parent = request.Path.Split('/')[^2];
+
+                string[] children;
+                lock (_created)
+                {
+                    children = [.. _createdIds.Where(id => !string.Equals(id, parent, StringComparison.Ordinal))];
+                }
+
+                var results = children.Select((id, index) => $$"""
+                    {
+                      "id": "{{id}}", "status": "current", "type": "page", "spaceId": "{{SpaceId}}",
+                      "title": "child {{index.ToString(CultureInfo.InvariantCulture)}}",
+                      "childPosition": {{index.ToString(CultureInfo.InvariantCulture)}}
+                    }
+                    """);
+
+                return $$"""{ "results": [{{string.Join(",", results)}}], "_links": {} }""";
+            }));
 
     /// <summary>
     /// The v1 multipart endpoint. <c>PUT</c> only: <c>POST</c> is create-only and would 400 on a name
