@@ -83,8 +83,9 @@ public sealed record FeedbackItem
     /// comment ids in state would have to be kept in step with a file that moves.
     /// </para>
     /// <para>
-    /// <strong>Not in §5.4's shape</strong>, which predates the reply step being built; recorded as a
-    /// pending PLAN edit rather than silently diverging.
+    /// <strong>In §5.4's shape since the plan caught up</strong> — it was added there with the paragraph
+    /// explaining why re-running §9 step 5 is safe, and <c>PlanDataContractTests</c> now holds the two
+    /// sides together, so this is no longer a divergence to remember.
     /// </para>
     /// </remarks>
     public string? RepliedAt { get; init; }

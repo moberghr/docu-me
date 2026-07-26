@@ -77,6 +77,20 @@ Two are worth a second look:
   single run. There is no config value that grants it permanently, so removing the lock is a reviewed
   commit rather than a flag somebody stops reading.
 
+### Two fields are inert in this version
+
+`drift.defaultBranch` and `links.repoBlobUrl` load, validate and round-trip like every other field, and no
+command reads either one. Setting them changes nothing:
+
+- **`drift.defaultBranch`** — `docume drift` with no `--baseline` diffs from `state.json`'s `baselineSha`,
+  and the PR job in `docs-drift-pr.yml` computes a merge base from the pull request itself. Neither asks
+  this value.
+- **`links.repoBlobUrl`** — source refs publish as plain text. Nothing turns them into blob links.
+
+They are documented rather than removed because both are declared in the build plan and one has a
+specified behaviour, so building them and dropping them are both open. The section is held to the truth
+from the other side too: the suite fails if either field acquires a reader while this list still names it.
+
 ### `$schema` is the only check on a misspelled key
 
 `docume init` writes the `$schema` line, and it earns its place the moment you hand-edit the file. The
