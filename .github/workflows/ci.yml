@@ -17,6 +17,21 @@ jobs:
         with:
           global-json-file: global.json
 
+      # The renderer's tests decide for themselves whether this machine can render: they look for
+      # node_modules/beautiful-mermaid and Assert.SkipUnless it is there (BundledRenderScript), so a
+      # runner without it does not go red — it reports 7 fewer tests and stays green. node_modules/
+      # is gitignored, so before these two steps that was every CI run this workflow has ever
+      # described. The dependency is exactly the one whose dialect support is the open question in
+      # state.json -> decisions.mermaidDialectGap, which is to say the part of the renderer most
+      # likely to move under us. ~1 s to install 3 packages; no browser, no native build.
+      - name: Setup Node for the mermaid renderer
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the mermaid renderer's toolchain
+        run: npm ci
+
       - name: Restore
         run: dotnet restore DocuMe.slnx
 

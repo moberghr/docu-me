@@ -11,6 +11,12 @@ namespace DocuMe.Core.Tests.Markdown;
 /// </remarks>
 internal static class BundledRenderScript
 {
+    /// <summary>
+    /// The npm package the real script needs, and therefore the one CI has to install before it runs
+    /// the suite — <c>CiMermaidToolchainTests</c> holds those two ends together.
+    /// </summary>
+    public const string Package = "beautiful-mermaid";
+
     /// <summary>Why a test skipped, and what to run so it does not.</summary>
     public const string DependencyMissingReason =
         "beautiful-mermaid is not installed: run 'npm ci' at the repo root to exercise the real "
@@ -43,7 +49,7 @@ internal static class BundledRenderScript
         }
 
         var script = Path.Combine(repoRoot, "templates", "tools", "render-mermaid.mjs");
-        var dependency = Path.Combine(repoRoot, "node_modules", "beautiful-mermaid");
+        var dependency = Path.Combine(repoRoot, "node_modules", Package);
 
         return File.Exists(script) && Directory.Exists(dependency) ? script : null;
     }
