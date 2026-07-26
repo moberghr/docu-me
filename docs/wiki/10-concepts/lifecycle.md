@@ -2,14 +2,17 @@
 sources:
   - src/DocuMe.Core/Publishing/*.cs
   - src/DocuMe.Core/Sync/*.cs
+  - src/DocuMe.Core/Feedback/*.cs
   - plugin/skills/**
 ---
 
 # The Documentation Lifecycle
 
-A page moves through five stages. Each one has exactly one owner, and the split matters: the
-generative stages are a model's job and produce pull requests, the mechanical stages are the CLI's
-job and produce Confluence writes.
+A page moves through five stages, and three kinds of actor move it between them: a model generates
+and rewrites and opens pull requests, a human approves and comments in Confluence, and the CLI
+carries each gesture between the repo and the space. The split matters. A model never calls
+Confluence, so nothing a model does can change a page there; and of the CLI's own halves only
+`publish` and `sync --reply` write to the space, while `sync --labels` and `sync --comments` read.
 
 ```mermaid
 flowchart LR
