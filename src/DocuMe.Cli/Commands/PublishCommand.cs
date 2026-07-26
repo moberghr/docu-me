@@ -93,6 +93,13 @@ internal static class PublishCommand
             Description = "Skip the read that looks for unresolved inline comments before rewriting a "
                 + "page (one extra read per page whose body changes; none for creates, skips or moves).",
         };
+        var notifyReviewersOption = new Option<bool>("--notify-reviewers")
+        {
+            Description = "Post a footer comment asking for a re-review on every page whose `approved` "
+                + "label this run removes. One comment per revoked approval, so it notifies everyone "
+                + "watching those pages; without it the dashboard and `docume status` say the same thing "
+                + "quietly.",
+        };
 
         var command = new Command(
             "publish",
@@ -110,6 +117,7 @@ internal static class PublishCommand
             noReorderOption,
             blockOnOpenCommentsOption,
             noCommentCheckOption,
+            notifyReviewersOption,
         };
 
         command.SetAction((parseResult, cancellationToken) => RunAsync(
@@ -125,6 +133,7 @@ internal static class PublishCommand
             parseResult.GetValue(noReorderOption),
             parseResult.GetValue(blockOnOpenCommentsOption),
             parseResult.GetValue(noCommentCheckOption),
+            parseResult.GetValue(notifyReviewersOption),
             cancellationToken));
 
         return command;
@@ -143,6 +152,7 @@ internal static class PublishCommand
         bool noReorder,
         bool blockOnOpenComments,
         bool noCommentCheck,
+        bool notifyReviewers,
         CancellationToken cancellationToken)
     {
         if (changedSince is { Length: > 0 } && pagePaths.Length > 0)
@@ -259,7 +269,7 @@ internal static class PublishCommand
                 GeneratedOn = DateOnly.FromDateTime(DateTime.UtcNow),
             });
 
-        Render(report);
+        Render(report, notifyReviewers);
 
         if (printTree)
         {
@@ -301,6 +311,7 @@ internal static class PublishCommand
             Reorder = !noReorder,
             CheckOpenComments = !noCommentCheck,
             BlockOnOpenComments = blockOnOpenComments,
+            NotifyReviewers = notifyReviewers,
         };
 
         return await PublishAsync(
@@ -563,7 +574,7 @@ internal static class PublishCommand
         }
     }
 
-    private static void Render(PublishReport report)
+    private static void Render(PublishReport report, bool notifyReviewers)
     {
         AnsiConsole.WriteLine();
 
@@ -601,7 +612,7 @@ internal static class PublishCommand
         }
 
         RenderScope(report);
-        RenderApprovals(report);
+        RenderApprovals(report, notifyReviewers);
         RenderOrphans(report);
         RenderFailures(report);
         RenderVerdict(report);
@@ -638,7 +649,7 @@ internal static class PublishCommand
     /// The approvals a real run would revoke (§6.2 step 7, §8), listed by name: this is the one part
     /// of the plan a reviewer has to read before a bulk republish.
     /// </summary>
-    private static void RenderApprovals(PublishReport report)
+    private static void RenderApprovals(PublishReport report, bool notifyReviewers)
     {
         var invalidated = report.InvalidatedApprovals;
         if (invalidated.Count == 0)
@@ -646,10 +657,17 @@ internal static class PublishCommand
             return;
         }
 
+        // Said here rather than only in the outcome: --notify-reviewers is the one flag on this command
+        // whose effect leaves the tool entirely, and the count of comments it would mail belongs in the
+        // plan a human reads before agreeing to a bulk republish.
+        var notify = notifyReviewers
+            ? $", and --notify-reviewers posts {invalidated.Count} comment(s) asking for a re-review"
+            : string.Empty;
+
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine(
             $"[yellow]APPROVALS THIS RUN WOULD REVOKE[/] — {invalidated.Count} approved page(s) changed; "
-            + "the `approved` label is removed and state moves to needs-review");
+            + $"the `approved` label is removed and state moves to needs-review{notify}");
         RenderPaths(invalidated.Select(page => page.Path));
     }
 
@@ -862,6 +880,17 @@ internal static class PublishCommand
             AnsiConsole.MarkupLine(
                 $"[yellow]Approvals revoked: {outcome.ApprovalsRevokedCount}[/] "
                 + "(the `approved` label was removed and state moved to needs-review)");
+        }
+
+        // Printed whenever a comment was posted, and the two counts are printed together when they
+        // disagree: a notification Confluence refused warns above, and a bare "revoked: 4" would
+        // otherwise read as four reviewers told.
+        if (outcome.ReviewersNotifiedCount > 0)
+        {
+            AnsiConsole.MarkupLine(
+                $"[yellow]Reviewers notified: {outcome.ReviewersNotifiedCount}[/] of "
+                + $"{outcome.ApprovalsRevokedCount} revoked (--notify-reviewers posted a re-review "
+                + "comment on each)");
         }
 
         if (sha is { Length: > 0 } && outcome.Succeeded)

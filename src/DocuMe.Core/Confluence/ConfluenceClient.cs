@@ -530,6 +530,63 @@ public sealed class ConfluenceClient : IDisposable
     }
 
     /// <summary>
+    /// Opens a new footer thread on a page (PLAN.md §6.2 step 7's <c>--notify-reviewers</c>) and returns
+    /// it as Confluence stored it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Footer only, and that is the whole design.</strong> A top-level inline comment needs
+    /// <c>inlineCommentProperties.textSelection</c> — a span of the body to anchor to — and DocuMe has no
+    /// business anchoring a notification to text a reviewer is about to re-read. §6.2 asks for a footer
+    /// comment for that reason.
+    /// </para>
+    /// <para>
+    /// <strong>It is a comment, not a body write, so it spends no page version</strong> — the same
+    /// reasoning that keeps staleness on labels (§6.4) rather than in the body. What it does spend is a
+    /// notification to everyone watching the page, which is why the caller only reaches it behind an
+    /// explicit flag.
+    /// </para>
+    /// <para>
+    /// <strong>A retried notification can duplicate</strong>, for exactly the reason
+    /// <see cref="ReplyToCommentAsync"/> records: a comment has no uniqueness constraint, so a 5xx arriving
+    /// after Confluence stored the comment leaves the transport's replay to post it twice. The bound here
+    /// is narrower than a reply's — one notification per page per run, and only on the run that revoked
+    /// that page's approval.
+    /// </para>
+    /// </remarks>
+    /// <param name="pageId">The page to comment on.</param>
+    /// <param name="storage">The comment body in storage format.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired, or no comment permission.</exception>
+    /// <exception cref="ConfluenceApiException">
+    /// Any other non-success status, including a page that is gone (404) and a body Confluence will not
+    /// parse as storage format (400).
+    /// </exception>
+    /// <exception cref="ConfluenceProtocolException">The response body is not the documented shape.</exception>
+    public async Task<ConfluenceComment> CreateFooterCommentAsync(
+        string pageId,
+        string storage,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(storage);
+
+        var path = $"api/v2/{FooterCommentsSegment}";
+        var request = new CommentOnPageRequest(pageId, StorageBody(storage));
+
+        var comment = await WriteAsync<CommentOnPageRequest, CommentBulk>(
+                HttpMethod.Post,
+                path,
+                request,
+                $"commenting on page {pageId}",
+                ApiSurface.V2,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return MapComment(comment, path, ConfluenceCommentKind.Footer);
+    }
+
+    /// <summary>
     /// Marks an inline comment resolved (PLAN.md §9 step 5's "resolves inline comments where the API
     /// allows"), sending <paramref name="currentVersion"/> incremented by one.
     /// </summary>

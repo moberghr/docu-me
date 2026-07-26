@@ -69,6 +69,17 @@ internal sealed record LabelCreate(string Prefix, string Name);
 internal sealed record CommentReplyRequest(string ParentCommentId, PageNestedBodyWrite Body);
 
 /// <summary>
+/// A new footer thread on a page, named after v2's <c>CreateFooterCommentModel</c> (PLAN.md §6.2 step 7's
+/// <c>--notify-reviewers</c>).
+/// </summary>
+/// <remarks>
+/// The mirror image of <see cref="CommentReplyRequest"/>: the same schema's alternatives, filled in from
+/// the other side. This shape carries <c>pageId</c> and no parent, so a notification cannot accidentally
+/// be posted as an answer to somebody's comment.
+/// </remarks>
+internal sealed record CommentOnPageRequest(string PageId, PageNestedBodyWrite Body);
+
+/// <summary>
 /// The resolve half, named after v2's <c>UpdateInlineCommentModel</c>: the new version and the flag.
 /// </summary>
 /// <remarks>

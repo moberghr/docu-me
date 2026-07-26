@@ -77,6 +77,25 @@ public sealed record PublishExecutionOptions
     /// leniency.
     /// </summary>
     public bool BlockOnOpenComments { get; init; }
+
+    /// <summary>
+    /// Whether a page whose approval this run revokes also gets §6.2 step 7's footer comment asking for a
+    /// re-review. <c>--notify-reviewers</c> sets it true.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Off by default because §6.2 spells it "optionally", and because the cost is a notification to
+    /// everyone watching the page rather than a page version: a bulk republish that revokes forty
+    /// approvals would mail forty comments, and the dashboard (§6.5) already says the same thing without
+    /// mailing anybody.
+    /// </para>
+    /// <para>
+    /// It only ever fires where the label came off. An approval that was already <c>needs-review</c>, a
+    /// page that changed while unapproved, and a move or attachment-only publish (§9.2) all leave nothing
+    /// to re-review, so none of them is worth a reviewer's inbox.
+    /// </para>
+    /// </remarks>
+    public bool NotifyReviewers { get; init; }
 }
 
 /// <summary>
@@ -115,6 +134,15 @@ public sealed class PublishExecutor
     private const string SvgMediaType = "image/svg+xml";
 
     private const string DefaultMediaType = "application/octet-stream";
+
+    /// <summary>
+    /// §6.2 step 7's comment, verbatim from the plan in its first sentence, with the machine provenance a
+    /// reader needs to know why a comment appeared under a page nobody commented on.
+    /// </summary>
+    private const string ReviewRequestComment =
+        "<p>Content updated since approval — please re-review.</p>"
+        + "<p><em>Posted by DocuMe. This page changed after it was approved, so its <code>approved</code> "
+        + "label was removed and its status is now needs-review.</em></p>";
 
     private readonly ConfluenceClient _client;
     private readonly string _wikiRoot;
@@ -515,12 +543,21 @@ public sealed class PublishExecutor
         }
 
         var revoked = false;
+        var notified = false;
         if (plan.InvalidatesApproval)
         {
             await RemoveLabelIfPresentAsync(pageId!, config.Labels.Approved, cancellationToken)
                 .ConfigureAwait(false);
             state = StateUpdates.InvalidateApproval(state, planned.Path);
             revoked = true;
+
+            // After the label, never before it: the comment says the approval is gone, and saying so
+            // while it is still on the page would be false for however long the next request takes.
+            if (options.NotifyReviewers)
+            {
+                notified = await NotifyReviewersAsync(planned.Path, pageId!, warnings, cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
 
         var published = new PublishedPage(
@@ -537,7 +574,10 @@ public sealed class PublishExecutor
         return new PageOutcome(
             state,
             new PagePublishResult(
-                planned.Path, planned.Title, plan.Action, pageId!, version, uploaded, revoked, recreate),
+                planned.Path, planned.Title, plan.Action, pageId!, version, uploaded, revoked, recreate)
+            {
+                ReviewersNotified = notified,
+            },
             null);
     }
 
@@ -1092,6 +1132,47 @@ public sealed class PublishExecutor
         catch (ConfluenceApiException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             // Nothing to do and nothing to report: the state this step exists to produce already holds.
+        }
+    }
+
+    /// <summary>
+    /// Posts §6.2 step 7's footer comment on a page whose approval this run just revoked
+    /// (<c>--notify-reviewers</c>). Answers whether it was posted.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A comment that fails warns; it never fails the page.</strong> By the time this runs the body
+    /// is published, the <c>approved</c> label is off and state says <c>needs-review</c>, so the re-review
+    /// §8 asks for is already required and the dashboard already shows it. Reporting a failure here would
+    /// mark a page as unpublished when it is published, and the next run would rewrite a page that is
+    /// already correct to retry a notification.
+    /// </para>
+    /// <para>
+    /// The body is a fixed string, so nothing here needs escaping: naming the page would mean putting a
+    /// title into storage-format XML, and the comment is already on the page it is about.
+    /// </para>
+    /// </remarks>
+    private async Task<bool> NotifyReviewersAsync(
+        string path,
+        string pageId,
+        List<string> warnings,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _client.CreateFooterCommentAsync(pageId, ReviewRequestComment, cancellationToken)
+                .ConfigureAwait(false);
+
+            return true;
+        }
+        catch (ConfluenceApiException ex)
+        {
+            warnings.Add(
+                $"{path}: the approval was revoked but --notify-reviewers could not post the comment "
+                + $"({ex.Message}). The `approved` label is off and state says needs-review, so the page "
+                + "still reads as awaiting review everywhere else.");
+
+            return false;
         }
     }
 

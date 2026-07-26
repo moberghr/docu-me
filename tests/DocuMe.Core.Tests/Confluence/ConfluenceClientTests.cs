@@ -1345,6 +1345,40 @@ public sealed class ConfluenceClientTests
     }
 
     /// <summary>
+    /// §6.2 step 7's notification is the mirror image of a reply on the same endpoint: <c>pageId</c> and no
+    /// parent, so it opens a thread on the page instead of answering somebody's comment.
+    /// </summary>
+    [Fact]
+    public async Task Opens_a_footer_thread_on_a_page_by_page_id_alone()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(ApiPath("footer-comments")).UsingPost())
+            .RespondWith(Json(ReplyBody));
+
+        using var client = CreateClient(server);
+        var posted = await client.CreateFooterCommentAsync(
+            PageId,
+            "<p>Content updated since approval.</p>",
+            TestContext.Current.CancellationToken);
+
+        posted.Id.ShouldBe("7001");
+        posted.Kind.ShouldBe(ConfluenceCommentKind.Footer);
+
+        LastRequest(server).Path.ShouldBe(ApiPath("footer-comments"));
+
+        var payload = Payload(server);
+        payload.GetProperty("pageId").GetString().ShouldBe(PageId);
+        payload.GetProperty("body").GetProperty("storage").GetProperty("value").GetString()
+            .ShouldBe("<p>Content updated since approval.</p>");
+        payload.GetProperty("body").GetProperty("storage").GetProperty("representation").GetString()
+            .ShouldBe("storage");
+        payload.TryGetProperty("parentCommentId", out _).ShouldBeFalse(
+            customMessage: "v2 lists pageId and parentCommentId as alternatives: a notification carrying "
+                + "both is a reply to a comment nobody wrote");
+    }
+
+    /// <summary>
     /// The same reply to an inline comment goes to the <em>other</em> endpoint. Posting it to
     /// <c>footer-comments</c> would not be a misplaced reply, it would be a new thread answering nobody.
     /// </summary>

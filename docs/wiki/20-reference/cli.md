@@ -102,6 +102,7 @@ change what it is allowed to do.
 | `--no-reorder` | Skip the pass that puts each parent's children in source-tree order |
 | `--block-on-open-comments` | Leave a page alone and exit non-zero when it has unresolved inline comments a body rewrite could strand. Default is to publish and warn |
 | `--no-comment-check` | Skip that read entirely |
+| `--notify-reviewers` | Post a footer comment asking for a re-review on every page whose `approved` label the run removes. One comment per revoked approval, so it notifies each page's watchers |
 | `--allow-protected-space` | Write into a space listed in `confluence.protectedSpaces`, for one run |
 
 > [!WARNING]

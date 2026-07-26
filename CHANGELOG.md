@@ -25,7 +25,8 @@ First release. Everything below is new, so it is grouped by what it does rather 
   hashing, upsert, approval banner, open-comment guard, approval invalidation, orphan report, and a
   child-order pass that makes Confluence match the source tree. With `--dry-run`, `--tree`,
   `--changed-since`, `--page`, `--force`, `--no-reorder`, `--block-on-open-comments`,
-  `--no-comment-check`, `--prune` and `--allow-protected-space` — the one way into a space listed in
+  `--no-comment-check`, `--notify-reviewers` (a footer comment asking for a re-review on every page whose
+  approval the run revoked), `--prune` and `--allow-protected-space` — the one way into a space listed in
   `confluence.protectedSpaces`, good for a single run, with no config value that grants it standing.
 - `docume sync` reconciles the `approved` and `stale` labels into state, ingests page and inline comments
   into the feedback inbox behind a per-page cursor, and with `--reply` posts answers and resolves the inline

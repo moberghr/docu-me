@@ -39,6 +39,9 @@ public sealed class PublishExecutorTests : IDisposable
     /// <summary>The v2 page endpoint, with the trailing slash the id follows.</summary>
     private const string PagesPath = "/wiki/api/v2/pages/";
 
+    /// <summary>Where §6.2 step 7's re-review comment is posted — the collection, not a page sub-resource.</summary>
+    private const string FooterCommentsPath = "/wiki/api/v2/footer-comments";
+
     /// <summary>The query parameter a page read carries only when it asked for the body.</summary>
     private const string BodyFormatParameter = "body-format";
 
@@ -330,6 +333,126 @@ public sealed class PublishExecutorTests : IDisposable
         approval.Status.ShouldBe(ApprovalStatus.NeedsReview);
         approval.History.Count.ShouldBe(1);
         approval.History[0].By.ShouldBe("mirko");
+
+        second.ReviewersNotifiedCount.ShouldBe(0);
+        FooterComments(server).ShouldBeEmpty(
+            customMessage: "§6.2 step 7 spells the comment \"optionally\", so a revocation without "
+                + "--notify-reviewers must notify nobody. A default that mails a page's watchers is a "
+                + "default no bulk republish can be run with.");
+    }
+
+    /// <summary>
+    /// §6.2 step 7's <c>--notify-reviewers</c>: the comment that tells a reviewer their approval is gone.
+    /// </summary>
+    /// <remarks>
+    /// The request shape is asserted as well as the fact of it, because v2's create schema takes
+    /// <c>pageId</c> and <c>parentCommentId</c> as alternatives: a notification carrying a parent would be
+    /// a reply to somebody's comment, and this is a new thread on the page.
+    /// </remarks>
+    [Fact]
+    public async Task Posts_a_re_review_comment_on_a_revoked_page_when_notify_reviewers_asks_for_it()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        var pageId = PageId(first, "README.md");
+        var approved = Approve(first.State, "README.md");
+
+        Write("README.md", "# Home\n\nRewritten after approval.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 3);
+        StubUpdate(server);
+        StubLabelRemoval(server);
+        StubNoInlineComments(server);
+        StubFooterComment(server);
+
+        var second = await ExecuteAsync(server, approved, notifyReviewers: true);
+
+        second.ApprovalsRevokedCount.ShouldBe(1);
+        second.ReviewersNotifiedCount.ShouldBe(1);
+        second.Warnings.ShouldBeEmpty();
+
+        var payload = Payload(FooterComments(server).Single());
+        payload.GetProperty("pageId").GetString().ShouldBe(pageId);
+        payload.TryGetProperty("parentCommentId", out _).ShouldBeFalse(
+            customMessage: "a notification carrying a parent comment id is a reply, not a new thread");
+
+        var storage = payload.GetProperty("body").GetProperty("storage");
+        storage.GetProperty("representation").GetString().ShouldBe("storage");
+        var value = storage.GetProperty("value").GetString();
+        value.ShouldNotBeNull();
+        value.ShouldContain(
+            "please re-review",
+            customMessage: "the sentence PLAN.md §6.2 step 7 quotes is the contract with the reviewer");
+    }
+
+    /// <summary>
+    /// A comment Confluence refuses warns and leaves the revocation standing. The publish already happened
+    /// and the label is already off, so failing the page here would report an unpublished page that is
+    /// published — and the next run would rewrite a correct page to retry a notification.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_re_review_comment_warns_without_failing_the_page()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        var approved = Approve(first.State, "README.md");
+
+        Write("README.md", "# Home\n\nRewritten after approval.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 3);
+        StubUpdate(server);
+        StubLabelRemoval(server);
+        StubNoInlineComments(server);
+        StubRefusedFooterComment(server);
+
+        var second = await ExecuteAsync(server, approved, notifyReviewers: true);
+
+        second.Succeeded.ShouldBeTrue();
+        second.Failures.ShouldBeEmpty();
+        second.ApprovalsRevokedCount.ShouldBe(1);
+        second.ReviewersNotifiedCount.ShouldBe(0);
+        second.Warnings.ShouldContain(warning =>
+            warning.Contains("README.md", StringComparison.Ordinal)
+            && warning.Contains("--notify-reviewers", StringComparison.Ordinal));
+
+        second.State.Pages["README.md"].Approval!.Status.ShouldBe(ApprovalStatus.NeedsReview);
+    }
+
+    /// <summary>
+    /// <c>--notify-reviewers</c> is bounded by the revocation, not by the write: a page nobody had approved
+    /// has no reviewer to tell, and a run that mailed every changed page would be a different feature.
+    /// </summary>
+    [Fact]
+    public async Task Notify_reviewers_says_nothing_about_a_page_that_was_never_approved()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+
+        Write("README.md", "# Home\n\nRewritten, but never approved in the first place.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 3);
+        StubUpdate(server);
+        StubNoInlineComments(server);
+        StubFooterComment(server);
+
+        var second = await ExecuteAsync(server, first.State, notifyReviewers: true);
+
+        second.UpdatedCount.ShouldBe(1);
+        second.ApprovalsRevokedCount.ShouldBe(0);
+        second.ReviewersNotifiedCount.ShouldBe(0);
+        FooterComments(server).ShouldBeEmpty();
     }
 
     /// <summary>
@@ -1456,6 +1579,32 @@ public sealed class PublishExecutorTests : IDisposable
             .Given(Request.Create().WithPath(new WildcardMatcher("/wiki/rest/api/content/*/label")).UsingDelete())
             .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NoContent));
 
+    /// <summary>Accepts §6.2 step 7's re-review comment, answering as v2's create does.</summary>
+    private static void StubFooterComment(WireMockServer server) =>
+        server
+            .Given(Request.Create().WithPath(FooterCommentsPath).UsingPost())
+            .RespondWith(Json("""
+                {
+                  "id": "9001", "status": "current", "title": "Re: Home", "pageId": "1001",
+                  "version": { "number": 1, "authorId": "bot", "createdAt": "2026-07-26T10:00:00.000Z" },
+                  "_links": {}
+                }
+                """));
+
+    /// <summary>
+    /// Refuses the comment with a 400, the answer a body Confluence will not parse gives. Chosen over a
+    /// 5xx so the transport does not replay it, and over a 401/403 because those hard-stop the whole run
+    /// by design (rule §1.2) rather than reaching the warning this stub exists to prove.
+    /// </summary>
+    private static void StubRefusedFooterComment(WireMockServer server) =>
+        server
+            .Given(Request.Create().WithPath(FooterCommentsPath).UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.BadRequest).WithBody("{}"));
+
+    /// <summary>The re-review comments the run posted — §6.2 step 7's whole write footprint.</summary>
+    private static List<IRequestMessage> FooterComments(WireMockServer server) =>
+        Requests(server, "POST", FooterCommentsPath);
+
     private static string Page(string id, string title, int version) =>
         $$"""
         {
@@ -1575,7 +1724,8 @@ public sealed class PublishExecutorTests : IDisposable
         PublishScope? scope = null,
         bool reorder = true,
         bool checkComments = true,
-        bool blockOnOpenComments = false)
+        bool blockOnOpenComments = false,
+        bool notifyReviewers = false)
     {
         config ??= Config();
 
@@ -1602,6 +1752,7 @@ public sealed class PublishExecutorTests : IDisposable
             Reorder = reorder,
             CheckOpenComments = checkComments,
             BlockOnOpenComments = blockOnOpenComments,
+            NotifyReviewers = notifyReviewers,
         };
 
         return await executor.ExecuteAsync(config, report, state, execution, TestContext.Current.CancellationToken);

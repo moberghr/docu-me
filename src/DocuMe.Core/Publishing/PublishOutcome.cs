@@ -29,7 +29,20 @@ public sealed record PagePublishResult(
     int Version,
     IReadOnlyList<string> UploadedAttachments,
     bool ApprovalRevoked,
-    bool Recreated);
+    bool Recreated)
+{
+    /// <summary>
+    /// Whether §6.2 step 7's re-review comment was posted on this page — true only when
+    /// <see cref="PublishExecutionOptions.NotifyReviewers"/> asked for it, this run revoked the approval,
+    /// and Confluence accepted the comment.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="ApprovalRevoked"/> on purpose: a comment Confluence refused warns and
+    /// leaves the revocation standing, so "revoked" and "reviewers were told" are two facts and a run can
+    /// produce the first without the second.
+    /// </remarks>
+    public bool ReviewersNotified { get; init; }
+}
 
 /// <summary>
 /// A page the run could not publish. One page failing does not stop the others: a bulk publish
@@ -111,4 +124,11 @@ public sealed record PublishOutcome(
 
     /// <summary>Approvals this run revoked (§8).</summary>
     public int ApprovalsRevokedCount => Pages.Count(page => page.ApprovalRevoked);
+
+    /// <summary>
+    /// Pages that got §6.2 step 7's re-review comment. Zero without <c>--notify-reviewers</c>, and lower
+    /// than <see cref="ApprovalsRevokedCount"/> when Confluence refused a comment (see
+    /// <see cref="Warnings"/>).
+    /// </summary>
+    public int ReviewersNotifiedCount => Pages.Count(page => page.ReviewersNotified);
 }
