@@ -443,3 +443,38 @@
     (line 211 says "python3 is denied but node is allowed" — the reverse of today's harness). Its
     durable content was migrated into THIS file long ago, which is why nobody noticed. Do not
     rehabilitate it; read it with `offset`/`limit` or grep if ever needed.
+  * **EDITING `tools/loop/docume-loop.sh` CHANGES NOTHING UNTIL THE DRIVER IS RESTARTED, AND THE
+    DRIVER HAS NOT BEEN RESTARTED SINCE 2026-07-24 14:38:30.** This is the one file in the tree an
+    iteration can edit but cannot make take effect: bash parses the `while` loop once, and that
+    process has been inside it ever since. Measured at iter139 — the driver predates its own newest
+    commit by **56.6 h**, and two commits' worth of changes (`c6fbf1e`, and `7de6a86`, which was
+    iter137's whole deliverable) have never executed. Proof does not depend on reading the process's
+    memory: the driver's own output still matches the FIRST committed version's format strings and
+    not the working tree's — log line `Iteration 164: fresh session <sid>` against today's
+    `Iteration $next_iter (pass $pass_n): fresh session $sid [model: ...]`, and log filename
+    `iter-0163-<ts>.log` against today's `$iter_label-pass<NNNN>-<ts>.log`. `current_model`,
+    `state_iteration` and `pass_n` are all absent from what is running. **So `tools/loop/MODEL` is
+    inert too** (it reads `claude-opus-5`; the sessions are opus-5 by CLI default, so the intent is
+    met by coincidence, not by the file). **WHAT IS STILL LIVE, because the running driver re-reads
+    it by PATH every pass:** `ITERATION-PROMPT.md` (`cat "$PROMPT_FILE"`) and `loop-settings.json`
+    (`--settings "$SETTINGS"`) — which is why the pending force-push-hook paste WOULD take effect
+    immediately, with no restart. There is no read-past-offset hazard: nothing follows `done`.
+    Re-runnable in ~2 s: `.mtk/paths-139/probe-driver-version-drift.py`, 8/8, and it extracts both
+    candidate formats from `git show` rather than retyping them. **BEFORE YOU "FIX" THE DRIVER,
+    CHECK WHETHER YOUR FIX IS ALREADY THERE AND SIMPLY NOT RUNNING.**
+  * **AN UNEXPLAINED DETAIL FROM THAT SAME MEASUREMENT, recorded so it is not rediscovered as new:**
+    the committed driver does `exec caffeinate -is "$0" "$@"`, which should REPLACE the shell — yet
+    `ps` shows pid 62335 as `bash ./tools/loop/docume-loop.sh` with `caffeinate` as its **child**
+    (62340), the mirror image of what `exec` produces. Verified against raw unparsed `ps` output
+    (`.mtk/paths-139/check-raw-ps.py`), so it is not a parsing artefact. The running image therefore
+    matches `bb43d9b` on its log formats but contradicts it on this line, meaning what is executing
+    is a Jul-24 working-tree state that no commit captures. It changes nothing about the conclusion
+    above. Do not assume the running driver equals any particular commit — assume only that it is
+    old, and measure its behaviour rather than reading a file.
+  * **A `PostToolUse`-shaped blind spot has a sibling in the driver: `notify()` discards both streams
+    AND the exit code (`>/dev/null 2>&1 || true`).** Measured at iter139: the `osascript` call itself
+    **exits 0** and a deliberately broken script exits 1 through the same path, so the command works
+    — unlike the dead `PushNotification` channel. But **delivery is unprovable from inside the loop**:
+    Notification Center's DB (`~/Library/Group Containers/group.com.apple.usernoted/db2/db`) and the
+    Focus assertions file are both **TCC-blocked** to this process, so "exit 0" is the strongest
+    claim available and it is NOT "Mirko saw it". Do not upgrade one to the other.
