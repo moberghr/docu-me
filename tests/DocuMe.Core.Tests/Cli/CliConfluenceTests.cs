@@ -344,6 +344,128 @@ public sealed class CliConfluenceTests : IDisposable
     }
 
     /// <summary>
+    /// What a label sync costs, at N&gt;1: two CQL searches for the whole run — one per label — and not
+    /// one request more, whatever the size of the wiki.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Sync_labels_records_the_approval_the_space_carries"/> proves the outcome but structurally
+    /// cannot prove the cost. It runs at one approved page and zero stale, where "twice for the run" and
+    /// "twice per page" are the same two requests, and it counts no requests at all. So a sync that
+    /// dropped <c>expand=version</c> and read each approved page by id instead would pass it untouched
+    /// while costing an 80-page wiki 80 extra round trips — on the one command a cron job runs hourly
+    /// (§6.3). <c>LabelReader.VersionsAsync</c> states the property in prose ("one request per label
+    /// rather than one per page"); nothing executable held it.
+    /// </para>
+    /// <para>
+    /// The fourth hit is the other half of that same paragraph. A labelled page state does not manage is
+    /// reported and skipped, so its missing version must not be paid for either — and it is the one hit
+    /// here answering no version, which is precisely the condition that sends a <em>managed</em> page to
+    /// <c>FindPageByIdAsync</c>. If the unmanaged guard went, this is the request that would appear.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_three_page_label_sync_costs_two_searches_for_the_run_and_reads_no_page()
+    {
+        var work = Scaffolded(nameof(A_three_page_label_sync_costs_two_searches_for_the_run_and_reads_no_page));
+
+        const string setup = "guides/setup.md";
+        const string deploy = "guides/deploy.md";
+
+        Write(work, setup, "---\ntitle: Setup Guide\n---\n\n# Setup\n\nHow to set the thing up.\n");
+        Write(work, deploy, "---\ntitle: Deploy Guide\n---\n\n# Deploy\n\nHow to ship it.\n");
+
+        StubSpace();
+        StubCreate();
+        StubChildren();
+
+        Invoke(work, "publish").Code.ShouldBe(0, "The fixture's own publish failed.");
+
+        _created.Count.ShouldBe(3, "The fixture did not publish a three-page wiki.");
+
+        // An id the space says is labelled and state has never heard of, kept clear of the range
+        // StubCreate invents from.
+        const string unmanaged = "899999";
+
+        // Every published page approved, and the last of them stale as well: the two labels are
+        // independent lists, so a page carrying both is the ordinary shape of one that went stale after
+        // it was approved.
+        var stalePageId = _created[^1];
+
+        _server.ResetLogEntries();
+        StubLabelSearch(
+            approved: [.. _created, unmanaged],
+            stale: [stalePageId],
+            withoutVersion: [unmanaged]);
+
+        var run = Invoke(work, "sync", "--labels");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        var footprint = Seen().Select(request => $"{request.Method} {request.Path}").ToList();
+
+        var because = "A four-hit label sync over a three-page wiki sent Confluence "
+            + $"[{string.Join(", ", footprint)}].{Environment.NewLine}{run.Diagnostics}";
+
+        // Named first and on its own, because this is the number the N=1 test cannot see and the exact
+        // list below would report as a diff rather than as a sentence.
+        var searches = footprint.Count(entry =>
+            string.Equals(entry, "GET /wiki/rest/api/content/search", StringComparison.Ordinal));
+
+        const string perRun = "The label state was searched {0} time(s) over a three-page wiki. It is two "
+            + "searches for the whole run — one per label — not one per page: CQL returns every page "
+            + "carrying a label in bulk, and per-page is 80 extra round trips on an 80-page wiki every "
+            + "cron run.";
+
+        var counted = string.Format(CultureInfo.InvariantCulture, perRun, searches)
+            + Environment.NewLine + because;
+
+        searches.ShouldBe(2, counted);
+
+        // And nothing else at all — no page read in particular. The search is asked for expand=version,
+        // so a managed hit's version is already in hand, and the one hit that answered no version is
+        // unmanaged: reported and skipped, never paid for.
+        var expected = new List<string>
+        {
+            "GET /wiki/rest/api/content/search",
+            "GET /wiki/rest/api/content/search",
+        };
+
+        footprint.ShouldBe(expected, because);
+
+        // The footprint only means something if the run did the work. A sync that read the two searches
+        // and then reconciled nothing would send these same two requests.
+        var pages = State(work).Pages;
+
+        pages.Count.ShouldBe(3, because);
+
+        foreach (var (path, page) in pages)
+        {
+            var missed = $"{path} carried the approved label but state records no approval. {because}";
+
+            page.Approval.ShouldNotBeNull(missed);
+            page.Approval.Status.ShouldBe("approved", missed);
+        }
+
+        // Exactly the one page the stale search answered with, so the second search's result is not being
+        // smeared across every page the first one returned.
+        // Every page here is published, so a null id would itself be the failure rather than something to
+        // skip over.
+        var staleNow = pages
+            .Where(entry => entry.Value.Stale)
+            .Select(entry => entry.Value.PageId ?? string.Empty)
+            .ToList();
+
+        var onlyStale = new List<string> { stalePageId };
+
+        staleNow.ShouldBe(onlyStale, because);
+
+        // The unmanaged id is reported rather than guessed at (§6.3): a sync that silently matched it to
+        // a page by title would be inventing an approval nobody granted.
+        run.Flowed.ShouldContain(unmanaged, customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
     /// <c>docume dashboard</c> (§6.5) end to end through the command: the title comes out of
     /// <c>docume.json</c>, the page is looked up before it is created, and the report says which.
     /// </summary>
@@ -772,7 +894,15 @@ public sealed class CliConfluenceTests : IDisposable
     /// The v1 CQL search both `sync --labels` and `dashboard` read the label state through, answered per
     /// label out of the <c>cql</c> the caller sent.
     /// </summary>
-    private void StubLabelSearch(IReadOnlyList<string> approved, IReadOnlyList<string> stale) =>
+    /// <param name="withoutVersion">
+    /// Ids whose hit carries no <c>version</c> at all. The search is asked for <c>expand=version</c> and
+    /// normally answers one, but a hit that does not is the condition
+    /// <c>LabelReader.VersionsAsync</c> branches on, so it has to be reachable from here.
+    /// </param>
+    private void StubLabelSearch(
+        IReadOnlyList<string> approved,
+        IReadOnlyList<string> stale,
+        IReadOnlyCollection<string>? withoutVersion = null) =>
         _server
             .Given(Request.Create().WithPath("/wiki/rest/api/content/search").UsingGet())
             .RespondWith(Json(request =>
@@ -783,8 +913,8 @@ public sealed class CliConfluenceTests : IDisposable
                 var results = hits.Select(id => $$"""
                     {
                       "id": "{{id}}", "type": "page", "status": "current",
-                      "title": {{JsonSerializer.Serialize(HomeTitle)}},
-                      "version": { "number": 1 }
+                      "title": {{JsonSerializer.Serialize(HomeTitle)}}
+                      {{(withoutVersion?.Contains(id) == true ? string.Empty : ", \"version\": { \"number\": 1 }")}}
                     }
                     """);
 
