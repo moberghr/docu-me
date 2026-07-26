@@ -293,6 +293,24 @@
     locally only"; `GITHUB_ACTIONS` was the same hazard one layer out, and the fix belonged in the
     same three lines. When a test must be immune to the host, set the hostile variable on the CHILD
     inside the test — then it fails on a laptop too, instead of only on the runner.
+  * **NEW, iter135: A SKIP IS A COVERAGE HOLE THAT REPORTS ITSELF AS SUCCESS, AND `Assert.SkipUnless`
+    IS HOW ONE GETS INSTALLED ON PURPOSE.** The seven renderer tests skip when
+    `node_modules/beautiful-mermaid` is absent, which is the right bargain for a first clone and the
+    wrong one for CI — a runner without it ran 1368 of 1375 tests and reported green. **When a test
+    decides for itself whether it can run, something has to assert that the environment it needs
+    exists where it matters.** Read the summary line's `skipped:` count, not just `failed:`.
+  * **NEW, iter135: WHEN THE INVARIANT IS ABOUT THE RUNNER, ASSERT THE WORKFLOW, NOT THE RUNNER.** A
+    guard written as "if `GITHUB_ACTIONS` then require the dependency" only fires where nobody runs it
+    before pushing — iter134's own lesson, one turn later. `CiMermaidToolchainTests` parses ci.yml and
+    fails on a laptop instead: every job that runs `dotnet test` must run `npm ci` first, with a pinned
+    `setup-node`, and the package must be the one the skip check probes for (`BundledRenderScript.Package`,
+    a const precisely so the two ends cannot drift). Proven 7/7 by `.mtk/paths-135/mutate-ci-mermaid.py`,
+    including a relabel control and an anti-vacuity case.
+  * **NEW, iter135: PARSE THE WORKFLOW IN THE PROBE TOO, DO NOT RETYPE ITS STEPS.**
+    `.mtk/paths-134/probe-ci-clean-clone.py` hardcoded ci.yml's six steps, so it could not have seen a
+    seventh; `.mtk/paths-135/probe-ci-renderer-coverage.py` reads them out of the clone's own ci.yml
+    with `yaml.safe_load` (PyYAML 6.0.3 is on this machine) and withholds ONE step to build its control
+    cell. A probe that retypes the artefact it is checking measures the retyping.
   * **`state.json` HAS ~30 TOKENS OF HEADROOM AGAINST `check-state-size.py`'s 20,000-token BUDGET
     (iter134), and these `done` records are lengthening: iter133 3.4 KB, iter134 5.6 KB.** When the
     check trips, condense the `doneRecent` entry in BOTH state.json and the archive so the
