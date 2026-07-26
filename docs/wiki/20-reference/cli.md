@@ -2,6 +2,16 @@
 sources:
   - src/DocuMe.Cli/Commands/*.cs
   - src/DocuMe.Cli/Program.cs
+  - src/DocuMe.Core/Acceptance/*.cs
+  - src/DocuMe.Core/Dashboard/*.cs
+  - src/DocuMe.Core/Drift/*.cs
+  - src/DocuMe.Core/Feedback/*.cs
+  - src/DocuMe.Core/Git/GitRepository.cs
+  - src/DocuMe.Core/Publishing/*.cs
+  - src/DocuMe.Core/Scaffolding/*.cs
+  - src/DocuMe.Core/State/DocumeState.cs
+  - src/DocuMe.Core/Status/*.cs
+  - src/DocuMe.Core/Sync/*.cs
 ---
 
 # CLI Reference

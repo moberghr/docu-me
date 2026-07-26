@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using DocuMe.Core.Drift;
 using Shouldly;
 
 namespace DocuMe.Core.Tests.Cli;
@@ -31,6 +32,9 @@ public sealed partial class CliReferencePageTests
 {
     private static readonly string[] ReferencePagePath = ["docs", "wiki", "20-reference", "cli.md"];
 
+    /// <summary>The same page as a wiki-root-relative path: the key <see cref="DriftPlanner"/> reports.</summary>
+    private const string WikiPath = "20-reference/cli.md";
+
     /// <summary>
     /// Documented once in page-wide prose rather than in each command's table: the two
     /// <c>--config</c>/<c>--state</c> paragraphs cover every command that takes them, and the root
@@ -54,6 +58,99 @@ public sealed partial class CliReferencePageTests
         "actions",
         ".github/workflows",
         "schema",
+    ];
+
+    /// <summary>
+    /// One representative file per behaviour this page describes, paired with the sentence resting on
+    /// it. The test is "could this sentence become false while <c>src/DocuMe.Cli/</c> stays
+    /// byte-identical?" — if yes, the claim is about <c>DocuMe.Core</c> and the page has to credit it,
+    /// or a real <c>docume drift</c> run never reports the page when that behaviour moves.
+    /// </summary>
+    /// <remarks>
+    /// Syntax claims are deliberately absent. Which options exist, what each is named and which
+    /// command carries it are settled by the three tables above against the CLI's own <c>--help</c>,
+    /// and they move only when a <c>Commands/</c> file does. What is listed here is the prose
+    /// underneath: what a run computes, what it refuses, what it defaults to.
+    /// </remarks>
+    private static readonly (string Claim, string File)[] ClaimSources =
+    [
+
+        // "Every write path in that table is gated on confluence.protectedSpaces … all refuse it."
+        ("the write lock every write path checks", "src/DocuMe.Core/Publishing/PublishGuard.cs"),
+
+        // "--changed-since … including pages whose images changed. The whole tree is still loaded."
+        ("what --changed-since narrows a run to", "src/DocuMe.Core/Publishing/PublishScope.cs"),
+
+        // "--prune … Asks first, needs a terminal, refuses to run in CI."
+        ("--prune's terminal-and-not-CI refusal", "src/DocuMe.Core/Publishing/PruneGuard.cs"),
+
+        // The WARNING: "An orphan is a state entry whose markdown file is gone."
+        ("the orphan definition the --prune warning gives", "src/DocuMe.Core/Publishing/PrunePlan.cs"),
+
+        // "--no-reorder: Skip the pass that puts each parent's children in source-tree order."
+        ("the child-order pass --no-reorder skips", "src/DocuMe.Core/Publishing/ChildOrderPlanner.cs"),
+
+        // "Leave a page alone and exit non-zero … Default is to publish and warn."
+        ("--block-on-open-comments and its default", "src/DocuMe.Core/Publishing/OpenCommentGuard.cs"),
+
+        // "Exit code 0 means the corpus clears the acceptance bar."
+        ("convert's exit code", "src/DocuMe.Core/Acceptance/AcceptanceReport.cs"),
+
+        // "--accept … counted as a note instead of a warning."
+        ("--accept turning a warning into a note", "src/DocuMe.Core/Acceptance/AcceptancePolicy.cs"),
+
+        // "--render-mermaid … report the ones that fail. Off by default: one process per diagram."
+        ("--render-mermaid's per-diagram render", "src/DocuMe.Core/Acceptance/MermaidAcceptance.cs"),
+
+        // "Idempotent: an existing file is never overwritten, and every skip is reported" (rule §9.4).
+        ("init's idempotence and its reported skips", "src/DocuMe.Core/Scaffolding/ProjectScaffolder.cs"),
+
+        // "--adopt: Build _meta/state.json from the wiki this repo already has, one entry per page."
+        ("--adopt's one entry per page", "src/DocuMe.Core/Scaffolding/WikiAdopter.cs"),
+
+        // "--legacy-map: Path to a JSON `page path → page id` map."
+        ("--legacy-map's page-path-to-id map", "src/DocuMe.Core/Scaffolding/LegacyPageMap.cs"),
+
+        // "--reply: Post a reply under every triaged inbox item and resolve the inline comments it answers."
+        ("--reply's post-and-resolve", "src/DocuMe.Core/Feedback/FeedbackReplyPlanner.cs"),
+
+        // "--output-dir … Defaults to <wiki.root>/_meta/feedback/inbox."
+        ("--output-dir's default inbox path", "src/DocuMe.Core/Feedback/FeedbackInbox.cs"),
+
+        // "--comments: Ingest page comments into the feedback inbox."
+        ("--comments' ingest into the inbox", "src/DocuMe.Core/Feedback/FeedbackInboxPlanner.cs"),
+
+        // "--labels: Reconcile the approved/stale labels into state", and the dashboard section's "the
+        // labels are reconciled in memory here; docume sync --labels is what writes them into state".
+        ("which half writes labels into state", "src/DocuMe.Core/Sync/LabelSyncPlanner.cs"),
+
+        // "Reports which pages derive from code changed between two revisions."
+        ("what drift reports", "src/DocuMe.Core/Drift/DriftPlanner.cs"),
+
+        // "--format <shape>: table, json, or github-comment."
+        ("the github-comment shape", "src/DocuMe.Core/Drift/DriftComment.cs"),
+
+        // "--mark: Add the stale label to affected pages, set stale: true in state, refresh the dashboard."
+        ("--mark's label, state flag and dashboard refresh", "src/DocuMe.Core/Drift/DriftMarkPlanner.cs"),
+
+        // "Regenerates the status page from state plus the live labels."
+        ("what the dashboard is built from", "src/DocuMe.Core/Dashboard/DashboardPublisher.cs"),
+
+        // "Reports what is published, what drifted, and whether this repo is set up to publish at all."
+        ("what status reports", "src/DocuMe.Core/Status/StatusModel.cs"),
+
+        // "--offline: Skip the single Confluence request — the token and space probe." A COUNTED claim:
+        // a second probe added here makes "the single request" false and nothing else notices.
+        ("--offline's single skipped request", "src/DocuMe.Core/Status/StatusProbes.cs"),
+
+        // "--json: Print the report as JSON and nothing else, for a pull-request body or a CI step."
+        ("--json's report shape", "src/DocuMe.Core/Status/StatusReport.cs"),
+
+        // "pages touched since a commit" and drift's "between two revisions" are both a git diff.
+        ("the revision pair the two commands diff", "src/DocuMe.Core/Git/GitRepository.cs"),
+
+        // "--baseline <rev>: Revision to diff from. Defaults to state.baselineSha" — a field name.
+        ("--baseline's state.baselineSha default", "src/DocuMe.Core/State/DocumeState.cs"),
     ];
 
     [Fact]
@@ -192,6 +289,66 @@ public sealed partial class CliReferencePageTests
             + "means the scan broke, not that the docs shrank.";
 
         total.ShouldBeGreaterThan(100, collapsed);
+    }
+
+    /// <summary>
+    /// The silent failure the three table checks above cannot see. They police the option <em>names</em>
+    /// against <c>--help</c>, which is the CLI's surface; the prose describing what each option
+    /// <em>does</em> is <c>DocuMe.Core</c> behaviour, and <c>sources</c> is the only thing tying the page
+    /// to it. A subsystem this page describes but does not credit is one the page stops tracking the day
+    /// its code moves — no error, no warning, and a reference page that looks maintained forever.
+    /// </summary>
+    /// <remarks>
+    /// Asked of <see cref="DriftPlanner"/>, the planner a real <c>docume drift</c> run uses, never of the
+    /// frontmatter: reading the frontmatter is the check that passed while nine subsystems were blind.
+    /// The blanket <c>src/DocuMe.Core/**</c> on the index pages is what hid it — every change reported
+    /// <em>something</em>, so <see cref="Acceptance.DogfoodWikiTests"/>'s "every shipped path reaches some
+    /// page's globs" sweep stayed green. This is the shape
+    /// <see cref="State.ApprovalAndDriftPageTests.Every_subsystem_the_page_explains_is_reported_when_its_code_changes"/>
+    /// established.
+    /// </remarks>
+    [Fact]
+    public void Every_behaviour_the_page_describes_is_reported_when_its_code_changes()
+    {
+        var pages = DocuMe.Core.Markdown.WikiTree.Load(Path.Combine(RepoRoot, "docs", "wiki")).Pages;
+        var blind = new List<string>();
+
+        pages.ShouldNotBeEmpty("The wiki loaded no pages, so every trial below would report blind.");
+
+        foreach (var (claim, file) in ClaimSources)
+        {
+            var report = DriftPlanner.Plan("baseline", "head", [file], pages);
+            var reached = report.Pages.Select(page => page.Path).ToList();
+
+            if (!reached.Contains(WikiPath, StringComparer.Ordinal))
+            {
+                blind.Add($"{claim}: a change to {file} reports [{string.Join(", ", reached)}]");
+            }
+        }
+
+        const string because =
+            "docs/wiki/20-reference/cli.md describes behaviour whose code reaches no glob in its "
+            + "`sources`, so `docume drift` never reports the page when that code moves. Nothing "
+            + "fails and no reader sees anything wrong; the page just silently stops being "
+            + "maintained. Claims the page makes and drift does not reach:";
+
+        blind.ShouldBeEmpty(because);
+    }
+
+    /// <summary>
+    /// The claim table is hand-listed, so it rots in two directions: a file renamed out from under a row
+    /// makes that row's trial report blind for a reason that has nothing to do with the page, and a row
+    /// quietly deleted shrinks the sweep without failing it.
+    /// </summary>
+    [Fact]
+    public void The_claim_table_still_names_files_that_exist()
+    {
+        const string missing = "A file in the claim table no longer exists, so its trial in "
+            + nameof(Every_behaviour_the_page_describes_is_reported_when_its_code_changes)
+            + " reports blind for a reason that has nothing to do with the page's `sources`.";
+
+        ClaimSources.Length.ShouldBe(25);
+        ClaimSources.ShouldAllBe(claim => File.Exists(Path.Combine(RepoRoot, Native(claim.File))), missing);
     }
 
     /// <summary>An <c>ALL-CAPS</c> or bracketed stand-in in prose claims nothing about the surface.</summary>
@@ -414,6 +571,8 @@ public sealed partial class CliReferencePageTests
     }
 
     private static string RepoRoot => DocumeCli.RepoRoot;
+
+    private static string Native(string path) => path.Replace('/', Path.DirectorySeparatorChar);
 
     [GeneratedRegex(@"^ {2}(?<aliases>\S[^\n]*?)(?: {2,}|$)", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
     private static partial Regex OptionColumn();
