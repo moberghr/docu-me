@@ -36,6 +36,7 @@ the check trips slightly early rather than slightly late.
 
 import json
 import os
+import re
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -105,6 +106,23 @@ def report(rel, note):
     return tokens, state
 
 
+def iteration_of(entry):
+    """Which iteration does this archive entry belong to? None if it does not say.
+
+    THE ARCHIVE HAS TWO ENTRY SHAPES and neither is wrong - `doneArchive.format` allows both.
+    Measured at iter136 over all 136 lines: 107 entries are STRINGS that name themselves in a
+    leading `iterNNN`, and 29 are OBJECTS that carry `{"iteration": NNN, "slice": ...}` instead.
+    Anything that reads the archive has to handle both, and until iter136 nothing did.
+    """
+    if isinstance(entry, str):
+        match = re.match(r"\s*iter(\d+)", entry)
+        return int(match.group(1)) if match else None
+    if isinstance(entry, dict):
+        value = entry.get("iteration")
+        return value if isinstance(value, int) else None
+    return None
+
+
 def check_done_archive(doc):
     """Is done-archive.jsonl still the complete, authoritative log state.json says it is?
 
@@ -114,6 +132,16 @@ def check_done_archive(doc):
     iteration performing the documented ritual. That had already happened: iter132's 3,416-char record
     existed ONLY in `doneRecent`, the archive's final line was a bare JSON string (no `n`) duplicating
     n=132, and `doneCount` counted that malformed line so the total looked right.
+
+    EXTENDED ITER136 with the three checks that shape misses. The iter133 checks are all about the
+    FILE - valid JSON, contiguous `n`, a matching count - and a file can satisfy every one of them
+    while an iteration's record is simply absent, because `n` is a LINE INDEX and not an iteration
+    number. It has not equalled the iteration number since line 50: iter48 has two entries, so
+    `n = iteration + 1` for all 87 lines after it, and `doneCount` 136 against iteration 135 only
+    looks aligned. What is checked now is ATTRIBUTION (every entry says which iteration it is),
+    COVERAGE (no iteration in the range is missing), and the HEAD (the newest entry is the iteration
+    state.json says it is on) - the last of which is the one that fires if an iteration bumps its
+    counter without appending, which is how iter132's record was lost.
 
     Checked here rather than in a script of its own because this is the script `readMe` requires after
     every edit to state.json, which is exactly when the invariant can break.
@@ -151,16 +179,92 @@ def check_done_archive(doc):
             head = recent[:60].replace("\n", " ")
             problems.append(f"doneRecent entry NOT in the archive, so trimming it would destroy it: {head!r}...")
 
+    # ITER136 (1/3) ATTRIBUTION. An entry that names no iteration is a record nobody can look up
+    # again, and every check above passes on one.
+    attributed = {}
+    for number, obj in parsed:
+        which = iteration_of(obj["entry"])
+        if which is None:
+            problems.append(f"line {number} (n={obj['n']}) does not name its iteration in either shape")
+            continue
+        attributed.setdefault(which, []).append(number)
+
+    # ITER136 (2/3) COVERAGE. `n` being contiguous says nothing about this: it counts lines.
+    if attributed:
+        gaps = [i for i in range(1, max(attributed) + 1) if i not in attributed]
+        if gaps:
+            problems.append(f"no archive entry for iteration(s) {gaps} - a record is missing, not just miscounted")
+
+    # ITER136 (3/3) HEAD. Bump the counter without appending and this is the only check that fires.
+    # Duplicates are legitimate (iter48 logged two slices), so coverage tolerates them; the head does not.
+    current = doc.get("iteration")
+    newest = max(attributed) if attributed else None
+    if isinstance(current, int) and newest is not None and newest != current:
+        problems.append(
+            f"state.json is on iteration {current} but the newest archived entry is iter{newest}"
+            " - append the entry, or fix whichever number is wrong"
+        )
+
     print("\ndone-archive.jsonl integrity:")
     print(f"  {len(lines)} lines, {len(parsed)} well-formed, doneCount {count}")
+    shapes = sum(1 for _, obj in parsed if isinstance(obj["entry"], dict))
+    print(f"  {len(parsed) - shapes} string entries + {shapes} object entries, covering {len(attributed)} iterations")
+    print(f"  newest archived: iter{newest}; state.json iteration: {current}")
     for problem in problems:
         print(f"  BROKEN: {problem}")
     if not problems:
-        print("  OK: every line is well-formed, n is contiguous, and doneRecent is fully archived.")
+        print("  OK: well-formed, n contiguous, doneRecent archived, every iteration present and attributed.")
     return problems
 
 
+def find_iteration(wanted):
+    """`grep -n 'iterNNN'` is WRONG for 27 of 135 iterations. This is the lookup that works.
+
+    MEASURED AT ITER136 by running the command `doneArchive.howToRead` actually prescribes, once per
+    iteration, against the lines that genuinely own each one (.mtk/paths-136/probe-archive-lookup.py):
+    it found NOTHING for 3 of them (69, 84, 108 - object-shaped entries spell it `"iteration": 69`,
+    which no `iter69` pattern matches) and, for 24 more, found ONLY lines belonging to some OTHER
+    entry. That second half is the dangerous one, because it looks like a hit: ask it for iter113 and
+    it hands back lines 135 and 136, which are iter134's and iter135's records mentioning iter113 in
+    prose. The loop's entries cite each other constantly, so prose mentions outnumber self-namings -
+    65 of 135 iterations get at least one match that is not their own entry.
+    """
+    with open(ARCHIVE, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+
+    owners, mentions = [], []
+    for number, line in enumerate(lines, start=1):
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict) or "entry" not in obj:
+            continue
+        if iteration_of(obj["entry"]) == wanted:
+            owners.append((number, obj))
+        elif f"iter{wanted}" in json.dumps(obj["entry"]):
+            mentions.append(number)
+
+    if not owners:
+        print(f"no archive entry for iter{wanted}.")
+    for number, obj in owners:
+        entry = obj["entry"]
+        body = entry if isinstance(entry, str) else json.dumps(entry, indent=2, ensure_ascii=False)
+        print(f"--- iter{wanted}: line {number}, n={obj['n']} ---")
+        print(body)
+    if mentions:
+        print(f"\n({len(mentions)} OTHER entries mention iter{wanted} in prose: lines {mentions}."
+              " A bare grep returns these too, and they are not this iteration's record.)")
+    return 0 if owners else 1
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--find" and sys.argv[2].isdigit():
+        return find_iteration(int(sys.argv[2]))
+    if len(sys.argv) > 1:
+        print("usage: check-state-size.py [--find <iteration>]")
+        return 2
+
     failures = []
 
     print(f"STEP-1 READ PATH (cap {READ_TOKEN_CAP:,} tok / {READ_BYTE_CEILING // 1024} KB per Read,")

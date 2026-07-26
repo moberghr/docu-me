@@ -318,3 +318,34 @@
     budget to suit the prose that broke it. And note where this paragraph lives: iter134 first wrote
     it into `nextAction`, which pushed state.json over the budget it was warning about — durable
     method advice goes HERE, which is the rule this file exists to enforce.
+
+## Reading the loop's own history back (iter136)
+
+  * **`n` IN done-archive.jsonl IS A LINE INDEX, NOT AN ITERATION NUMBER, AND HAS NOT MATCHED ONE
+    SINCE LINE 50.** iter48 logged two slices, so from n=50 onward `n = iteration + 1` — 87 of 136
+    lines. `doneCount` 136 against iteration 135 is that offset, not a miscount. Never read an
+    iteration number off `n`, and never renumber to "fix" the gap: the duplicate is a real record.
+  * **THE ARCHIVE HAS TWO ENTRY SHAPES AND ANY READER MUST HANDLE BOTH.** 107 entries are strings
+    naming themselves in a leading `iterNNN`; 29 are objects carrying `{"iteration": NNN, "slice": …}`.
+    Both are legal per `doneArchive.format`, but every instruction written for the archive assumed
+    the first.
+  * **THE DOCUMENTED LOOKUP WAS WRONG FOR 27 OF 135 ITERATIONS, AND ITS FAILURE MODE LOOKS LIKE A
+    HIT.** `grep -n 'iterNNN' done-archive.jsonl` — the exact command `doneArchive.howToRead`
+    prescribed — returned nothing for 3 (the object-shaped ones) and, for 24 more, returned only
+    lines belonging to some *other* entry: ask for iter113 and it hands back iter134's and iter135's
+    records, which cite it in prose. Because loop entries constantly reference earlier ones, 65 of
+    135 iterations get at least one match that is not their own. Use
+    `python3 tools/loop/check-state-size.py --find <n>`, which resolves both shapes and lists prose
+    mentions separately. Measured by `.mtk/paths-136/probe-archive-lookup.py`.
+  * **A CHECK OVER A FILE IS NOT A CHECK OVER THE THING THE FILE RECORDS.** iter133's archive checks
+    (valid JSON, contiguous `n`, matching `doneCount`, `doneRecent` round-trip) are all satisfiable
+    by a file that is missing an iteration entirely — deleting a middle record and renumbering passes
+    every one of them. The checks that catch it have to be stated in the archive's own domain:
+    ATTRIBUTION (every entry names its iteration), COVERAGE (no gap in the range), HEAD (the newest
+    entry is the iteration state.json claims to be on). The head check is the one that would have
+    caught iter132's loss at the moment it happened.
+  * **WHEN A MUTATION HARNESS SCORES LESS THAN N/N, SUSPECT THE PREDICTION FIRST.** Stripping an
+    entry's attribution also opens a coverage gap, so two checks fire on one mutation and a
+    "exactly one message" assertion reports a false FAIL. Same shape as iter135's 6/7. Assert the
+    expected SET — every predicted message fires and nothing else does — which still proves
+    non-redundancy without pretending each mutation has exactly one consequence.
