@@ -30,6 +30,14 @@ public sealed class DashboardPublisherTests
     private const string PagesPath = "/wiki/api/v2/pages";
     private const string SpacesPath = "/wiki/api/v2/spaces";
 
+    /// <summary>
+    /// The query parameter that decides whether Confluence sends a page body at all
+    /// (<c>ConfluenceClient.BodyFormat</c>). The skip-if-unchanged branch is only reachable when the read
+    /// carries it.
+    /// </summary>
+    private const string BodyFormatParam = "body-format";
+    private const string BodyFormatValue = "storage";
+
     private static readonly ConfluenceCredentials Credentials = new("bot@example.com", "token");
 
     [Fact]
@@ -87,6 +95,50 @@ public sealed class DashboardPublisherTests
 
         // The assertion that matters: nothing was written, not merely that the outcome says so.
         server.LogEntries.ShouldAllBe(entry => entry.RequestMessage!.Method == "GET");
+    }
+
+    [Fact]
+    public async Task Asks_for_the_body_its_skip_compares_against()
+    {
+        // The precondition every other assertion in this class rests on, and the one that used to be
+        // untestable here: the stub matched on path alone, so it served a body whether or not the caller
+        // requested one. Flipping this call's `includeBody` to false left all 1317 tests green while
+        // shipping a dashboard that compares its render against nothing, never skips, and spends a page
+        // version on every `drift --mark` forever — the exact churn §6.5's one documented deviation exists
+        // to prevent.
+        //
+        // RemoteBodyReadTests guards the other direction (rule §9.1: no *second* caller may read a body).
+        // Its scan counts the token `includeBody`, not the value, so `includeBody: false` still reads as
+        // one opt-in in the one allowed file. Presence is executable where absence is not, so it is
+        // asserted on the wire here rather than by a source scan there.
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubTitleSearch(server, existing: Body("same data", "2026-08-01 06:00 UTC"), version: 4);
+
+        // The write is stubbed although a passing run never reaches it. Without it, a regression makes
+        // this test die on an unstubbed-PUT 404 before the assertion below runs, and the failure names a
+        // 404 instead of the missing query parameter — cover that reads as a cascade rather than a cause.
+        StubUpdate(server, version: 5);
+
+        using var client = CreateClient(server);
+        var result = await DashboardPublisher.UpsertAsync(
+            client,
+            Confluence(),
+            SpaceKey,
+            Title,
+            Body("same data", "2026-08-02 07:00 UTC"),
+            TestContext.Current.CancellationToken);
+
+        const string unasked = "The dashboard's title lookup did not ask Confluence for the page body. "
+            + "The read exists only so an unchanged page can be left alone; without body-format=storage "
+            + "the API answers without one, every render compares unequal, and the page takes a no-op "
+            + "version per run.";
+
+        TitleSearchUrl(server).ShouldContain($"{BodyFormatParam}={BodyFormatValue}", customMessage: unasked);
+
+        // And the skip really did fire off the body that arrived, so the query above is load-bearing
+        // rather than a string that happens to be present.
+        result.Outcome.ShouldBe(DashboardUpsertOutcome.Unchanged, unasked);
     }
 
     [Fact]
@@ -262,18 +314,48 @@ public sealed class DashboardPublisherTests
             {"results":[{"id":"98304","key":"DOCUMESBX","name":"DocuMe Sandbox"}],"_links":{}}
             """));
 
+    /// <summary>
+    /// The title lookup, answered the way Confluence answers it: the body comes back only when the
+    /// request asked for it with <c>body-format=storage</c>.
+    /// </summary>
+    /// <remarks>
+    /// A stub matching on path alone would serve the body whether or not the caller requested it, and the
+    /// skip-if-unchanged branch below would then pass while shipping a build that never skips anything —
+    /// measured, and green across all 1317 tests. The two registrations are what make the request's query
+    /// string load-bearing rather than decorative; <see cref="Asks_for_the_body_its_skip_compares_against"/>
+    /// names the cause so the rest fail as a cascade rather than as the whole story.
+    /// </remarks>
     private static void StubTitleSearch(WireMockServer server, string? existing, int version = 1)
     {
+        var withoutBody = "{\"id\":\"" + PageId + "\",\"title\":\"" + Title + "\",\"spaceId\":\"" + SpaceId
+            + "\",\"parentId\":\"" + RootPageId + "\",\"version\":{\"number\":" + version + "}";
+
         var results = existing is null
             ? "[]"
-            : "[{\"id\":\"" + PageId + "\",\"title\":\"" + Title + "\",\"spaceId\":\"" + SpaceId
-                + "\",\"parentId\":\"" + RootPageId + "\",\"version\":{\"number\":" + version
-                + "},\"body\":{\"storage\":{\"value\":" + JsonSerializer.Serialize(existing)
-                + ",\"representation\":\"storage\"}}}]";
+            : withoutBody + ",\"body\":{\"storage\":{\"value\":" + JsonSerializer.Serialize(existing)
+                + ",\"representation\":\"storage\"}}}";
+
+        if (existing is not null)
+        {
+            results = "[" + results + "]";
+        }
+
+        server
+            .Given(Request.Create()
+                .WithPath(PagesPath)
+                .UsingGet()
+                .WithParam(BodyFormatParam, BodyFormatValue))
+            .AtPriority(1)
+            .RespondWith(Json("{\"results\":" + results + ",\"_links\":{}}"));
+
+        // The same page, answered to a caller that did not ask for a body. Confluence omits the key
+        // entirely rather than sending it empty.
+        var bodyless = existing is null ? "[]" : "[" + withoutBody + "}]";
 
         server
             .Given(Request.Create().WithPath(PagesPath).UsingGet())
-            .RespondWith(Json("{\"results\":" + results + ",\"_links\":{}}"));
+            .AtPriority(2)
+            .RespondWith(Json("{\"results\":" + bodyless + ",\"_links\":{}}"));
     }
 
     private static void StubUpdate(WireMockServer server, int version) => server
@@ -304,6 +386,16 @@ public sealed class DashboardPublisherTests
                 .Where(log => string.Equals(log.RequestMessage?.Path, PagesPath, StringComparison.Ordinal)
                     && string.Equals(log.RequestMessage?.Method, "GET", StringComparison.OrdinalIgnoreCase))
                 .Select(log => log.ResponseMessage?.BodyData?.BodyAsString ?? string.Empty));
+
+    /// <summary>
+    /// The full URL of the title lookup as the client actually sent it, query string included — request
+    /// side, where <see cref="ServedTitleSearch"/> is response side.
+    /// </summary>
+    private static string TitleSearchUrl(WireMockServer server) => server.LogEntries
+        .Select(log => log.RequestMessage)
+        .Single(request => string.Equals(request?.Path, PagesPath, StringComparison.Ordinal)
+            && string.Equals(request?.Method, "GET", StringComparison.OrdinalIgnoreCase))!
+        .Url;
 
     private static ConfluenceClient CreateClient(WireMockServer server) => ConfluenceClient.Create(
         new ConfluenceClientOptions
