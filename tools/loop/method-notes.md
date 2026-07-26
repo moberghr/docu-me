@@ -88,3 +88,27 @@
   * A BUDGET CHECK THAT THE CURRENT ITERATION TRIPS IS THE CHECK WORKING. Pay it back in the same
     iteration (condense, or rotate a field to an archive) rather than raising the budget to suit the prose
     that just broke it. iter128 and iter129 both did this.
+
+## Permissions and the loop's own settings (iter130)
+
+  * `permissions.deny` PATTERNS MATCH WHOLE TOKENS FROM THE START OF THE COMMAND. `Bash(git push
+    --force:*)` catches `git push --force origin main` and NOTHING ELSE that means the same thing:
+    `git push origin main --force` is allowed, and so is `git push --force-with-lease origin main`
+    (`--force-with-lease` is a different token, so it does not match a `--force` prefix). When a deny
+    entry must cover a flag that can appear anywhere in the argv, the pattern language cannot express it
+    and a `PreToolUse` hook is the mechanism. Do not add more deny lines and call it covered.
+  * THE LOOP CANNOT EDIT `tools/loop/loop-settings.json`. `Edit` on it is refused under
+    `--permission-mode acceptEdits`, while `Write` of a NEW file under `tools/loop/hooks/` succeeds in the
+    same session — so the guard is specific to the settings file, not the directory. This is the same
+    class as the `.claude/` guard (see the archived `claude-dir-writes` blocker) and the same rule applies:
+    an allowlisted `python3` could route around it, and must not, because anything that can edit its own
+    permissions or add its own `PreToolUse` hook can also grant itself anything. Ship it as a paste
+    (`tools/loop/loop-settings-paste.md`, the `rule-8-2a-paste.md` shape) and validate the paste against a
+    scratch copy so what Mirko receives is a tested change and not a draft.
+  * TO PROBE A DESTRUCTIVE COMMAND SAFELY, BREAK ITS TARGET, NOT ITS SHAPE. Every force-push probe at
+    iter130 used a remote NAME THAT DOES NOT EXIST (`deny-probe-nonexistent-remote`), so a probe that got
+    past the permission layer died in git's argument handling without opening a connection. `--dry-run`
+    would have been the wrong tool: it changes the command string, so it no longer tests the pattern you
+    care about.
+  * ONE PROBE PER TOOL CALL. A denied Bash call aborts the ENTIRE command string, so `cmd-a; cmd-b` where
+    `cmd-a` is denied tells you nothing about `cmd-b`. Send the variants as separate parallel calls.
