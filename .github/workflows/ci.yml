@@ -28,6 +28,16 @@ jobs:
       - name: Test
         run: dotnet test --solution DocuMe.slnx --configuration Release --no-build --verbosity normal
 
+      # BuildStandardsTests reads Directory.Build.props and .editorconfig, so it proves only that
+      # nothing has been *configured* to stop the analyzers. It cannot prove one still runs, and a
+      # pack that fails to load says nothing at all: no diagnostic, no warning, a green build that
+      # enforces less than it did yesterday. /p:ReportAnalyzer=true prints the analyzer assemblies
+      # that actually executed, per compilation, and the script fails when a house pack is missing
+      # from any of them. It is here rather than in the suite because it needs a --no-incremental
+      # rebuild of the same assemblies the test host has loaded; ~6 s for all three projects.
+      - name: Verify the analyzer packs ran
+        run: tools/verify-analyzers.sh
+
   # Schema-checks the two plugin manifests with Claude Code's own validator, which is the
   # only thing that catches a mistyped or wrong-typed field: PluginManifestTests covers the
   # structural half (manifest location, version agreement, skills discoverable, and the

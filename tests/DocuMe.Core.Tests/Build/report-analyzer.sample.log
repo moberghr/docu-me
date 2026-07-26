@@ -1,0 +1,165 @@
+MSBuild diagnostic output, sampled. Provenance and how to refresh it: see
+AnalyzerExecutionCheckTests, which reads this file.
+
+Target "CoreCompile" in file "/usr/local/share/dotnet/sdk/10.0.100/Roslyn/Microsoft.CSharp.Core.targets" from project "/home/runner/work/docu-me/docu-me/src/DocuMe.Core/DocuMe.Core.csproj" (target "Compile" depends on it):
+  NOTE: Elapsed time may be less than analyzer execution time because analyzers can run concurrently.
+  Total analyzer execution time: 6,813 seconds.
+  Time (s)    %   Analyzer
+  3,532   51   SonarAnalyzer.CSharp, Version=10.27.0.0, Culture=neutral, PublicKeyToken=null
+  0,509    7      SonarAnalyzer.CSharp.Rules.MethodParameterUnused (S1172)
+  0,375    5      SonarAnalyzer.CSharp.Rules.RedundantJumpStatement (S3626)
+  0,372    5      SonarAnalyzer.CSharp.Rules.InsecureEncryptionAlgorithm (S5547)
+  1,757   25   Meziantou.Analyzer, Version=3.0.112.0, Culture=neutral, PublicKeyToken=null
+  0,810   11      Meziantou.Analyzer.Rules.UseAnOverloadThatHasCancellationTokenAnalyzer (MA0032, MA0040, MA0079, MA0080)
+  0,332    4      Meziantou.Analyzer.Rules.LocalVariablesShouldNotHideSymbolsAnalyzer (MA0084)
+  0,322    4      Meziantou.Analyzer.Rules.DoNotUseBlockingCallInAsyncContextAnalyzer (MA0042, MA0045)
+  0,808   11   StyleCop.Analyzers, Version=1.2.0.556, Culture=neutral, PublicKeyToken=cfeb5dbada5e1c25
+  0,084    1      StyleCop.Analyzers.ReadabilityRules.SA1121UseBuiltInTypeAlias (SA1121)
+  0,065   <1      StyleCop.Analyzers.ReadabilityRules.SA1137ElementsShouldHaveTheSameIndentation (SA1137)
+  0,042   <1      StyleCop.Analyzers.DocumentationRules.SA1625ElementDocumentationMustNotBeCopiedAndPasted (SA1625)
+  0,337    4   Microsoft.CodeAnalysis.CSharp.CodeStyle, Version=5.0.13.2411, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,089    1      Microsoft.CodeAnalysis.CSharp.RemoveUnusedParametersAndValues.CSharpRemoveUnusedParametersAndValuesDiagnosticAnalyzer (IDE0058, IDE0059, IDE0060)
+  0,087    1      Microsoft.CodeAnalysis.CSharp.RemoveUnnecessaryImports.CSharpRemoveUnnecessaryImportsDiagnosticAnalyzer (EnableGenerateDocumentationFile, IDE0005, IDE0005_gen, RemoveUnnecessaryImportsFixable)
+  0,060   <1      Microsoft.CodeAnalysis.CSharp.Diagnostics.TypeStyle.CSharpUseExplicitTypeDiagnosticAnalyzer (IDE0008)
+  0,249    3   Microsoft.CodeAnalysis.NetAnalyzers, Version=10.0.100.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,046   <1      Microsoft.NetCore.Analyzers.Runtime.SpecifyStringComparisonAnalyzer (CA1307, CA1310)
+  0,026   <1      Microsoft.NetCore.Analyzers.Performance.UseConcreteTypeAnalyzer (CA1859)
+  0,015   <1      Microsoft.NetCore.Analyzers.InteropServices.PlatformCompatibilityAnalyzer (CA1416, CA1422)
+  0,066   <1   Roslynator.CSharp.Analyzers, Version=4.15.0.0, Culture=neutral, PublicKeyToken=926ea54d246a765e
+  0,021   <1      Roslynator.CSharp.Analysis.SingleLineDocumentationCommentTriviaAnalyzer (RCS1138, RCS1139, RCS1141, RCS1142, RCS1228, RCS1232, RCS1247, RCS1263)
+  0,020   <1      Roslynator.CSharp.Analysis.AsyncSuffixAnalyzer (RCS1046, RCS1047, RCS1047FadeOut)
+  0,006   <1      Roslynator.CSharp.Analysis.InvocationExpressionAnalyzer (RCS1015, RCS1068, RCS1077, RCS1080, RCS1097, RCS1107, RCS1112, RCS1112FadeOut, RCS1128, RCS1151, RCS1155, RCS1186, RCS1197, RCS1198, RCS1200, RCS1201, RCS1202, RCS1235, RCS1246, RCS1267)
+  0,060   <1   Microsoft.CodeAnalysis.CSharp.NetAnalyzers, Version=10.0.100.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,025   <1      Microsoft.NetCore.CSharp.Analyzers.Runtime.CSharpDetectPreviewFeatureAnalyzer (CA2252)
+  0,012   <1      Microsoft.NetCore.CSharp.Analyzers.Runtime.CSharpForwardCancellationTokenToInvocationsAnalyzer (CA2016)
+  0,006   <1      Microsoft.NetCore.CSharp.Analyzers.Performance.CSharpConstantExpectedAnalyzer (CA1856, CA1857)
+  0,002   <1   Microsoft.Interop.ComInterfaceGenerator, Version=10.0.13.2411, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+  0,002   <1      Microsoft.Interop.Analyzers.RuntimeComApiUsageWithSourceGeneratedComAnalyzer (SYSLIB1099)
+  <0,001   <1      Microsoft.Interop.Analyzers.GeneratedComInterfaceAttributeAnalyzer (SYSLIB1090)
+  <0,001   <1      Microsoft.Interop.Analyzers.ComHostingDoesNotSupportGeneratedComInterfaceAnalyzer (SYSLIB1098)
+  0,002   <1   Microsoft.CodeAnalysis.CodeStyle, Version=5.0.13.2411, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,002   <1      Microsoft.CodeAnalysis.UseExplicitTupleName.UseExplicitTupleNameDiagnosticAnalyzer (IDE0033)
+  <0,001   <1      Microsoft.CodeAnalysis.UseSystemHashCode.UseSystemHashCodeDiagnosticAnalyzer (IDE0070)
+  <0,001   <1   Microsoft.Interop.LibraryImportGenerator, Version=10.0.13.2411, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+  <0,001   <1      Microsoft.Interop.Analyzers.NativeMarshallingAttributeAnalyzer (SYSLIB1058)
+  <0,001   <1      Microsoft.Interop.Analyzers.CustomMarshallerAttributeAnalyzer (SYSLIB1055, SYSLIB1056, SYSLIB1057, SYSLIB1060, SYSLIB1061)
+  <0,001   <1      Microsoft.Interop.Analyzers.ShapeBreakingDiagnosticSuppressor (SYSLIBSUPPRESS0001)
+  <0,001   <1   System.Text.RegularExpressions.Generator, Version=10.0.13.2411, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+  <0,001   <1      System.Text.RegularExpressions.Generator.UpgradeToGeneratedRegexAnalyzer (SYSLIB1045)
+
+Target "CoreCompile" in file "/usr/local/share/dotnet/sdk/10.0.100/Roslyn/Microsoft.CSharp.Core.targets" from project "/home/runner/work/docu-me/docu-me/src/DocuMe.Cli/DocuMe.Cli.csproj" (target "Compile" depends on it):
+  NOTE: Elapsed time may be less than analyzer execution time because analyzers can run concurrently.
+  Total analyzer execution time: 1,531 seconds.
+  Time (s)    %   Analyzer
+  0,878   57   SonarAnalyzer.CSharp, Version=10.27.0.0, Culture=neutral, PublicKeyToken=null
+  0,180   11      SonarAnalyzer.CSharp.Rules.InsecureEncryptionAlgorithm (S5547)
+  0,151    9      SonarAnalyzer.CSharp.Rules.MethodParameterUnused (S1172)
+  0,073    4      SonarAnalyzer.CSharp.Rules.UnusedPrivateMember (S1144, S4487)
+  0,329   21   Meziantou.Analyzer, Version=3.0.112.0, Culture=neutral, PublicKeyToken=null
+  0,095    6      Meziantou.Analyzer.Rules.UseAnOverloadThatHasCancellationTokenAnalyzer (MA0032, MA0040, MA0079, MA0080)
+  0,090    5      Meziantou.Analyzer.Rules.UseStringComparisonAnalyzer (MA0001, MA0074)
+  0,084    5      Meziantou.Analyzer.Rules.DoNotUseBlockingCallInAsyncContextAnalyzer (MA0042, MA0045)
+  0,152    9   StyleCop.Analyzers, Version=1.2.0.556, Culture=neutral, PublicKeyToken=cfeb5dbada5e1c25
+  0,016    1      StyleCop.Analyzers.ReadabilityRules.SA1121UseBuiltInTypeAlias (SA1121)
+  0,007   <1      StyleCop.Analyzers.SpacingRules.SA1006PreprocessorKeywordsMustNotBePrecededBySpace (SA1006)
+  0,006   <1      StyleCop.Analyzers.SpacingRules.SA1008OpeningParenthesisMustBeSpacedCorrectly (SA1008)
+  0,079    5   Microsoft.CodeAnalysis.CSharp.CodeStyle, Version=5.0.13.2411, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,027    1      Microsoft.CodeAnalysis.CSharp.RemoveUnusedParametersAndValues.CSharpRemoveUnusedParametersAndValuesDiagnosticAnalyzer (IDE0058, IDE0059, IDE0060)
+  0,024    1      Microsoft.CodeAnalysis.CSharp.Diagnostics.TypeStyle.CSharpUseExplicitTypeDiagnosticAnalyzer (IDE0008)
+  0,006   <1      Microsoft.CodeAnalysis.CSharp.UseCollectionInitializer.CSharpUseCollectionInitializerDiagnosticAnalyzer (IDE0028)
+  0,060    3   Microsoft.CodeAnalysis.NetAnalyzers, Version=10.0.100.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,020    1      Microsoft.NetCore.Analyzers.Runtime.SpecifyStringComparisonAnalyzer (CA1307, CA1310)
+  0,005   <1      Microsoft.NetCore.Analyzers.Performance.UseConcreteTypeAnalyzer (CA1859)
+  0,004   <1      Microsoft.NetCore.Analyzers.InteropServices.PlatformCompatibilityAnalyzer (CA1416, CA1422)
+  0,017    1   Microsoft.CodeAnalysis.CSharp.NetAnalyzers, Version=10.0.100.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,009   <1      Microsoft.NetCore.CSharp.Analyzers.Runtime.CSharpDetectPreviewFeatureAnalyzer (CA2252)
+  0,003   <1      Microsoft.NetCore.CSharp.Analyzers.Runtime.CSharpForwardCancellationTokenToInvocationsAnalyzer (CA2016)
+  0,002   <1      Microsoft.NetCore.CSharp.Analyzers.Performance.CSharpConstantExpectedAnalyzer (CA1856, CA1857)
+  0,015   <1   Roslynator.CSharp.Analyzers, Version=4.15.0.0, Culture=neutral, PublicKeyToken=926ea54d246a765e
+  0,004   <1      Roslynator.CSharp.Analysis.AsyncSuffixAnalyzer (RCS1046, RCS1047, RCS1047FadeOut)
+  0,004   <1      Roslynator.CSharp.Analysis.SingleLineDocumentationCommentTriviaAnalyzer (RCS1138, RCS1139, RCS1141, RCS1142, RCS1228, RCS1232, RCS1247, RCS1263)
+  0,002   <1      Roslynator.CSharp.Analysis.InvocationExpressionAnalyzer (RCS1015, RCS1068, RCS1077, RCS1080, RCS1097, RCS1107, RCS1112, RCS1112FadeOut, RCS1128, RCS1151, RCS1155, RCS1186, RCS1197, RCS1198, RCS1200, RCS1201, RCS1202, RCS1235, RCS1246, RCS1267)
+  <0,001   <1   Microsoft.Interop.ComInterfaceGenerator, Version=10.0.13.2411, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+  <0,001   <1      Microsoft.Interop.Analyzers.RuntimeComApiUsageWithSourceGeneratedComAnalyzer (SYSLIB1099)
+  <0,001   <1      Microsoft.Interop.Analyzers.GeneratedComInterfaceAttributeAnalyzer (SYSLIB1090)
+  <0,001   <1      Microsoft.Interop.Analyzers.ComHostingDoesNotSupportGeneratedComInterfaceAnalyzer (SYSLIB1098)
+  <0,001   <1   Microsoft.CodeAnalysis.CodeStyle, Version=5.0.13.2411, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  <0,001   <1      Microsoft.CodeAnalysis.UseExplicitTupleName.UseExplicitTupleNameDiagnosticAnalyzer (IDE0033)
+  <0,001   <1      Microsoft.CodeAnalysis.UseSystemHashCode.UseSystemHashCodeDiagnosticAnalyzer (IDE0070)
+  <0,001   <1   Microsoft.Interop.LibraryImportGenerator, Version=10.0.13.2411, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+  <0,001   <1      Microsoft.Interop.Analyzers.CustomMarshallerAttributeAnalyzer (SYSLIB1055, SYSLIB1056, SYSLIB1057, SYSLIB1060, SYSLIB1061)
+  <0,001   <1      Microsoft.Interop.Analyzers.NativeMarshallingAttributeAnalyzer (SYSLIB1058)
+  <0,001   <1      Microsoft.Interop.Analyzers.ShapeBreakingDiagnosticSuppressor (SYSLIBSUPPRESS0001)
+  <0,001   <1   System.Text.RegularExpressions.Generator, Version=10.0.13.2411, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+  <0,001   <1      System.Text.RegularExpressions.Generator.UpgradeToGeneratedRegexAnalyzer (SYSLIB1045)
+
+Target "CoreCompile" in file "/usr/local/share/dotnet/sdk/10.0.100/Roslyn/Microsoft.CSharp.Core.targets" from project "/home/runner/work/docu-me/docu-me/tests/DocuMe.Core.Tests/DocuMe.Core.Tests.csproj" (target "Compile" depends on it):
+  NOTE: Elapsed time may be less than analyzer execution time because analyzers can run concurrently.
+  Total analyzer execution time: 23,628 seconds.
+  Time (s)    %   Analyzer
+  7,475   31   SonarAnalyzer.CSharp, Version=10.27.0.0, Culture=neutral, PublicKeyToken=null
+  1,862    7      SonarAnalyzer.CSharp.Rules.UnusedPrivateMember (S1144, S4487)
+  1,107    4      SonarAnalyzer.CSharp.Rules.MethodParameterUnused (S1172)
+  0,701    2      SonarAnalyzer.CSharp.Rules.DeadStores (S1854)
+  5,593   23   Meziantou.Analyzer, Version=3.0.112.0, Culture=neutral, PublicKeyToken=null
+  2,387   10      Meziantou.Analyzer.Rules.UseAnOverloadThatHasCancellationTokenAnalyzer (MA0032, MA0040, MA0079, MA0080)
+  1,637    6      Meziantou.Analyzer.Rules.UseStringComparisonAnalyzer (MA0001, MA0074)
+  1,059    4      Meziantou.Analyzer.Rules.DoNotUseBlockingCallInAsyncContextAnalyzer (MA0042, MA0045)
+  4,466   18   GraphQL.Analyzers, Version=8.5.0.0, Culture=neutral, PublicKeyToken=e6238258560628ee
+  4,377   18      GraphQL.Analyzers.AllowedOnAnalyzer (GQL012)
+  0,064   <1      GraphQL.Analyzers.NotAGraphTypeAnalyzer (GQL011)
+  0,014   <1      GraphQL.Analyzers.OneOfAnalyzer (GQL013, GQL014)
+  2,183    9   StyleCop.Analyzers, Version=1.2.0.556, Culture=neutral, PublicKeyToken=cfeb5dbada5e1c25
+  0,578    2      StyleCop.Analyzers.ReadabilityRules.SA1121UseBuiltInTypeAlias (SA1121)
+  0,082   <1      StyleCop.Analyzers.SpacingRules.SA1027UseTabsCorrectly (SA1027)
+  0,069   <1      StyleCop.Analyzers.SpacingRules.SA1008OpeningParenthesisMustBeSpacedCorrectly (SA1008)
+  1,491    6   Microsoft.CodeAnalysis.CSharp.CodeStyle, Version=5.0.13.2411, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,903    3      Microsoft.CodeAnalysis.CSharp.Diagnostics.TypeStyle.CSharpUseExplicitTypeDiagnosticAnalyzer (IDE0008)
+  0,211   <1      Microsoft.CodeAnalysis.CSharp.RemoveUnusedParametersAndValues.CSharpRemoveUnusedParametersAndValuesDiagnosticAnalyzer (IDE0058, IDE0059, IDE0060)
+  0,065   <1      Microsoft.CodeAnalysis.CSharp.RemoveUnnecessaryImports.CSharpRemoveUnnecessaryImportsDiagnosticAnalyzer (EnableGenerateDocumentationFile, IDE0005, IDE0005_gen, RemoveUnnecessaryImportsFixable)
+  0,929    3   xunit.analyzers, Version=1.27.0.0, Culture=neutral, PublicKeyToken=8d05b1bb7a6fdb6c
+  0,598    2      Xunit.Analyzers.DoNotUseBlockingTaskOperations (xUnit1031)
+  0,091   <1      Xunit.Analyzers.UseCancellationToken (xUnit1051)
+  0,058   <1      Xunit.Analyzers.TheoryDataShouldNotUseTheoryDataRow (xUnit1052)
+  0,794    3   Microsoft.CodeAnalysis.NetAnalyzers, Version=10.0.100.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,188   <1      Microsoft.NetCore.Analyzers.Runtime.SpecifyStringComparisonAnalyzer (CA1307, CA1310)
+  0,075   <1      Microsoft.NetCore.Analyzers.Performance.UseConcreteTypeAnalyzer (CA1859)
+  0,059   <1      Microsoft.NetCore.Analyzers.InteropServices.PlatformCompatibilityAnalyzer (CA1416, CA1422)
+  0,273    1   Microsoft.CodeAnalysis.CSharp.NetAnalyzers, Version=10.0.100.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,090   <1      Microsoft.NetCore.CSharp.Analyzers.Runtime.CSharpDetectPreviewFeatureAnalyzer (CA2252)
+  0,062   <1      Microsoft.NetCore.CSharp.Analyzers.Runtime.CSharpForwardCancellationTokenToInvocationsAnalyzer (CA2016)
+  0,035   <1      Microsoft.CodeAnalysis.CSharp.NetAnalyzers.Microsoft.NetCore.Analyzers.Performance.CSharpUseStringMethodCharOverloadWithSingleCharacters (CA1865, CA1866, CA1867)
+  0,233   <1   Roslynator.CSharp.Analyzers, Version=4.15.0.0, Culture=neutral, PublicKeyToken=926ea54d246a765e
+  0,086   <1      Roslynator.CSharp.Analysis.AsyncSuffixAnalyzer (RCS1046, RCS1047, RCS1047FadeOut)
+  0,067   <1      Roslynator.CSharp.Analysis.InvocationExpressionAnalyzer (RCS1015, RCS1068, RCS1077, RCS1080, RCS1097, RCS1107, RCS1112, RCS1112FadeOut, RCS1128, RCS1151, RCS1155, RCS1186, RCS1197, RCS1198, RCS1200, RCS1201, RCS1202, RCS1235, RCS1246, RCS1267)
+  0,014   <1      Roslynator.CSharp.Analysis.SingleLineDocumentationCommentTriviaAnalyzer (RCS1138, RCS1139, RCS1141, RCS1142, RCS1228, RCS1232, RCS1247, RCS1263)
+  0,103   <1   Microsoft.AspNetCore.App.Analyzers, Version=10.0.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60
+  0,072   <1      Microsoft.AspNetCore.Analyzers.RouteEmbeddedLanguage.RoutePatternAnalyzer (ASP0017, ASP0018)
+  0,011   <1      Microsoft.AspNetCore.Analyzers.RenderTreeBuilder.RenderTreeBuilderAnalyzer (ASP0006)
+  0,011   <1      Microsoft.AspNetCore.Analyzers.WebApplicationBuilder.WebApplicationBuilderAnalyzer (ASP0008, ASP0009, ASP0010, ASP0011, ASP0012, ASP0013, ASP0014)
+  0,027   <1   Microsoft.CodeAnalysis.Analyzers, Version=3.3.8.6701, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,009   <1      Microsoft.CodeAnalysis.Analyzers.MetaAnalyzers.CompareSymbolsCorrectlyAnalyzer (RS1024)
+  0,007   <1      Microsoft.CodeAnalysis.Analyzers.ImmutableObjectMethodAnalyzer (RS1014)
+  0,005   <1      Microsoft.CodeAnalysis.Analyzers.MetaAnalyzers.DiagnosticDescriptorCreationAnalyzer (RS1007, RS1015, RS1017, RS1018, RS1019, RS1020, RS1021, RS1028, RS1029, RS1031, RS1032, RS1033, RS1037, RS2000, RS2001, RS2002, RS2003, RS2004, RS2005, RS2006, RS2007, RS2008)
+  0,020   <1   Microsoft.AspNetCore.Components.Analyzers, Version=10.0.0.0, Culture=neutral, PublicKeyToken=adb9793829ddae60
+  0,016   <1      Microsoft.Extensions.Internal.ComponentInternalUsageDiagnosticAnalyzer (BL0006)
+  0,002   <1      Microsoft.AspNetCore.Components.Analyzers.ComponentParameterUsageAnalyzer (BL0005)
+  0,001   <1      Microsoft.AspNetCore.Components.Analyzers.ComponentParameterAnalyzer (BL0001, BL0002, BL0003, BL0004, BL0007)
+  0,013   <1   Microsoft.CodeAnalysis.CSharp.Analyzers, Version=3.3.8.6701, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,007   <1      Microsoft.CodeAnalysis.CSharp.Analyzers.MetaAnalyzers.CSharpRegisterActionAnalyzer (RS1002, RS1003, RS1006, RS1012, RS1013)
+  0,005   <1      Microsoft.CodeAnalysis.CSharp.Analyzers.MetaAnalyzers.CSharpDiagnosticAnalyzerFieldsAnalyzer (RS1008)
+  <0,001   <1      Microsoft.CodeAnalysis.CSharp.Analyzers.MetaAnalyzers.CSharpReportDiagnosticAnalyzer (RS1005)
+  0,011   <1   Microsoft.Interop.LibraryImportGenerator, Version=10.0.13.2411, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+  0,011   <1      Microsoft.Interop.Analyzers.NativeMarshallingAttributeAnalyzer (SYSLIB1058)
+  <0,001   <1      Microsoft.Interop.Analyzers.CustomMarshallerAttributeAnalyzer (SYSLIB1055, SYSLIB1056, SYSLIB1057, SYSLIB1060, SYSLIB1061)
+  <0,001   <1      Microsoft.Interop.Analyzers.ShapeBreakingDiagnosticSuppressor (SYSLIBSUPPRESS0001)
+  0,009   <1   Microsoft.Interop.ComInterfaceGenerator, Version=10.0.13.2411, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+  0,009   <1      Microsoft.Interop.Analyzers.RuntimeComApiUsageWithSourceGeneratedComAnalyzer (SYSLIB1099)
+  <0,001   <1      Microsoft.Interop.Analyzers.GeneratedComInterfaceAttributeAnalyzer (SYSLIB1090)
+  <0,001   <1      Microsoft.Interop.Analyzers.ComHostingDoesNotSupportGeneratedComInterfaceAnalyzer (SYSLIB1098)
+  0,008   <1   Microsoft.CodeAnalysis.CodeStyle, Version=5.0.13.2411, Culture=neutral, PublicKeyToken=31bf3856ad364e35
+  0,008   <1      Microsoft.CodeAnalysis.UseExplicitTupleName.UseExplicitTupleNameDiagnosticAnalyzer (IDE0033)
+  <0,001   <1      Microsoft.CodeAnalysis.UseSystemHashCode.UseSystemHashCodeDiagnosticAnalyzer (IDE0070)
+  <0,001   <1   System.Text.RegularExpressions.Generator, Version=10.0.13.2411, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a
+  <0,001   <1      System.Text.RegularExpressions.Generator.UpgradeToGeneratedRegexAnalyzer (SYSLIB1045)
+

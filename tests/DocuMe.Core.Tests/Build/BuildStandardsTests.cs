@@ -21,8 +21,12 @@ namespace DocuMe.Core.Tests.Build;
 /// </para>
 /// <para>
 /// The honest limit: this class reads <em>configuration</em>, so it cannot prove the analyzer packs
-/// still execute. Only <c>dotnet build /p:ReportAnalyzer=true -v:d</c> shows that, and it is far too
-/// slow for the default run. What is asserted here is that nothing has been configured to stop them.
+/// still execute. Only <c>dotnet build /p:ReportAnalyzer=true -v:d</c> shows that. What is asserted
+/// here is that nothing has been configured to stop them; the execution half is
+/// <c>tools/verify-analyzers.sh</c>, run as a CI step and owned by
+/// <see cref="AnalyzerExecutionCheckTests"/>. It is out of the default run because it needs a
+/// <c>--no-incremental</c> rebuild of the assemblies the test host has loaded, not because of its
+/// cost — measured at iteration 118, the whole solution rebuilds with the report on in about 6 s.
 /// </para>
 /// <para>
 /// One house rule is deliberately <em>not</em> asserted: Central Package Management's "no inline
