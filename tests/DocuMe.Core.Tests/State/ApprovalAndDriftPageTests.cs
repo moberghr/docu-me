@@ -1,4 +1,5 @@
 using System.Reflection;
+using DocuMe.Core.Drift;
 using DocuMe.Core.State;
 using DocuMe.Core.Sync;
 using Shouldly;
@@ -71,6 +72,96 @@ public sealed class ApprovalAndDriftPageTests
         // The case the old bullet inverted: changed bytes, unchanged body, approval stands.
         ("attachment-bytes", false, ["re-uploaded", "left standing"]),
     ];
+
+    /// <summary>
+    /// One representative file per subsystem this page's prose explains, paired with the claim that rests
+    /// on it. A change to any of them changes something described here, so a real <c>docume drift</c> run
+    /// has to report the page.
+    /// </summary>
+    /// <remarks>
+    /// Narrow on purpose where the coupling is narrow. <c>Publishing/</c> and <c>Markdown/</c> are whole
+    /// subsystems this page barely touches — two files each carry the claims it does make, and crediting
+    /// the directories would flag this page on every converter and pipeline change, which is
+    /// <c>20-reference/conversion.md</c>'s and <c>10-concepts/lifecycle.md</c>'s job.
+    /// </remarks>
+    private static readonly (string Claim, string File)[] ClaimSources =
+    [
+
+        // "docume sync --labels reads it and writes an approval entry": the reader that sees the label.
+        ("the label read that records an approval", "src/DocuMe.Core/Sync/LabelReader.cs"),
+
+        // The revocation half — "label absent, state says approved" — and approvedBy's `unknown`.
+        ("the revocation transition", "src/DocuMe.Core/Sync/LabelSyncPlanner.cs"),
+
+        // The approval entry's fields, and which writes archive one to `history`.
+        ("the approval record and its history", "src/DocuMe.Core/State/StateUpdates.cs"),
+
+        // Which republish invalidates: the hash comparison, --force, reparenting, attachment bytes.
+        ("what a republish invalidates", "src/DocuMe.Core/State/PublishPlan.cs"),
+
+        // "The hash is taken over the converted body before the banner is injected" is an ORDERING, and
+        // the pipeline is the only place that holds it: PublishPipeline.cs:232 hashes, :259 injects.
+        ("the hash-before-banner ordering", "src/DocuMe.Core/Publishing/PublishPipeline.cs"),
+
+        // The banner named as the thing the hash excludes (§9.2).
+        ("the banner the hash excludes", "src/DocuMe.Core/Markdown/PageBanner.cs"),
+
+        // "A mermaid diagram is not that case — its attachment filename is derived from the diagram
+        // source": the exception to the attachment-bytes rule, and a pure function is what makes it one.
+        ("the mermaid filename that makes a diagram edit invalidate", "src/DocuMe.Core/Markdown/MermaidAttachmentName.cs"),
+
+        // The matcher this very check calls, and the baseline it defaults to.
+        ("the drift matcher", "src/DocuMe.Core/Drift/DriftPlanner.cs"),
+
+        // drift --mark: the stale label, the state flag and the dashboard refresh.
+        ("the stale-marking pass", "src/DocuMe.Core/Drift/DriftMarkPlanner.cs"),
+
+        ("the dashboard page", "src/DocuMe.Core/Dashboard/DashboardPublisher.cs"),
+
+        // "A page DocuMe publishes but does not own would otherwise look like an orphan to
+        // publish --prune and be deleted" — the closing sentence rests on prune's orphan definition.
+        ("prune's orphan definition, the reason the dashboard stays untracked", "src/DocuMe.Core/Publishing/PrunePlan.cs"),
+    ];
+
+    /// <summary>
+    /// The silent failure. <c>sources</c> is what <see cref="DriftPlanner"/> matches a diff against, so a
+    /// subsystem this page explains but does not credit is one the page stops tracking the day its code
+    /// moves — no error, no warning, and a page that looks maintained forever.
+    /// </summary>
+    /// <remarks>
+    /// Asked of the planner a real <c>docume drift</c> run uses, never of the frontmatter: reading the
+    /// frontmatter is precisely the check that passed while four of these subsystems were blind. The
+    /// blanket <c>src/DocuMe.Core/**</c> on the index pages and the root README is what hid it — the
+    /// change always reported *something*, so <see cref="Acceptance.DogfoodWikiTests"/>'s "every shipped
+    /// path reaches some page's globs" sweep stayed green.
+    /// </remarks>
+    [Fact]
+    public void Every_subsystem_the_page_explains_is_reported_when_its_code_changes()
+    {
+        var pages = DocuMe.Core.Markdown.WikiTree.Load(Path.Combine(RepoRoot, "docs", "wiki")).Pages;
+        var blind = new List<string>();
+
+        pages.ShouldNotBeEmpty("The wiki loaded no pages, so every trial below would report blind.");
+
+        foreach (var (claim, file) in ClaimSources)
+        {
+            var report = DriftPlanner.Plan("baseline", "head", [file], pages);
+            var reached = report.Pages.Select(page => page.Path).ToList();
+
+            if (!reached.Contains(WikiPath, StringComparer.Ordinal))
+            {
+                blind.Add($"{claim}: a change to {file} reports [{string.Join(", ", reached)}]");
+            }
+        }
+
+        const string message =
+            PagePath + " explains a subsystem whose code reaches no glob in its `sources`, so `docume "
+            + "drift` never reports the page when that code moves. This is the defect with no symptom: "
+            + "nothing fails, no reader sees anything wrong, and the page silently stops being "
+            + "maintained. Claims the page makes and drift does not reach:";
+
+        blind.ShouldBeEmpty(message);
+    }
 
     /// <summary>
     /// The table is the reader's field list for the approval entry, so a field the record grows without
@@ -171,6 +262,12 @@ public sealed class ApprovalAndDriftPageTests
 
         ApprovalFields().Length.ShouldBe(5);
         Boundaries.Length.ShouldBe(4);
+
+        const string missing = "A file in the claim table no longer exists, so its trial reports blind "
+            + "for a reason that has nothing to do with the page's `sources`.";
+
+        ClaimSources.Length.ShouldBe(11);
+        ClaimSources.ShouldAllBe(claim => File.Exists(Path.Combine(RepoRoot, Native(claim.File))), missing);
     }
 
     /// <summary>An approved page at v5 with one attachment, the starting point every trial edits from.</summary>

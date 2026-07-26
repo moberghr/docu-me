@@ -1,8 +1,13 @@
 ---
 sources:
   - src/DocuMe.Core/State/*.cs
+  - src/DocuMe.Core/Sync/*.cs
   - src/DocuMe.Core/Drift/*.cs
   - src/DocuMe.Core/Dashboard/*.cs
+  - src/DocuMe.Core/Publishing/PublishPipeline.cs
+  - src/DocuMe.Core/Publishing/PrunePlan.cs
+  - src/DocuMe.Core/Markdown/PageBanner.cs
+  - src/DocuMe.Core/Markdown/MermaidAttachmentName.cs
 ---
 
 # Approval and Drift
