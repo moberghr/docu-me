@@ -43,7 +43,7 @@ public sealed record ChildReorder(
 /// <remarks>
 /// <para>
 /// <strong>Pure, and separate from the requests,</strong> for the same reason
-/// <see cref="PublishPlanner"/> is: the interesting part of reordering is the diff, and a diff that
+/// <see cref="State.PublishPlanner"/> is: the interesting part of reordering is the diff, and a diff that
 /// needs an HTTP server to exercise is a diff nobody covers properly.
 /// </para>
 /// <para>

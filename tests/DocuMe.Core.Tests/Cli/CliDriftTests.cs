@@ -585,7 +585,7 @@ public sealed class CliDriftTests : IDisposable
     }
 
     /// <summary>
-    /// The per-page Stale cell as <see cref="Dashboard.DashboardPage"/> renders it. Lowercase, which is
+    /// The per-page Stale cell as <see cref="DocuMe.Core.Dashboard.DashboardPage"/> renders it. Lowercase, which is
     /// what keeps it distinct from <see cref="SummaryStaleCell"/> under an ordinal count.
     /// </summary>
     private const string PageStaleCell = "<td>⚠️ stale</td>";

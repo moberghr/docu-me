@@ -112,6 +112,9 @@ public sealed partial class MermaidRenderer
     private readonly string _nodeExecutable;
     private readonly TimeSpan _timeout;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="MermaidRenderer"/> class.
+    /// </summary>
     /// <param name="scriptPath">
     /// Path to <c>render-mermaid.mjs</c>. In a consumer repo this comes from
     /// <c>docume.json</c> → <c>mermaid.renderer</c> (§5.1).

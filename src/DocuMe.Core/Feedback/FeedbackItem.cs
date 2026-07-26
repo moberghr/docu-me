@@ -237,7 +237,7 @@ public static class FeedbackItemFile
     /// </summary>
     /// <remarks>
     /// Ordinal by construction: <see cref="char.IsAsciiLetterOrDigit"/> rather than
-    /// <see cref="char.IsLetterOrDigit"/>, so a page path with a non-ASCII letter in it produces the same
+    /// <see cref="char.IsLetterOrDigit(char)"/>, so a page path with a non-ASCII letter in it produces the same
     /// name on every machine and every filesystem rather than one that depends on the current culture or
     /// on how the volume normalizes Unicode.
     /// </remarks>

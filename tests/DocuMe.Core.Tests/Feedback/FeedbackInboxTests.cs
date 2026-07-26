@@ -67,7 +67,7 @@ public sealed class FeedbackInboxTests : IDisposable
 
     /// <summary>
     /// A storage-format body and a non-ASCII name are written as themselves. The default JSON encoder
-    /// escapes both — <c><p></c>, <c>Jónas</c> — which is valid JSON and unreadable in the
+    /// escapes both — <c>&lt;p&gt;</c>, <c>Jónas</c> — which is valid JSON and unreadable in the
     /// PR diff §5.4 commits these files for.
     /// </summary>
     [Fact]

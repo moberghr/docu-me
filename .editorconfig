@@ -191,7 +191,10 @@ dotnet_diagnostic.SA1611.severity = none
 dotnet_diagnostic.SA1615.severity = none
 dotnet_diagnostic.SA1623.severity = none
 dotnet_diagnostic.SA1629.severity = none
-dotnet_diagnostic.SA0001.severity = none
+# SA0001 (XML comment analysis disabled) is the tripwire for GenerateDocumentationFile in
+# Directory.Build.props: it fires only when doc comments are parsed with DocumentationMode.None, which
+# is exactly the state in which every other documentation analyzer goes silent. Keep it loud.
+dotnet_diagnostic.SA0001.severity = warning
 dotnet_diagnostic.SA1200.severity = warning
 dotnet_diagnostic.SA1208.severity = warning
 dotnet_diagnostic.SA1209.severity = warning
@@ -203,6 +206,10 @@ dotnet_diagnostic.SA1009.severity = none
 dotnet_diagnostic.SA1413.severity = none
 dotnet_diagnostic.SA1503.severity = warning
 dotnet_diagnostic.CS1591.severity = none
+# CS1573 is the compiler twin of SA1611 (above, none): "this parameter has no <param> tag". Documenting
+# the parameters that need explaining and leaving the obvious ones bare is deliberate here, so the two
+# rules have to agree — enforcing one while relaxing the other just picks a spelling.
+dotnet_diagnostic.CS1573.severity = none
 
 # ============================================================
 # Roslynator

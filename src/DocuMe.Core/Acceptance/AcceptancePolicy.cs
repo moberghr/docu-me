@@ -42,6 +42,9 @@ public sealed class AcceptancePolicy
 {
     private readonly HashSet<string> _accepted;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AcceptancePolicy"/> class.
+    /// </summary>
     /// <param name="acceptedCodes">
     /// Diagnostic codes to report as notes (see <see cref="Markdown.ConversionDiagnosticCodes"/>).
     /// Unknown codes are allowed: accepting a code the current corpus never triggers is not an

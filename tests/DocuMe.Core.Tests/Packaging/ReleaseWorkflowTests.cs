@@ -22,7 +22,7 @@ namespace DocuMe.Core.Tests.Packaging;
 /// the one place where it cannot be undone). A trigger that also fires on a branch publishes from
 /// every commit. Missing <c>packages: write</c> fails at the push, after the build and the tests have
 /// already run. And the version guard is the whole reason the workflow starts the way it does: §12's
-/// single version now lives in three files plus the tag, <see cref="PluginManifestTests"/> can only
+/// single version now lives in three files plus the tag, <see cref="Plugin.PluginManifestTests"/> can only
 /// see the three, and a plugin pinned to a version that was never released is one Claude Code keeps
 /// its cached copy of forever.
 /// </para>
@@ -218,7 +218,7 @@ public sealed class ReleaseWorkflowTests : IDisposable
     /// <remarks>
     /// The fixture is the repository's own three version files, unmodified, with the tag derived from
     /// them — so this also fails on a half-bumped tree, which is correct and not a second copy of
-    /// <see cref="PluginManifestTests"/>: that one compares the files to each other at desk time, this one
+    /// <see cref="Plugin.PluginManifestTests"/>: that one compares the files to each other at desk time, this one
     /// runs the shell that compares them to the tag.
     /// </remarks>
     [Fact]

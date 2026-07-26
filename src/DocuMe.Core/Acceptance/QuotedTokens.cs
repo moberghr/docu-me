@@ -19,6 +19,9 @@ namespace DocuMe.Core.Acceptance;
 /// </remarks>
 internal static class QuotedTokens
 {
+    /// <summary>
+    /// Replaces every quoted run in a tool's message with an ellipsis, and reports the first one.
+    /// </summary>
     /// <param name="text">The message verbatim.</param>
     /// <param name="quote">The quote character the message uses around its tokens.</param>
     /// <returns>

@@ -28,7 +28,7 @@ namespace DocuMe.Core.Tests.State;
 /// The worst of the four was a bullet reading "an attachment re-upload with identical bytes does not"
 /// invalidate. Identical bytes are never re-uploaded at all, so it described an event that does not
 /// occur while implying that *changed* bytes would invalidate. They do not: attachment hashes are
-/// outside the body hash entirely (<see cref="PublishPlan"/>'s <c>UpdateAttachments</c> path), so a
+/// outside the body hash entirely (<see cref="DocuMe.Core.State.PagePublishAction.UpdateAttachments"/>), so a
 /// hand-placed image can be swapped under a standing approval. That is the one case where an approved
 /// page visibly changes without re-review, and the page hid it behind a claim of the opposite shape.
 /// </para>

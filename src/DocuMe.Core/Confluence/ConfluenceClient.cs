@@ -161,8 +161,9 @@ public sealed class ConfluenceClient : IDisposable
     }
 
     /// <summary>
-    /// Wraps a caller-owned <see cref="HttpClient"/>, which must already carry the base address and
-    /// the <c>Authorization</c> header. Disposing this client leaves it open.
+    /// Initializes a new instance of the <see cref="ConfluenceClient"/> class around a caller-owned
+    /// <see cref="HttpClient"/>, which must already carry the base address and the
+    /// <c>Authorization</c> header. Disposing this client leaves it open.
     /// </summary>
     public ConfluenceClient(HttpClient httpClient)
         : this(httpClient, ownsHttpClient: false)

@@ -23,7 +23,7 @@ namespace DocuMe.Cli.Commands;
 /// </para>
 /// <para>
 /// <strong>It does not write the state file.</strong> The labels are read and reconciled
-/// (<see cref="LabelSyncPlanner"/>) so the page agrees with Confluence as of this second even when the
+/// (<see cref="DocuMe.Core.Sync.LabelSyncPlanner"/>) so the page agrees with Confluence as of this second even when the
 /// cron <c>sync</c> has not committed yet — but the reconciled state stays in memory. §6.3 owns that
 /// file; a second writer of the same field, running on a different schedule, is how two runs end up
 /// disagreeing about who approved what.

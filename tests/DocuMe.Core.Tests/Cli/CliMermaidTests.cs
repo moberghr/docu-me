@@ -275,7 +275,7 @@ public sealed partial class CliMermaidTests : IDisposable
     /// <para>
     /// Every other test in this class publishes one page holding one fence, where "once for the run",
     /// "once per distinct diagram", "once per page" and "once per page-and-attachment pair" are all the
-    /// number 1 and no assertion can distinguish them. <see cref="PublishExecutor"/> states two
+    /// number 1 and no assertion can distinguish them. <see cref="DocuMe.Core.Publishing.PublishExecutor"/> states two
     /// <em>different</em> denominators in the same breath — a diagram repeated across pages costs one Node
     /// process "rather than one per page", while the upload is per page because a Confluence attachment
     /// belongs to a page — and at N=1 nothing executable could fail on either half.
@@ -434,7 +434,7 @@ public sealed partial class CliMermaidTests : IDisposable
     /// PLAN.md §4 names the message a machine without Node has to get. A runner missing Node fails every
     /// diagram identically, so the run stops rather than reporting one finding per page — and it stops
     /// before writing that page, because rendering precedes the body write
-    /// (<see cref="Publishing.PublishExecutor"/>).
+    /// (<see cref="DocuMe.Core.Publishing.PublishExecutor"/>).
     /// </summary>
     [Fact]
     public void A_missing_node_stops_the_run_before_a_single_page_is_written()

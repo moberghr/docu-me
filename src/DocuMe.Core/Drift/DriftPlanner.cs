@@ -82,7 +82,7 @@ public static class DriftPlanner
     /// Pattern → the files it matched, for every distinct pattern that matched at least one. Built once
     /// per run rather than per page: two pages documenting one subsystem share a glob, and one
     /// <see cref="Matcher"/> per pattern is what makes per-pattern attribution possible at all
-    /// (<see cref="Matcher.Match(IEnumerable{string})"/> reports which files matched, never which
+    /// (<see cref="MatcherExtensions.Match(Matcher, IEnumerable{string})"/> reports which files matched, never which
     /// pattern matched them).
     /// </summary>
     private static Dictionary<string, List<string>> MatchesByPattern(

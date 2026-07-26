@@ -28,6 +28,12 @@
   <PropertyGroup>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- Required for the documentation analyzers to run at all. Without a documentation file the
+         compiler parses doc comments with DocumentationMode.None, so SA1604/SA1642/RCS1139 and the
+         compiler's own cref validation (CS1574/CS0419) silently never fire — the build reported zero
+         warnings while `dotnet format` found real defects. StyleCop says so via SA0001, which is
+         kept at warning below so dropping this property fails the build instead of going quiet. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- Keep NuGet audit ON and visible (NuGetAuditMode=all surfaces transitive advisories), but
          don't fail the build on advisories in transitive packages we can't directly patch. Bump the
          owning direct dependency when a fix ships. -->

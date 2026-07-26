@@ -574,6 +574,7 @@ public sealed class WorkflowShellTests : IDisposable
             : string.Empty;
 
     // ---- the throwaway consumer repository --------------------------------------------------------
+
     /// <summary>
     /// A repository shaped like a consumer's, with an on-disk bare origin and a <c>gh</c> that records what
     /// it was asked. Everything the carry step does is local git except one API call, so this answers all
