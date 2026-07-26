@@ -478,3 +478,43 @@
     Notification Center's DB (`~/Library/Group Containers/group.com.apple.usernoted/db2/db`) and the
     Focus assertions file are both **TCC-blocked** to this process, so "exit 0" is the strongest
     claim available and it is NOT "Mirko saw it". Do not upgrade one to the other.
+
+## Testing code that is dormant, and what the CLI default really is (iter140)
+
+  * **"NOT RUNNING" AND "CORRECT" ARE DIFFERENT CLAIMS, AND FINDING THE FIRST DOES NOT ESTABLISH THE
+    SECOND.** iter139 proved the driver was 56.6 h stale and that `current_model()`,
+    `state_iteration()` and the `pass_n` log naming were dead code. It never ran any of them. A
+    pending restart is exactly the moment never-executed code becomes load-bearing, so the follow-up
+    to "X is dormant" is "test X before it wakes up", not another sweep. 9/9,
+    `.mtk/paths-140/probe-restart-readiness.py`, no API calls.
+  * **HOW TO TEST A DORMANT BASH FUNCTION: extract it by content anchor and run it under `bash -c`
+    with the real inputs.** `re.search(rf"^{name}\(\) \{{\n(.*?)^\}}\n", src, re.S|re.M)` lifts a
+    function out of the committed driver; feed it `STATE_FILE=<the live state.json>` and it answers
+    for real. Never retype the body — that tests the retyping. Same trick for a line rather than a
+    function: pull `iter_label=$(printf …)` and `iter_log=…` out by regex and run them together to
+    get the exact filename the next pass will write.
+  * **THE DEGRADED-INPUT MATRIX IS THE HALF THAT MATTERS FOR A GUARD.** `state_iteration()` exists so
+    a bad state file yields `iter-unknown` instead of a crashed pass, and that branch is only proven
+    by feeding it all four shapes: missing file, invalid JSON, non-integer `iteration`, absent key.
+    All four returned empty at exit 0. A happy-path test would have proven nothing about the branch
+    the function was written for.
+  * **CHECK `bash -n` AND THE EXEC BIT BEFORE ASKING A HUMAN TO RUN A SCRIPT.** They cost nothing and
+    they are the two failures that make step 1 of a hand-run gate die instantly. Nothing had parsed
+    `docume-loop.sh` since the two commits that changed it.
+  * **`--model <id>` AND NO `--model` PRODUCE DIFFERENT `modelUsage` KEYS FOR THE SAME MODEL.**
+    Measured on CLI 2.1.219: no flag → `claude-opus-5[1m]`; `--model claude-opus-5` → `claude-opus-5`.
+    Both report `canonicalModel: claude-opus-5`, `contextWindow: 1000000`, `maxOutputTokens: 64000`.
+    **So compare `canonicalModel`, not the `modelUsage` key** — the key carries a variant suffix and
+    an id-string diff reads as a model change when nothing changed. This is what makes the pending
+    driver restart safe on the model axis; iter139 assumed it, iter140 measured it
+    (`.mtk/paths-140/probe-model-pinning.py`, payloads kept as `cell-*.json`).
+  * **AN ITERATION WHOSE MEASUREMENTS ALL COME BACK CLEAN IS STILL A RESULT — WRITE IT DOWN AS ONE.**
+    iter140 checked the model pinning, every `.mtk/paths-*` script the gates cite (20/20 resolve),
+    gate-m6's three version files against `release.yml`'s guard (it does check all three), and the
+    restart-activated driver code. Nothing was broken. The temptation after fourteen defect-finding
+    iterations is to keep digging until something breaks; the honest output is "this is now known to
+    work", which is what de-risks the gate a human is about to act on.
+  * **A GUARD IN YOUR OWN MIGRATION SCRIPT WILL CATCH YOUR OWN MISCOUNT.** The GATES.md archive split
+    asserted "expected 4 ticked items" and refused at 5 — the section had five. Cheap assertions about
+    what you *think* you are moving are worth more than careful reading, and they run before the
+    destructive write, which is the point.
