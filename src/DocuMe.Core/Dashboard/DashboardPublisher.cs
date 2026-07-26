@@ -92,6 +92,24 @@ public static class DashboardPublisher
     /// <summary>
     /// Reads the live labels, reconciles them in memory, and renders the page body (§6.5).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A caller that just wrote a label knows more than the search does.</strong> The reconciler
+    /// takes the live labels as the truth and clears a <see cref="PageState.Stale"/> flag the search does
+    /// not confirm, which is exactly right for <c>sync --labels</c> — a reviewer taking a label off by hand
+    /// is the case §6.3 exists to notice. It is wrong for <c>drift --mark</c>, which is itself the writer:
+    /// the CQL search is index-backed, a label added moments earlier need not be in it yet, and reconciling
+    /// against it would discard a fact the run holds a 200 for. The symptom was a dashboard reporting zero
+    /// stale pages in the same run that labelled two and saved both to <c>state.json</c> — one command, two
+    /// surfaces, disagreeing (§9.3 makes the dashboard the staleness surface).
+    /// </para>
+    /// <para>
+    /// So <paramref name="justLabelledStale"/> is unioned in rather than the reconciliation being weakened.
+    /// It carries only ids this run wrote and Confluence accepted; an already-marked page it skipped is
+    /// deliberately left out, because there the search and the state flag disagreeing is the genuine
+    /// divergence <c>sync</c> is meant to resolve.
+    /// </para>
+    /// </remarks>
     /// <param name="client">A Confluence client for the target site.</param>
     /// <param name="config">The loaded <c>docume.json</c>.</param>
     /// <param name="paths">Where the config, wiki and state live, for the page's provenance block.</param>
@@ -102,6 +120,11 @@ public static class DashboardPublisher
     /// When the read happened. Supplied by the caller so the body is a function of its inputs, which is
     /// what makes the unchanged-body comparison in <see cref="UpsertAsync"/> possible at all.
     /// </param>
+    /// <param name="justLabelledStale">
+    /// Page ids this run has just added the <c>stale</c> label to, which the caller knows carry it because
+    /// Confluence accepted the write moments ago. Unioned into the search's result before reconciling — see
+    /// the remarks on why the search alone is not enough for a caller that is also the writer.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     public static async Task<DashboardRender> RenderAsync(
         ConfluenceClient client,
@@ -111,6 +134,7 @@ public static class DashboardPublisher
         DocumeState state,
         string spaceKey,
         DateTimeOffset observedAt,
+        IReadOnlyCollection<string>? justLabelledStale = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(client);
@@ -124,7 +148,7 @@ public static class DashboardPublisher
             .ReadAsync(client, config, state, spaceKey, observedAt, cancellationToken)
             .ConfigureAwait(false);
 
-        var plan = LabelSyncPlanner.Plan(state, read.Observation);
+        var plan = LabelSyncPlanner.Plan(state, Observed(read.Observation, justLabelledStale));
         var reconciled = LabelSyncPlanner.Apply(state, plan);
         var report = StatusModel.Build(paths, config, tree, reconciled);
         var body = new DashboardPage { Report = report, GeneratedAt = observedAt }.Render();
@@ -211,6 +235,33 @@ public static class DashboardPublisher
         var updated = await client.UpdatePageAsync(revision, cancellationToken).ConfigureAwait(false);
 
         return new DashboardUpsertResult(DashboardUpsertOutcome.Updated, updated.Id, updated.Version);
+    }
+
+    /// <summary>
+    /// The search's observation, plus the pages the caller has just labelled itself.
+    /// </summary>
+    /// <remarks>
+    /// Only the stale set moves: nothing writes an <c>approved</c> label, so there is never a caller-known
+    /// approval the search could be behind on.
+    /// </remarks>
+    private static LabelObservation Observed(
+        LabelObservation observation,
+        IReadOnlyCollection<string>? justLabelledStale)
+    {
+        if (justLabelledStale is not { Count: > 0 })
+        {
+            return observation;
+        }
+
+        // Appended rather than merged in sort order: the search's own order is what an unmodified run
+        // reconciles in. Distinct keeps first occurrences, so a page the search already returned is not
+        // counted twice.
+        var stale = observation.StalePageIds
+            .Concat(justLabelledStale)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return observation with { StalePageIds = stale };
     }
 
     /// <summary>

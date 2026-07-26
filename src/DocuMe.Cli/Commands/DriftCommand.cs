@@ -367,7 +367,7 @@ internal static class DriftCommand
             new ConfluenceClientOptions { BaseUrl = baseUrl },
             credentials);
 
-        var (marked, failure) = await LabelAsync(
+        var (marked, labelled, failure) = await LabelAsync(
                 client,
                 config,
                 plan,
@@ -396,6 +396,7 @@ internal static class DriftCommand
                 paths,
                 tree,
                 marked,
+                labelled,
                 target,
                 baseUrl,
                 cancellationToken)
@@ -406,19 +407,27 @@ internal static class DriftCommand
     /// One label write per page, each followed by its state flag, so a run that dies half-way leaves the
     /// two agreeing about the pages it got through.
     /// </summary>
-    private static async Task<(DocumeState Marked, string? Failure)> LabelAsync(
-        ConfluenceClient client,
-        DocumeConfig config,
-        DriftMarkPlan plan,
-        DocumeState state,
-        MarkTarget target,
-        Uri baseUrl,
-        CancellationToken cancellationToken)
+    /// <returns>
+    /// State with the flags set, the page ids Confluence accepted a label for, and the failure that
+    /// stopped the run if one did. <c>Labelled</c> carries only ids that got a 200, which is what lets the
+    /// dashboard refresh trust them over a search index that may not hold them yet
+    /// (<see cref="DashboardPublisher.RenderAsync"/>).
+    /// </returns>
+    private static async Task<(DocumeState Marked, IReadOnlyList<string> Labelled, string? Failure)>
+        LabelAsync(
+            ConfluenceClient client,
+            DocumeConfig config,
+            DriftMarkPlan plan,
+            DocumeState state,
+            MarkTarget target,
+            Uri baseUrl,
+            CancellationToken cancellationToken)
     {
         // Hoisted out of the loop: CA1861 rejects a constant array as an argument, and the label is the
         // same one for every page anyway.
         string[] labels = [config.Labels.Stale];
         var marked = state;
+        var labelled = new List<string>();
 
         foreach (var page in plan.ToLabel)
         {
@@ -428,21 +437,22 @@ internal static class DriftCommand
             }
             catch (ConfluenceException ex)
             {
-                return (marked, ex.Message);
+                return (marked, labelled, ex.Message);
             }
             catch (HttpRequestException ex)
             {
-                return (marked, $"Confluence is unreachable at {baseUrl}: {ex.Message}");
+                return (marked, labelled, $"Confluence is unreachable at {baseUrl}: {ex.Message}");
             }
 
             marked = StateUpdates.SetStale(marked, page.Path, stale: true);
+            labelled.Add(page.PageId);
 
             target.Console.MarkupLine(
                 $"  [yellow]+{config.Labels.Stale.EscapeMarkup()}[/] {page.Path.EscapeMarkup()} "
                 + $"[grey](page {page.PageId.EscapeMarkup()})[/]");
         }
 
-        return (marked, null);
+        return (marked, labelled, null);
     }
 
     /// <summary>
@@ -450,12 +460,20 @@ internal static class DriftCommand
     /// <c>dashboard</c> command uses. Rendered from the just-marked state, so the page agrees with the
     /// labels this run wrote even before the cron <c>sync</c> commits them.
     /// </summary>
+    /// <remarks>
+    /// The just-marked state is not enough on its own to make that sentence true:
+    /// <see cref="DashboardPublisher.RenderAsync"/> reconciles against the live label search, which is
+    /// index-backed and need not yet hold a label written moments ago, so the flags this run set would be
+    /// cleared again before the render. Passing <paramref name="labelled"/> is what carries them through.
+    /// </remarks>
+    /// <param name="labelled">The page ids this run added the <c>stale</c> label to, all of them accepted.</param>
     private static async Task<int> RefreshDashboardAsync(
         ConfluenceClient client,
         DocumeConfig config,
         StatusPaths paths,
         WikiTree tree,
         DocumeState marked,
+        IReadOnlyList<string> labelled,
         MarkTarget target,
         Uri baseUrl,
         CancellationToken cancellationToken)
@@ -475,6 +493,7 @@ internal static class DriftCommand
                     marked,
                     target.SpaceKey,
                     DateTimeOffset.UtcNow,
+                    labelled,
                     cancellationToken)
                 .ConfigureAwait(false);
 

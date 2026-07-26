@@ -132,6 +132,107 @@ public sealed class CliDriftTests : IDisposable
     }
 
     /// <summary>
+    /// What the refreshed dashboard actually says about the pages this run just marked. §6.4 pairs the
+    /// marking with the refresh so a human sees the drift on the one page §9.3 makes the staleness surface,
+    /// and <c>DriftCommand.RefreshDashboardAsync</c> claims the page "agrees with the labels this run wrote
+    /// even before the cron <c>sync</c> commits them".
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The label search answers empty here, which is the ordinary case rather than a contrived one: CQL is
+    /// index-backed, and a label written milliseconds earlier in the same run need not be in it yet. So this
+    /// is the shape in which the sentence above is worth anything — with a search that already returned the
+    /// pages, "rendered from the just-marked state" and "rendered from the search" are indistinguishable.
+    /// </para>
+    /// <para>
+    /// Asserted as counts and as the two named rows, because the claim's subject is what the page says. The
+    /// dashboard was already known to be posted (see
+    /// <see cref="Drift_mark_labels_every_affected_page_and_records_it_as_stale"/>) — that a request went
+    /// out is a boolean, and no boolean can fail a claim about a body.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_dashboard_a_mark_run_publishes_shows_the_pages_it_just_marked_as_stale()
+    {
+        var work = Seeded(nameof(The_dashboard_a_mark_run_publishes_shows_the_pages_it_just_marked_as_stale));
+
+        StubLabels();
+        StubDashboard();
+
+        var run = Invoke(work, "drift", "--mark");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        // The anchor for everything below: state and the dashboard are two surfaces of one fact, written
+        // seconds apart by one process, and the failure this guards against is them disagreeing.
+        var state = State(work);
+
+        state.Pages[LimitsPath].Stale.ShouldBeTrue(run.Diagnostics);
+        state.Pages[RatesPath].Stale.ShouldBeTrue(run.Diagnostics);
+
+        var body = Body("POST", "/wiki/api/v2/pages");
+
+        // Counted first and alone, so a regression reads as a sentence rather than as a body diff.
+        var marked = Occurrences(body, PageStaleCell);
+
+        var because = $"The dashboard shows {marked} page(s) as stale in the run that labelled 2 and saved "
+            + $"both to state.json.{Environment.NewLine}{run.Diagnostics}";
+
+        marked.ShouldBe(2, because);
+
+        // The summary above the table, which is the number a reader takes in first and is built from the
+        // reconciled state rather than from the search's own count.
+        body.ShouldContain($"{SummaryStaleCell}{Environment.NewLine}<td>2</td>", customMessage: run.Diagnostics);
+
+        // Which two, not just how many: a render that marked the home page and one other would also count 2.
+        Row(body, LimitsTitle).ShouldContain(PageStaleCell, customMessage: run.Diagnostics);
+        Row(body, RatesTitle).ShouldContain(PageStaleCell, customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
+    /// The read half of the footprint below, which nothing counted: two CQL label searches, one space
+    /// lookup and one title lookup — four requests for the run, not four per page. The fixture drifts two
+    /// pages, so a refresh that moved inside the label loop, or a reader that asked per page, is a
+    /// different number here rather than the same one.
+    /// </summary>
+    /// <remarks>
+    /// A read costs rate-limit budget on a six-hourly job like any other request, and this class already
+    /// treats one as a promise broken where it asserts <c>--dry-run</c> reaches Confluence for nothing.
+    /// </remarks>
+    [Fact]
+    public void The_whole_read_footprint_of_a_mark_run_is_four_requests_however_many_pages_drifted()
+    {
+        var work = Seeded(nameof(The_whole_read_footprint_of_a_mark_run_is_four_requests_however_many_pages_drifted));
+
+        StubLabels();
+        StubDashboard();
+
+        var run = Invoke(work, "drift", "--mark");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        var reads = Seen()
+            .Where(request => string.Equals(request.Method, "GET", StringComparison.Ordinal))
+            .Select(request => $"GET {request.Path}")
+            .ToList();
+
+        var expected = new List<string>
+        {
+            "/wiki/rest/api/content/search",
+            "/wiki/rest/api/content/search",
+            "/wiki/api/v2/spaces",
+            "/wiki/api/v2/pages",
+        }
+            .Select(path => $"GET {path}")
+            .ToList();
+
+        var because = $"A two-page mark run read Confluence {reads.Count} time(s)."
+            + Environment.NewLine + run.Diagnostics;
+
+        reads.ShouldBe(expected, because);
+    }
+
+    /// <summary>
     /// Rule §9.3, as the whole write footprint of a mark run: two labels and one dashboard page, and
     /// nothing else. Asserted as an exact set rather than as "no page-body edit", because a negative
     /// nothing currently does is a test that cannot fail — this one goes red the moment any write is
@@ -483,8 +584,55 @@ public sealed class CliDriftTests : IDisposable
         run.FlowedAll.ShouldContain("--mark", customMessage: run.Diagnostics);
     }
 
+    /// <summary>
+    /// The per-page Stale cell as <see cref="Dashboard.DashboardPage"/> renders it. Lowercase, which is
+    /// what keeps it distinct from <see cref="SummaryStaleCell"/> under an ordinal count.
+    /// </summary>
+    private const string PageStaleCell = "<td>⚠️ stale</td>";
+
+    /// <summary>The Coverage table's Stale row label, whose next cell is the count.</summary>
+    private const string SummaryStaleCell = "<td>⚠️ Stale</td>";
+
     private static string StatePath(string work) =>
         Path.Combine(work, "docs", "wiki", "_meta", "state.json");
+
+    /// <summary>How many times <paramref name="needle"/> appears in <paramref name="haystack"/>.</summary>
+    /// <remarks>
+    /// A count rather than a <c>ShouldContain</c>: the claims here are about how many pages the page says
+    /// are stale, and a containment check answers that question with a yes for any number above zero.
+    /// </remarks>
+    private static int Occurrences(string haystack, string needle)
+    {
+        var found = 0;
+        var at = haystack.IndexOf(needle, StringComparison.Ordinal);
+
+        while (at >= 0)
+        {
+            found++;
+            at = haystack.IndexOf(needle, at + needle.Length, StringComparison.Ordinal);
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// The one table row naming <paramref name="title"/>, so an assertion can say which page carries a
+    /// marker rather than only that some page does.
+    /// </summary>
+    private static string Row(string body, string title)
+    {
+        var rows = body
+            .Split("<tr>", StringSplitOptions.None)
+            .Where(row => row.Contains(title, StringComparison.Ordinal))
+            .ToList();
+
+        var because = $"'{title}' names {rows.Count} row(s) in the dashboard, so a row assertion would be "
+            + "ambiguous.";
+
+        rows.Count.ShouldBe(1, because);
+
+        return rows[0];
+    }
 
     private static DocumeState State(string work) => StateStore.Load(StatePath(work));
 
@@ -674,6 +822,20 @@ public sealed class CliDriftTests : IDisposable
             .Where(request => request.Path.EndsWith("/label", StringComparison.Ordinal))
             .Select(request => request.Path.Split('/')[^2])
             .ToList();
+
+    /// <summary>The storage-format body of the last page write to <paramref name="path"/>.</summary>
+    private string Body(string method, string path)
+    {
+        var stored = Payload(method, path)
+            .GetProperty("body")
+            .GetProperty("storage")
+            .GetProperty("value")
+            .GetString();
+
+        stored.ShouldNotBeNull($"{method} {path} carried no storage body.");
+
+        return stored!;
+    }
 
     private JsonElement Payload(string method, string path)
     {

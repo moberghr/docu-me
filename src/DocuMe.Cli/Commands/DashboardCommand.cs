@@ -257,6 +257,8 @@ internal static class DashboardCommand
     {
         AnsiConsole.MarkupLine($"Reading labels from [blue]{spaceKey.EscapeMarkup()}[/]…");
 
+        // justLabelledStale is null because this command writes no labels of its own: the live search is
+        // the whole truth here. See RenderAsync on why `drift --mark` cannot say the same.
         var render = await DashboardPublisher
             .RenderAsync(
                 client,
@@ -266,6 +268,7 @@ internal static class DashboardCommand
                 state,
                 spaceKey,
                 DateTimeOffset.UtcNow,
+                justLabelledStale: null,
                 cancellationToken)
             .ConfigureAwait(false);
 
