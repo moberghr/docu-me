@@ -26,7 +26,7 @@ access token with `read:packages`.
 | `docs-drift.yml` | `workflow_run` after your deploy workflow completes | `drift --mark`: labels the affected pages stale |
 | `docs-sync.yml` | schedule, every six hours, plus manual dispatch | `sync` — reads labels and comments, opens a `docs/sync` pull request when state changed |
 | `docs-refresh.yml` | schedule, nightly at 03:00, plus manual dispatch | Runs `/docs-refresh` when drift is reported, opening a `docs/refresh-<date>` pull request |
-| `docs-feedback.yml` | push to the default branch, paths `docs/wiki/_meta/feedback/inbox/**` | Runs `/docs-feedback` when new inbox items land |
+| `docs-feedback.yml` | push to the default branch, paths `docs/wiki/_meta/feedback/inbox/**`, plus manual dispatch | Runs `/docs-feedback` when new inbox items land |
 
 ## Why the two drift workflows differ
 
@@ -39,8 +39,8 @@ never shipped.
 
 ## Secrets
 
-Every workflow needs the two credential variables, and the ones that run a skill need a model key as
-well:
+Three of the six carry the credential variables, and they are the three that talk to Confluence:
+`docs-publish.yml`, `docs-drift.yml`, `docs-sync.yml`.
 
 ```yaml
 env:
@@ -48,19 +48,30 @@ env:
   DOCUME_CONFLUENCE_TOKEN: ${{ secrets.DOCUME_CONFLUENCE_TOKEN }}
 ```
 
+The other three hold neither on purpose, and handing them the token would undo the reason they are
+separate files. `docs-drift-pr.yml` runs on every contributor's branch, and its report is a `git diff`
+plus a glob match, so the workflow with the widest trigger never sees the publishing token.
+`docs-refresh.yml` and `docs-feedback.yml` are the unsupervised model runs, and a skill's output is a
+pull request: only the CLI writes to Confluence, so the token stays out of the job a model drives. Those
+two want `ANTHROPIC_API_KEY` instead, which no other template needs.
+
 ## Everything writes through a pull request
 
-The two workflows that produce repo changes — `docs-sync.yml` and `docs-refresh.yml` — commit to a
-branch and open a pull request. Neither pushes to the default branch, so a human reviews every docs
-change before it publishes.
+Four of the six change the repo, and none of them pushes to the default branch. `docs-publish.yml` and
+`docs-sync.yml` commit the machine-owned state file to the shared `docs/sync` branch, opening that pull
+request when it is not already open; `docs-refresh.yml` and `docs-feedback.yml` push a dated branch of
+their own. So a human reviews every docs change before it publishes.
 
 That is also why the publish workflow is the *only* one that writes page bodies: it runs on the default
 branch, after the review.
 
 > [!NOTE]
-> A workflow that opened no pull request and one that failed look identical in a green run, so each
-> template checks `git ls-remote` for its own branch family before and after, and annotates the run
-> with which branch it pushed. A refresh run that pushed nothing says so out loud.
+> A workflow that opened no pull request and one that failed look identical in a green run, and that is
+> a live risk in exactly the two a model drives, because the skill is what decides whether to push at
+> all. So `docs-refresh.yml` and `docs-feedback.yml` check `git ls-remote` for their own branch family
+> before and after, and annotate the run with which branch they pushed: a refresh run that pushed
+> nothing says so out loud. The other two need no such check — their branch is the fixed `docs/sync`,
+> and `gh pr view` deciding whether to `gh pr create` cannot silently open nothing.
 
 ## Running the skills headlessly
 
@@ -76,9 +87,10 @@ the diff.
 
 ## Writing a docs job of your own
 
-Every template opens with the same four lines: install the SDK, add the package feed,
-`dotnet tool restore`, run `docume` through the manifest. A composite action wraps them, so a job you
-write yourself does not have to get them right a seventh time.
+Every template opens with the same three lines — install the SDK, add the package feed,
+`dotnet tool restore` — and then runs `docume` through the manifest, which five do directly and
+`docs-feedback.yml` does from inside the skill it launches. A composite action wraps all four, so a job
+you write yourself does not have to get them right a seventh time.
 
 ```yaml
 jobs:
@@ -113,11 +125,13 @@ repo names that feed in a committed `NuGet.config`. Get it wrong either way and 
 error naming the token, rather than with NuGet's own wording about a package it could not find on
 nuget.org.
 
-`publish` is the only command that renders diagrams, and it renders them by shelling out to Node. Neither
-Node nor `beautiful-mermaid` is on a runner by default, so `mermaid: auto` installs both when `args`
-invokes a publish and skips them otherwise. Set it to `false` if your wiki has no ` ```mermaid ` fences
-and you would rather not pay for the install; a value the action does not recognise stops the job rather
-than quietly leaving the renderer out.
+Two commands render diagrams, and both shell out to Node to do it: `publish` always, and `convert` when
+you pass `--render-mermaid`. Neither Node nor `beautiful-mermaid` is on a runner by default, so
+`mermaid: auto` installs both when `args` invokes either of those and skips them otherwise — a `drift` or
+a `sync` pays for no toolchain, and neither does a bare `convert`, because conversion on its own never
+renders. Set it to `false` if your wiki has no ` ```mermaid ` fences and you would rather not pay for the
+install, or `true` to install regardless; a value the action does not recognise stops the job rather than
+quietly leaving the renderer out.
 
 > [!NOTE]
 > `args` is split on whitespace into the argument list, which is what turns one input string into a

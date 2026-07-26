@@ -447,26 +447,40 @@ public sealed class CompositeActionTests : IDisposable
     }
 
     /// <summary>
-    /// The decision the two renderer steps are gated on, executed: <c>auto</c> reads the subcommand out of
-    /// the argument string, and publish is the only one that renders anything.
+    /// The decision the two renderer steps are gated on, executed: <c>auto</c> reads the argument string
+    /// and provisions for the two invocations that render, <c>publish</c> and
+    /// <c>convert --render-mermaid</c>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// An expression on the steps themselves cannot do this — <c>args</c> is one string and the condition
-    /// is its first word — so the branch is shell, and shell that decides whether a publish works is shell
+    /// is a word of it — so the branch is shell, and shell that decides whether a publish works is shell
     /// worth running rather than reading. The leading-space case is why it splits positionally instead of
     /// trimming to the first space.
+    /// </para>
+    /// <para>
+    /// The convert cases are the ones that cost a run to learn: the subcommand settles publish on its own,
+    /// but conversion renders only when asked, so both sides of the flag are here. The false one is not
+    /// decoration either — provisioning every conversion would charge a corpus check for a toolchain it
+    /// never loads.
+    /// </para>
     /// </remarks>
     [Theory]
     [InlineData("auto", "publish", "true")]
     [InlineData("auto", "publish --dry-run --tree", "true")]
     [InlineData("auto", "   publish --dry-run", "true")]
+    [InlineData("auto", "convert docs/wiki --render-mermaid", "true")]
+    [InlineData("auto", "convert --render-mermaid docs/wiki", "true")]
+    [InlineData("auto", "convert docs/wiki", "false")]
+    [InlineData("auto", "convert docs/render-mermaid-notes", "false")]
     [InlineData("auto", "drift --format json", "false")]
     [InlineData("auto", "sync --comments", "false")]
     [InlineData("auto", "status", "false")]
     [InlineData("auto", "", "false")]
     [InlineData("false", "publish --dry-run", "false")]
+    [InlineData("false", "convert docs/wiki --render-mermaid", "false")]
     [InlineData("true", "drift --format json", "true")]
-    public void The_renderer_is_provisioned_exactly_when_a_publish_needs_it(
+    public void The_renderer_is_provisioned_exactly_when_the_invocation_renders(
         string mermaid,
         string args,
         string expected)

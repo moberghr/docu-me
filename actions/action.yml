@@ -43,9 +43,10 @@ inputs:
   mermaid:
     description: >-
       Whether to install the diagram renderer's toolchain (Node + beautiful-mermaid).
-      `auto`, the default, installs it when `args` invokes `publish` and skips it otherwise,
-      because publish is the only command that renders diagrams. `false` never installs it —
-      correct, and a little faster, for a wiki with no ```mermaid fences. `true` always does.
+      `auto`, the default, installs it for the two invocations that render — `publish`, which
+      always does, and `convert --render-mermaid`, which does only when asked — and skips it
+      otherwise. `false` never installs it — correct, and a little faster, for a wiki with no
+      ```mermaid fences. `true` always does.
     required: false
     default: 'auto'
 
@@ -95,16 +96,21 @@ runs:
           exit 1
         fi
 
-    # Publish is the ONLY DocuMe command that renders diagrams: it shells out to Node and the renderer
-    # named by `mermaid.renderer` once per ```mermaid fence (PLAN.md §4, §6.2 step 3). Neither half is on
-    # a runner by default, so an action that installs only the SDK fails a wiki holding one diagram with
-    # the renderer's exit 3, "cannot load beautiful-mermaid" — which is exactly the bug the scaffolded
-    # docs-publish.yml shipped with. This action is the OTHER way a consumer runs publish, so it carries
-    # the same two steps rather than leaving them for a seventh consumer to get right.
+    # Two invocations shell out to Node and the renderer named by `mermaid.renderer`, once per ```mermaid
+    # fence (PLAN.md §4, §6.2 step 3): every `publish`, and a `convert` carrying --render-mermaid. Neither
+    # half of the toolchain is on a runner by default, so an action that installs only the SDK fails a wiki
+    # holding one diagram with the renderer's exit 3, "cannot load beautiful-mermaid" — which is exactly
+    # the bug the scaffolded docs-publish.yml shipped with. This action is the OTHER way a consumer runs
+    # both, so it carries the same two steps rather than leaving them for a seventh consumer to get right.
     #
-    # Decided in a step rather than an `if:` on the two below: the condition is the first word of an
-    # argument string, which an expression cannot parse, and an unrecognised `mermaid` value must be a
-    # refusal rather than a silent false — a typo that reads as "no renderer" rebuilds the same bug.
+    # The subcommand alone settles publish and not convert, which is why the flag is read as well: a bare
+    # `convert` renders nothing (ConvertCommand's --render-mermaid is off by default, because rendering
+    # starts a process per diagram), so installing for it would charge every conversion for a toolchain it
+    # never loads.
+    #
+    # Decided in a step rather than an `if:` on the two below: the condition is a word of an argument
+    # string, which an expression cannot parse, and an unrecognised `mermaid` value must be a refusal
+    # rather than a silent false — a typo that reads as "no renderer" rebuilds the same bug.
     - name: Decide whether the diagram renderer is needed
       id: renderer
       shell: bash
@@ -124,8 +130,19 @@ runs:
           false) needed=false ;;
           auto)
             needed=false
+
             if [ "$subcommand" = 'publish' ]; then
               needed=true
+            fi
+
+            # An explicit loop rather than a `case "$ARGS" in *--render-mermaid*)`: the flag has to be a
+            # whole argument, so that a path or a title merely containing the word does not read as it.
+            if [ "$subcommand" = 'convert' ]; then
+              for word in "$@"; do
+                if [ "$word" = '--render-mermaid' ]; then
+                  needed=true
+                fi
+              done
             fi
             ;;
           *)
