@@ -152,7 +152,7 @@ title: Loans Domain     # optional; defaults to the first H1
 stale, and what `/docs-refresh` regenerates from. A page with no `sources` is never reported as drifted.
 
 **To generate the pages instead of writing them, run `/docs-loop` in Claude Code.** Fill in
-`docs/wiki/_meta/STYLE.md` first — its four headings (audience, tone, structure, verification) are what the
+`docs/wiki/_meta/STYLE.md` first — its four bullets (audience, tone, structure, verification) are what the
 skill reads instead of carrying assumptions about your repo. The first run builds an inventory of what the
 wiki should cover, into `docs/wiki/_meta/PROGRESS.md`, and writes no page: correct that list before forty
 pages get generated against it. Each run after that takes one unit, reads its code, writes the page with its
@@ -186,7 +186,7 @@ unchanged are skipped.
 | Step | How it happens |
 |---|---|
 | **Approve** | A reviewer adds the `approved` label to a page in Confluence. `docume sync --labels` records it into `state.json`. |
-| **Invalidate** | Republishing a page whose content changed removes the label and sets `needs-review`. The injected banner is excluded from the content hash, so machine edits never cost an approval. |
+| **Invalidate** | Republishing a page whose content changed removes the label and moves the page's state to `needs-review` — a `state.json` status, not a label. The injected banner is excluded from the content hash, so machine edits never cost an approval. |
 | **Feedback** | A reviewer comments on a page. `docume sync --comments` writes it into `docs/wiki/_meta/feedback/inbox/`. `/docs-feedback` verifies the claim against the code and opens a `docs/feedback-<date>` PR, or declines it with a citation. `docume sync --reply` answers the comment once the fix is published. |
 | **Drift** | `docume drift` matches changed files against every page's `sources`. On a PR it comments; after a deploy, `--mark` adds the `stale` label. Labels only, never page-body edits: staleness must not bump a page version or disturb an approval. |
 | **Refresh** | `/docs-refresh` rewrites the stale pages and opens `docs/refresh-<date>`. |
@@ -238,8 +238,10 @@ To run the CLI without installing it:
 dotnet run --project src/DocuMe.Cli -- --help
 ```
 
-Every command except `init` reads `docume.json` from the working directory, so point it at a consumer repo
-with `--config <path>` rather than running it against this one.
+Five commands read `docume.json` from the working directory — `publish`, `sync`, `drift`, `dashboard`,
+`status` — so point those at a consumer repo with `--config <path>` rather than running them against this
+one. The other two take no `--config`: `init` writes the file, and `convert` takes the wiki root as an
+argument (`docume convert docs/wiki`).
 
 **Releasing.** One tag releases everything. Three files carry the version and all three are bumped in one
 commit before the tag: `Directory.Build.props`, `plugin/.claude-plugin/plugin.json`, and the git-subdir
