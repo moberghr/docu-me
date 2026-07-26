@@ -287,6 +287,73 @@ public sealed class WorkflowTemplateTests
         }
     }
 
+    /// <summary>
+    /// Each model-driven template invokes its own skill, and grants it exactly the tools that skill's
+    /// frontmatter declares.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the one coupling in §11's invocation that fails silently in both directions, and it was
+    /// held by nothing until the invocation was first executed (iteration 116, against a throwaway
+    /// consumer repo: <c>claude -p '/docs-refresh' --plugin-dir … --permission-mode acceptEdits
+    /// --allowed-tools 'Bash,Read,Write,Edit,Glob,Grep'</c>, exit 0 in 24 turns).
+    /// </para>
+    /// <para>
+    /// <c>--allowed-tools</c> is the outer bound: the frontmatter cannot widen it. So a tool added to a
+    /// SKILL.md and not to the template is a tool the skill believes it has and does not, and the run
+    /// fails at whichever step needed it — a red nightly job whose log blames a tool call, not the
+    /// template that never granted it. The other direction is the one that matters more: a template
+    /// granting a tool the skill never declares hands an unattended model holding a branch-push token
+    /// more reach than the skill was reviewed for, which is the same boundary
+    /// <c>--dangerously-skip-permissions</c> is kept out of these files to protect.
+    /// </para>
+    /// <para>
+    /// The slash command is asserted here too, for the reason
+    /// <see cref="Every_model_run_looks_for_the_branch_its_own_skill_pushes"/> gives about the branch
+    /// pattern: these two templates are verbatim twins apart from a handful of strings, and a
+    /// <c>docs-feedback.yml</c> that ran <c>/docs-refresh</c> would be green here, green in CI, and
+    /// wrong every night.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_model_run_grants_exactly_the_tools_its_skill_declares()
+    {
+        foreach (var name in ModelDriven)
+        {
+            var skill = Path.GetFileNameWithoutExtension(name);
+            var runnable = string.Join('\n', Runnable(name));
+
+            // The slash command, from the yaml the runner acts on rather than from the prose above it.
+            var wrongSkill = $"{name} must invoke /{skill} (§11). A template that runs another "
+                + "template's skill passes every other assertion in this class.";
+
+            runnable.ShouldContain($"claude -p '/{skill}'", customMessage: wrongSkill);
+
+            var granted = QuotedFlagValue(runnable, "--allowed-tools");
+            var declared = FrontmatterValue(SkillText(skill), "allowed-tools");
+
+            // Vacuous-pass guards, both sides. An unparsed flag or a dropped frontmatter key would
+            // otherwise make the set comparison below compare two empties and pass.
+            granted.ShouldNotBeEmpty(
+                $"{name} passes no --allowed-tools, so the model run gets the CLI's default grant "
+                + "instead of the skill's declared one.");
+            declared.ShouldNotBeEmpty(
+                $"plugin/skills/{skill}/SKILL.md declares no allowed-tools, so nothing says what the "
+                + $"{name} run may reach for.");
+
+            var missing = declared.Except(granted, StringComparer.Ordinal).Order(StringComparer.Ordinal);
+            var extra = granted.Except(declared, StringComparer.Ordinal).Order(StringComparer.Ordinal);
+
+            missing.ShouldBeEmpty(
+                $"plugin/skills/{skill}/SKILL.md declares tool(s) that {name} does not grant. The skill "
+                + "cannot use them: --allowed-tools is the outer bound, so the run fails at the step "
+                + "that needed one.");
+            extra.ShouldBeEmpty(
+                $"{name} grants tool(s) plugin/skills/{skill}/SKILL.md never declares. An unattended "
+                + "model holding a branch-push token gets reach the skill was not reviewed for.");
+        }
+    }
+
     [Fact]
     public void No_model_run_writes_to_Confluence_or_holds_a_credential()
     {
@@ -1069,6 +1136,56 @@ public sealed class WorkflowTemplateTests
 
         return families;
     }
+
+    /// <summary>
+    /// The comma-separated items inside the single-quoted value of <paramref name="flag"/> in
+    /// <paramref name="text"/>, trimmed. Empty when the flag is absent or unquoted.
+    /// </summary>
+    /// <remarks>
+    /// Single quotes only, deliberately: that is how both templates spell it, and the quoting is not
+    /// incidental — an unquoted <c>Bash,Read,…</c> would still work today and would break the first time
+    /// a tool name gained a character the shell cares about. Returning empty for the unquoted spelling
+    /// makes the caller's vacuous-pass guard fire rather than silently comparing nothing.
+    /// </remarks>
+    private static string[] QuotedFlagValue(string text, string flag)
+    {
+        var at = text.IndexOf($"{flag} '", StringComparison.Ordinal);
+        if (at < 0)
+        {
+            return [];
+        }
+
+        var open = at + flag.Length + 2;
+        var close = text.IndexOf('\'', open);
+
+        return close < 0
+            ? []
+            : Items(text[open..close]);
+    }
+
+    /// <summary>
+    /// The comma-separated items of <paramref name="key"/> in the yaml frontmatter of
+    /// <paramref name="markdown"/>. Empty when the key is absent.
+    /// </summary>
+    /// <remarks>
+    /// A line match rather than a yaml parse, because <c>allowed-tools</c> is spelled as an inline scalar
+    /// (<c>Bash, Read, …</c>) in all three SKILL.md files, and the point of comparing it to a flag value
+    /// is that both are the same flat list of names.
+    /// </remarks>
+    private static string[] FrontmatterValue(string markdown, string key)
+    {
+        var line = markdown
+            .Split('\n')
+            .TakeWhile((text, index) => index == 0 || !string.Equals(text.Trim(), "---", StringComparison.Ordinal))
+            .FirstOrDefault(text => text.StartsWith($"{key}:", StringComparison.Ordinal));
+
+        return line is null
+            ? []
+            : Items(line[(key.Length + 1)..]);
+    }
+
+    private static string[] Items(string list) => list
+        .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
     /// <summary>
     /// Every repository <paramref name="name"/> hands to a checkout step, read out of the step's

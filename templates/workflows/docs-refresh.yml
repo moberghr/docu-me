@@ -12,6 +12,10 @@
 #   * Cost scales with the diff, not with the wiki. A run reads the changed files plus the affected pages,
 #     so a one-page refresh is a one-page refresh however large the wiki is. A release that touches every
 #     documented area is the expensive night.
+# One measured datapoint, so the paragraph above is not the only thing you budget from: one page, one
+# changed source file, Opus 5 — 24 turns, 168 s wall clock, $1.31. Your number moves with the model and
+# with how many pages one night's diff touches; the shape (a couple of dollars a drifted page, not a
+# couple of dollars a wiki) is what that measurement is offered for.
 # A team that wants to pay only on request can delete the `schedule:` block and keep `workflow_dispatch`;
 # the drift labels from docs-drift.yml still say when a refresh is worth asking for.
 #
