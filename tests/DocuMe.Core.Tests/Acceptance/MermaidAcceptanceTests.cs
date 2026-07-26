@@ -73,6 +73,15 @@ public sealed partial class MermaidAcceptanceTests : IDisposable
         renders.Failures[0].ByDialect.ShouldBe(
             [new ConstructCount("graph TD;", 1), new ConstructCount("pie title Pets", 1)]);
 
+        // Measured against the real renderer, not the stub: the headers it names as acceptable are
+        // constant across both refusals and therefore survive into Detail, while the two offending
+        // headers differ and elide. This is what `docume convert` prints.
+        var detail = renders.Failures[0].Detail;
+        detail.ShouldContain("""Expected "graph TD", "flowchart LR", "stateDiagram-v2", etc.""");
+        detail.ShouldContain("""Invalid mermaid header: "…".""");
+        detail.ShouldNotContain("graph TD;");
+        detail.ShouldNotContain("pie title Pets");
+
         // The census covers what rendered too: the question is which dialects a corpus uses, not
         // only which ones broke.
         renders.ByDialect.ShouldBe(
@@ -168,6 +177,48 @@ public sealed partial class MermaidAcceptanceTests : IDisposable
             [new ConstructCount("pie title Cars", 1), new ConstructCount("pie title Pets", 1)]);
         report.Failures[0].Occurrences.Select(occurrence => occurrence.Path).ShouldBe(["a.md", "c.md"]);
     }
+
+    [Fact]
+    public async Task The_group_detail_elides_the_headers_that_differ_and_keeps_the_ones_it_offers()
+    {
+        var report = await RunAsync(
+            new DiagramOccurrence("a.md", "pie title Pets\n  \"Dogs\" : 386"),
+            new DiagramOccurrence("c.md", "pie title Cars\n  \"Ford\" : 12"));
+
+        var group = report.Failures[0];
+
+        // Reason stays the key: every quoted run elided, so two headers are one bucket.
+        group.Reason.ShouldBe(
+            Wrapped("""Invalid mermaid header: "…". Expected "…", "…", "…", etc."""));
+
+        // Detail is the same message read back to a person. The two headers disagree, so they
+        // elide; the expected list is identical in both messages, so it survives — and it is the
+        // only part of the message that says what to write instead.
+        group.Detail.ShouldBe(
+            Wrapped("""Invalid mermaid header: "…". Expected "graph TD", "flowchart LR", "stateDiagram-v2", etc."""));
+    }
+
+    [Fact]
+    public async Task A_group_of_one_elides_nothing_and_reads_exactly_as_publish_prints_it()
+    {
+        // The asymmetry this closes: `publish` prints the renderer's message verbatim, so a single
+        // failure had a clear report there and an elided one here for no reason a reader can see.
+        var report = await RunAsync(new DiagramOccurrence("a.md", "pie title Pets\n  \"Dogs\" : 386"));
+
+        report.Failures[0].Detail.ShouldBe(
+            Wrapped(
+                """Invalid mermaid header: "pie title Pets". """
+                + """Expected "graph TD", "flowchart LR", "stateDiagram-v2", etc."""));
+    }
+
+    /// <summary>
+    /// The renderer's stderr as <see cref="MermaidRenderException"/> hands it on. The wrapper quotes
+    /// stderr with <c>'</c> and the report normalizes on <c>"</c>, so the wrapper is prose to it —
+    /// which is why the elision lands inside the quoted message and not around it.
+    /// </summary>
+    private static string Wrapped(string stderr) =>
+        "The mermaid render script failed (exit 2) on this diagram: "
+        + $"'render-mermaid: the diagram did not render: {stderr}'";
 
     [Fact]
     public async Task Renders_each_distinct_source_once_however_many_pages_hold_it()

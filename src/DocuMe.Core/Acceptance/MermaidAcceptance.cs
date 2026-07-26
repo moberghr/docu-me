@@ -66,26 +66,33 @@ public static class MermaidAcceptance
             .Select(occurrence => occurrence.Source)
             .Distinct(StringComparer.Ordinal);
 
-        var reasons = new Dictionary<string, string>(StringComparer.Ordinal);
+        var messages = new Dictionary<string, string>(StringComparer.Ordinal);
 
         // Sequential on purpose: a bulk render is not the bottleneck of a docs pipeline, and
         // fanning out N Node processes buys seconds at the cost of a deterministic, readable run.
         foreach (var source in sources)
         {
-            var reason = await RejectionReasonAsync(renderer, source, cancellationToken).ConfigureAwait(false);
-            if (reason is not null)
+            var message = await RejectionMessageAsync(renderer, source, cancellationToken).ConfigureAwait(false);
+            if (message is not null)
             {
-                reasons[source] = reason;
+                messages[source] = message;
             }
         }
 
-        return DiagramRenderReport.From(occurrences, reasons);
+        return DiagramRenderReport.From(occurrences, messages);
     }
 
     /// <summary>
-    /// Renders one diagram and returns why it was rejected, or <c>null</c> when it rendered.
+    /// Renders one diagram and returns what the renderer said when it refused, or <c>null</c> when
+    /// it rendered.
     /// </summary>
-    private static async Task<string?> RejectionReasonAsync(
+    /// <remarks>
+    /// Verbatim. beautiful-mermaid quotes the header it refused <em>and</em> the headers it accepts
+    /// ("Invalid mermaid header: \"graph TD;\". Expected \"graph TD\", …"), so which quoted runs are
+    /// noise is not decidable from one message — only from the group it lands in.
+    /// <see cref="DiagramRenderReport.From"/> owns both calls.
+    /// </remarks>
+    private static async Task<string?> RejectionMessageAsync(
         MermaidRenderer renderer,
         string source,
         CancellationToken cancellationToken)
@@ -97,10 +104,7 @@ public static class MermaidAcceptance
         }
         catch (MermaidRenderException ex) when (ex.Fault == MermaidRenderFault.Diagram)
         {
-            // beautiful-mermaid quotes the header it refused ("Invalid mermaid header:
-            // \"graph TD;\""), so normalizing the quotes collapses every rejected header into one
-            // reason bucket while DiagramOccurrence.Dialect keeps the spellings apart.
-            return QuotedTokens.Normalize(ex.Message, '"').Normalized;
+            return ex.Message;
         }
     }
 }

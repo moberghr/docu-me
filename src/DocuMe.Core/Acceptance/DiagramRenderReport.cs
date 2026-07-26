@@ -36,9 +36,19 @@ public sealed record DiagramFailure(string Path, string Dialect);
 /// <param name="Reason">
 /// What the renderer said, with the quoted diagram header normalized out (see
 /// <see cref="QuotedTokens"/>) so one rejected construct is one bucket regardless of dialect.
+/// A grouping <em>key</em>, not prose — print <see cref="Detail"/> instead.
+/// </param>
+/// <param name="Detail">
+/// The same message with only the quoted runs that actually differ across the group elided (see
+/// <see cref="QuotedTokens.Common"/>). <see cref="Reason"/> has to elide every quoted run to stay a
+/// stable key, which also erases quoted prose the group agrees on — and for the renderer that prose
+/// is the list of headers it <em>does</em> accept, the one part of the message a reader can act on.
 /// </param>
 /// <param name="Occurrences">The rejected diagrams, in the order the pass saw them.</param>
-public sealed record DiagramFailureGroup(string Reason, IReadOnlyList<DiagramFailure> Occurrences)
+public sealed record DiagramFailureGroup(
+    string Reason,
+    string Detail,
+    IReadOnlyList<DiagramFailure> Occurrences)
 {
     /// <summary>How many diagrams failed this way.</summary>
     public int Count => Occurrences.Count;
@@ -108,23 +118,30 @@ public sealed record DiagramRenderReport(
 
     /// <summary>Groups <paramref name="diagrams"/> by the reason each was rejected, if it was.</summary>
     /// <param name="diagrams">Every diagram the corpus holds.</param>
-    /// <param name="reasonsBySource">
-    /// Normalized rejection reason per rejected diagram source; a source absent from it rendered.
+    /// <param name="messagesBySource">
+    /// The renderer's rejection message <em>verbatim</em> per rejected diagram source; a source
+    /// absent from it rendered. Verbatim rather than pre-normalized so grouping and display can
+    /// disagree about how much to elide: normalizing here is what makes one construct one bucket,
+    /// and keeping the original is what lets <see cref="DiagramFailureGroup.Detail"/> hold on to the
+    /// quoted prose the whole group shares. A caller that normalized first could not recover it.
     /// </param>
     public static DiagramRenderReport From(
         IReadOnlyList<DiagramOccurrence> diagrams,
-        IReadOnlyDictionary<string, string> reasonsBySource)
+        IReadOnlyDictionary<string, string> messagesBySource)
     {
         ArgumentNullException.ThrowIfNull(diagrams);
-        ArgumentNullException.ThrowIfNull(reasonsBySource);
+        ArgumentNullException.ThrowIfNull(messagesBySource);
 
         List<DiagramFailureGroup> failures =
         [
             .. diagrams
-                .Where(diagram => reasonsBySource.ContainsKey(diagram.Source))
-                .GroupBy(diagram => reasonsBySource[diagram.Source], StringComparer.Ordinal)
+                .Where(diagram => messagesBySource.ContainsKey(diagram.Source))
+                .GroupBy(
+                    diagram => QuotedTokens.Normalize(messagesBySource[diagram.Source], RendererQuote).Normalized,
+                    StringComparer.Ordinal)
                 .Select(group => new DiagramFailureGroup(
                     group.Key,
+                    Detail(group.Select(diagram => messagesBySource[diagram.Source])),
                     [.. group.Select(diagram => new DiagramFailure(diagram.Path, diagram.Dialect))]))
                 .OrderByDescending(group => group.Count)
                 .ThenBy(group => group.Reason, StringComparer.Ordinal),
@@ -132,4 +149,13 @@ public sealed record DiagramRenderReport(
 
         return new DiagramRenderReport(diagrams, failures);
     }
+
+    /// <summary>
+    /// The quote character <c>beautiful-mermaid</c> puts around the header it refused and around
+    /// each header it accepts.
+    /// </summary>
+    private const char RendererQuote = '"';
+
+    private static string Detail(IEnumerable<string> messages) =>
+        QuotedTokens.Common([.. messages.Distinct(StringComparer.Ordinal)], RendererQuote);
 }

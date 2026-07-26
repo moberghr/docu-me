@@ -62,4 +62,80 @@ internal static class QuotedTokens
 
         return (normalized.ToString(), first);
     }
+
+    /// <summary>
+    /// Builds the human-readable message for a set of messages that already share a
+    /// <see cref="Normalize"/> key: a quoted run they all agree on stays verbatim, and only the
+    /// runs that actually differ collapse to an ellipsis.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Normalize"/> elides every quoted run because it is building a <em>key</em>, and a
+    /// key must not carry anything that varies. Reading that key back to a person throws away the
+    /// half they can act on: <c>beautiful-mermaid</c> answers a bad header with
+    /// <c>Invalid mermaid header: "graph TD;". Expected "graph TD", "flowchart LR",
+    /// "stateDiagram-v2", etc.</c> — the first token is the offender and varies per diagram, but the
+    /// expected list is constant prose that happens to be quoted, and eliding it leaves
+    /// <c>Expected "…", "…", "…", etc.</c>, which names nothing to write instead.
+    /// </para>
+    /// <para>
+    /// Within one group the varying runs are exactly the ones the messages disagree on, so
+    /// membership in the group is itself the test. A group of one elides nothing and reads exactly
+    /// as <c>publish</c> prints it.
+    /// </para>
+    /// </remarks>
+    /// <param name="messages">The group's messages verbatim; must not be empty.</param>
+    /// <param name="quote">The quote character the messages use around their tokens.</param>
+    /// <returns>
+    /// The shared message with only the differing quoted runs elided. Falls back to
+    /// <see cref="Normalize"/> of the first message if the group's messages do not share a shape,
+    /// which a shared key should already rule out.
+    /// </returns>
+    internal static string Common(IReadOnlyList<string> messages, char quote)
+    {
+        if (messages.Count == 1)
+        {
+            return messages[0];
+        }
+
+        var split = messages.Select(message => message.Split(quote)).ToList();
+        var shape = split[0];
+
+        bool AgreeAt(int index) =>
+            split.TrueForAll(segments => string.Equals(segments[index], shape[index], StringComparison.Ordinal));
+
+        if (!split.TrueForAll(segments => segments.Length == shape.Length) || shape.Length < 3)
+        {
+            return Normalize(messages[0], quote).Normalized;
+        }
+
+        var common = new StringBuilder();
+
+        for (var i = 0; i < shape.Length; i++)
+        {
+            if (i % 2 == 0)
+            {
+                // Same key implies the same prose, so a disagreement here means the key collided on
+                // two genuinely different messages. Key behavior wins: report the key.
+                if (!AgreeAt(i))
+                {
+                    return Normalize(messages[0], quote).Normalized;
+                }
+
+                _ = common.Append(shape[i]);
+                continue;
+            }
+
+            if (i == shape.Length - 1)
+            {
+                // Trailing unpaired segment: prose, not a token (Normalize treats it the same way).
+                _ = common.Append(quote).Append(shape[i]);
+                continue;
+            }
+
+            _ = common.Append(quote).Append(AgreeAt(i) ? shape[i] : "…").Append(quote);
+        }
+
+        return common.ToString();
+    }
 }

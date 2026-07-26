@@ -183,7 +183,10 @@ internal static class ConvertCommand
         foreach (var group in renders.Failures)
         {
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"  [red]{group.Count} diagram(s)[/]: {group.Reason.EscapeMarkup()}");
+
+            // Detail, not Reason: Reason is the grouping key and has every quoted run elided,
+            // including the list of headers the renderer accepts — the only actionable half.
+            AnsiConsole.MarkupLine($"  [red]{group.Count} diagram(s)[/]: {group.Detail.EscapeMarkup()}");
             RenderConstructs(
                 group.ByDialect,
                 group.Occurrences.Select(occurrence => ((string?)occurrence.Dialect, occurrence.Path)));
