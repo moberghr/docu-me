@@ -36,6 +36,12 @@ public sealed class CliConfluenceTests : IDisposable
     /// <summary>The dashboard title in the scaffolded docume.json (§6.5).</summary>
     private const string DashboardTitle = "Documentation Status";
 
+    /// <summary>
+    /// What the dashboard is renamed to mid-test. No markdown in the scaffolded wiki contains it, so
+    /// finding it in a page body can only mean the banner put it there.
+    /// </summary>
+    private const string RenamedDashboard = "Renamed Status Page";
+
     /// <summary>The one page `docume init` scaffolds, as the state file keys it.</summary>
     private const string HomePath = "README.md";
 
@@ -766,7 +772,168 @@ public sealed class CliConfluenceTests : IDisposable
         File.ReadAllText(StatePath(work)).ShouldNotContain(Sentinel, customMessage: recorded);
     }
 
+    /// <summary>
+    /// Rule §9.2 end to end and on the wire: a change to what the banner <em>says</em> is not a change to
+    /// the page, so it rewrites nothing — and when <c>--force</c> rewrites the page anyway, both the
+    /// recorded hash and the reviewer's approval survive it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A chain test, not a gap-closer — written down so nobody re-derives it.</strong> Four
+    /// mutations were run against the whole suite while this was being written: hashing the
+    /// banner-injected body, recording the uploaded body's hash instead of the plan's, letting
+    /// <c>force</c> count as a content change, and dropping the lazy space probe. Every one was already
+    /// caught by three to eighteen existing tests, so every link here is defended on its own. What no
+    /// other test states is the whole chain — a <c>docume.json</c> edit travelling config, CLI, wire and
+    /// back into state.json to come out the far side as nothing — which is the shape a wiring regression
+    /// takes rather than a logic one.
+    /// </para>
+    /// <para>
+    /// The three nearest pins each stop short in a different direction.
+    /// <see cref="Markdown.PageBannerTests.Publish_StoredHashIsNotTheHashOfWhatWasUploaded"/> asserts §9.2
+    /// against a two-line helper that test file writes itself, so what it pins is the idea, not the
+    /// pipeline. <see cref="Publishing.PublishPipelineTests.The_uploaded_body_carries_the_banner_and_the_hash_does_not"/>
+    /// asserts it at plan time and as an <em>inequality</em> — "the hash is not the hash of the upload" —
+    /// which stays green for any wrong hash that merely differs from that one.
+    /// <see cref="Publishing.PublishExecutorTests.Sends_nothing_when_a_second_run_finds_nothing_changed"/>
+    /// does cover the round trip, but from a hand-built report: no banner input ever moves, and no config
+    /// file is read.
+    /// </para>
+    /// <para>
+    /// <c>dashboard.title</c> is the lever because it is a <c>PageBanner</c> input the publish path reads
+    /// nowhere else (§5.1), and unlike the banner's other varying input — the date, which
+    /// <c>PublishCommand</c> takes straight from the wall clock — a test can move it. Moving it is also
+    /// what stops the silence below being vacuous: the forced run proves the new title really does reach
+    /// the body, so the quiet run had something it could have written and declined to.
+    /// </para>
+    /// <para>
+    /// The forced footprint is asserted whole for one absence in particular. Invalidating approval sends
+    /// <c>DELETE /wiki/rest/api/content/{id}/label</c> (§6.2 step 7), and <c>PublishPlanner</c> keys that
+    /// off <c>bodyChanged</c> alone while <c>force</c> reaches the very same write branch without setting
+    /// it. An assertion that only looked for the PUT could not tell those two apart.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_banner_only_change_costs_nothing_and_a_forced_rewrite_moves_neither_the_hash_nor_the_approval()
+    {
+        var work = Scaffolded(
+            nameof(A_banner_only_change_costs_nothing_and_a_forced_rewrite_moves_neither_the_hash_nor_the_approval));
+
+        StubSpace();
+        StubCreate();
+
+        Invoke(work, "publish").Code.ShouldBe(0, "The fixture's own first publish failed.");
+
+        var pageId = _created.ShouldHaveSingleItem();
+        var published = State(work).Pages[HomePath];
+
+        var created = UploadedBody(Requests("POST", "/wiki/api/v2/pages").ShouldHaveSingleItem());
+
+        const string reaches = "The created body does not carry the dashboard title, so dashboard.title "
+            + "is not reaching the banner and the rest of this test proves nothing.";
+
+        created.ShouldContain(DashboardTitle, customMessage: reaches);
+
+        // An approval for the forced rewrite to threaten, recorded the way `sync --labels` records one.
+        StateStore.Save(
+            StatePath(work),
+            StateUpdates.RecordApproval(
+                State(work), HomePath, "reviewer@example.com", "2026-07-26T09:00:00Z", published.PublishedVersion));
+
+        RenameDashboard(work, RenamedDashboard);
+
+        _server.ResetLogEntries();
+        StubRepublish(RemoteVersion);
+
+        var run = Invoke(work, "publish");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        // Asserted as the whole request list rather than "no PUT was sent": a banner-only change leaves the
+        // run with nothing to say to Confluence at all, so even a page read would be a regression.
+        var quiet = Seen().Select(request => $"{request.Method} {request.Path}").ToList();
+
+        quiet.ShouldBeEmpty(
+            $"A banner-only change sent Confluence [{string.Join(", ", quiet)}]. Rule §9.2: the banner is "
+            + $"outside contentHash, so moving it is not a content change.{Environment.NewLine}{run.Diagnostics}");
+
+        var skipped = State(work).Pages[HomePath];
+        var unmoved = $"A banner-only change moved state.json.{Environment.NewLine}{run.Diagnostics}";
+
+        skipped.ContentHash.ShouldBe(published.ContentHash, unmoved);
+        skipped.PublishedVersion.ShouldBe(published.PublishedVersion, unmoved);
+
+        // --force is the escape hatch §6.2 documents, and it is the branch where the two facts could still
+        // come apart: the body genuinely is rewritten, with a banner that genuinely differs.
+        _server.ResetLogEntries();
+
+        var forced = Invoke(work, "publish", "--force");
+
+        forced.Code.ShouldBe(0, forced.Diagnostics);
+
+        var footprint = Seen().Select(request => $"{request.Method} {request.Path}").ToList();
+
+        var because = $"A forced republish sent Confluence [{string.Join(", ", footprint)}]."
+            + Environment.NewLine + forced.Diagnostics;
+
+        footprint.ShouldBe(
+            [
+                "GET /wiki/api/v2/spaces",
+                $"GET /wiki/api/v2/pages/{pageId}",
+                $"GET /wiki/api/v2/pages/{pageId}/inline-comments",
+                $"PUT /wiki/api/v2/pages/{pageId}",
+            ],
+            because);
+
+        var rewritten = UploadedBody(Requests("PUT", $"/wiki/api/v2/pages/{pageId}").ShouldHaveSingleItem());
+
+        rewritten.ShouldContain(RenamedDashboard, customMessage: because);
+        rewritten.ShouldNotContain(DashboardTitle, customMessage: because);
+        rewritten.ShouldNotBe(created, because);
+
+        var after = State(work).Pages[HomePath];
+
+        // Two different bodies went over the wire under one unchanged hash. That is rule §9.2 in one line,
+        // and the version proves the rewrite was real rather than a second skip.
+        after.PublishedVersion.ShouldBe(RemoteVersion + 1, because);
+        after.ContentHash.ShouldBe(published.ContentHash, because);
+        after.Approval?.Status.ShouldBe(ApprovalStatus.Approved, because);
+    }
+
     private static DocumeState State(string work) => StateStore.Load(StatePath(work));
+
+    /// <summary>The storage-format body a page write carried.</summary>
+    private static string UploadedBody(IRequestMessage request)
+    {
+        var body = Payload(request)
+            .GetProperty("body")
+            .GetProperty("storage")
+            .GetProperty("value")
+            .GetString();
+
+        body.ShouldNotBeNull();
+
+        return body;
+    }
+
+    /// <summary>
+    /// Renames the dashboard in <c>docume.json</c> — a <c>PageBanner</c> input (§5.1), and the only one of
+    /// its three a test can move without a clock. Guarded rather than a bare replace: a scaffolding change
+    /// that renamed the field would otherwise leave every assertion downstream passing on an unedited file.
+    /// </summary>
+    private static void RenameDashboard(string work, string title)
+    {
+        var path = Path.Combine(work, "docume.json");
+        var config = File.ReadAllText(path);
+        var quoted = $"\"{DashboardTitle}\"";
+
+        var named = $"The scaffolded docume.json does not name {quoted}, so this test never changed "
+            + "the banner.";
+
+        config.ShouldContain(quoted, customMessage: named);
+
+        File.WriteAllText(path, config.Replace(quoted, $"\"{title}\"", StringComparison.Ordinal));
+    }
 
     /// <summary>Adds a page to the scaffolded wiki, wiki-root-relative.</summary>
     private static void Write(string work, string path, string markdown)
