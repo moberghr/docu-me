@@ -1,3 +1,4 @@
+using DocuMe.Core.Markdown;
 using Shouldly;
 
 namespace DocuMe.Core.Tests.Markdown;
@@ -107,4 +108,56 @@ public sealed class GoldenCoverageTests
         unclaimed.ShouldBeEmpty(
             "Map each new golden to the §7 row it pins, or add it to Extras with a reason.");
     }
+
+    [Fact]
+    public void Every_resolver_entry_is_referenced_by_a_golden_case()
+    {
+        var requested = new
+        {
+            Links = new HashSet<string>(StringComparer.Ordinal),
+            Attachments = new HashSet<string>(StringComparer.Ordinal),
+            Diagrams = new HashSet<string>(StringComparer.Ordinal),
+        };
+
+        foreach (var md in Directory.EnumerateFiles(GoldenCorpus.Directory, "*.md"))
+        {
+            var parsed = FrontmatterParser.Parse(File.ReadAllText(md));
+
+            // The real resolvers, wrapped: recording the argument rather than a hand-written regex
+            // over the markdown means this sees exactly what the converter asks for — including the
+            // mermaid sources, where the fence body the parser hands over is the whole subtlety.
+            ConfluenceStorageConverter.Convert(
+                parsed.Body,
+                path => Record(requested.Links, path, GoldenCorpus.Link),
+                path => Record(requested.Attachments, path, GoldenCorpus.Attachment),
+                source => Record(requested.Diagrams, source, GoldenCorpus.Diagram));
+        }
+
+        // Only this direction needs asserting. The other one is already gated: a case referencing a
+        // path no map answers makes the converter throw, so GoldenFileTests goes red on it. An entry
+        // whose reference was renamed or deleted is caught by nothing, and reads to the next author
+        // as corpus surface that is actually fiction.
+        var dead = Dead("Link", GoldenCorpus.LinkKeys, requested.Links)
+            .Concat(Dead("Attachment", GoldenCorpus.AttachmentKeys, requested.Attachments))
+            .Concat(Dead("Diagram", GoldenCorpus.DiagramKeys, requested.Diagrams))
+            .ToList();
+
+        dead.ShouldBeEmpty(
+            "A GoldenCorpus map entry nothing in tests/golden references: drop it, or add the case "
+            + "that was meant to exercise it.");
+    }
+
+    private static string? Record(HashSet<string> seen, string key, Func<string, string?> resolve)
+    {
+        seen.Add(key);
+        return resolve(key);
+    }
+
+    private static IEnumerable<string> Dead(
+        string map,
+        IEnumerable<string> declared,
+        HashSet<string> requested) =>
+        declared
+            .Where(key => !requested.Contains(key))
+            .Select(key => $"{map}: {key.ReplaceLineEndings(" ⏎ ")}");
 }
