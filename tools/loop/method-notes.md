@@ -65,3 +65,26 @@
   * `dotnet tool install --add-source <local feed> --version 0.1.0` SILENTLY INSTALLS THE CACHED PACKAGE.
     Pack under a unique prerelease suffix.
   * WHEN A HARNESS CRASHES, CASES AFTER THE CRASH DID NOT RUN. Read the tail and check the N/N line.
+  * THE READ TOOL IS THE ONLY TOKENIZER ON THIS MACHINE (no tiktoken, no anthropic, no transformers).
+    Its truncation notice reports the file's EXACT total: "PARTIAL view - showing lines 1-462 of 1500
+    total (68900 tokens, cap 25000)". To measure bytes-per-token: build a file OVER the 25,000-token cap
+    but UNDER the 256 KB byte ceiling (past that the Read fails and reports nothing), Read it whole,
+    divide. A BOUNDED Read (`limit=2`) reports no totals, so the measuring Read must be unbounded and you
+    pay for its content. Measured: markdown 2.604 B/tok, state.json's JSON 2.368.
+  * SIZE A MUTATION FROM A TARGET TOKEN COUNT, NOT FROM A CONVENIENT FILLER CHUNK. iter129's first run of
+    mutate-size-check.py scored 3/5 because it grew files in 45 KB PLAN.md-sized chunks and overshot a
+    5,000-token budget band straight into the over-cap band. Compute `target_bytes = target_tokens *
+    <the same constant the checker uses>` and append exactly that much. The failures were the harness's
+    arithmetic, not the checker's — which is the value of asserting the EXPECTED MESSAGE, not just a
+    non-zero exit.
+  * A CHECKER THAT GUARDS N FILES NEEDS N RED BRANCHES PROVEN, and each case must assert the UNMUTATED
+    copy is green first — otherwise a checker that fails on everything passes the harness. Copy the
+    guarded files to a scratch tree (`tempfile.TemporaryDirectory`) so the live repo is never touched.
+  * done-archive.jsonl ENTRIES ARE A MIX OF STRINGS AND DICTS (iter127 preserved both types), so
+    `{json.loads(line)["entry"] for ...}` raises `TypeError: unhashable type: 'dict'`. Compare canonical
+    JSON (`json.dumps(..., sort_keys=True)`) instead. And make an append script IDEMPOTENT: iter129's
+    crashed after appending n=130 and before rewriting state.json, so the re-run had to tolerate a tail
+    already at n rather than n-1.
+  * A BUDGET CHECK THAT THE CURRENT ITERATION TRIPS IS THE CHECK WORKING. Pay it back in the same
+    iteration (condense, or rotate a field to an archive) rather than raising the budget to suit the prose
+    that just broke it. iter128 and iter129 both did this.
