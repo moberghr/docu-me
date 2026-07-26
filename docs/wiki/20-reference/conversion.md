@@ -66,12 +66,12 @@ The degradation codes, all reported per page with the dialect that triggered the
 
 | Code | What is lost |
 |---|---|
-| `unknown-fence-language` | Highlighting for a language Confluence does not document |
+| `unknown-fence-language` | Highlighting for a language outside the brush map, which takes both Atlassian's documented list and a Prism component id. Being documented is not enough on its own: `octave` is, and still reports |
 | `mixed-task-list` | A list mixing task and plain items falls back to a plain list, echoing the literal `[x]` text |
-| `same-page-anchor-link` | An anchor link within one page has no storage-format equivalent |
-| `table-alignment-dropped` | GFM column alignment is not representable |
+| `same-page-anchor-link` | The destination. An anchor link within one page publishes as its plain link text |
+| `table-alignment-dropped` | Centered or right column alignment, reported once per column. An explicitly left `:---` column publishes the way GitHub renders it and stays silent |
 | `ordered-list-start-dropped` | A list starting at something other than 1 |
-| `alert-type-collapsed` | Two alert types mapping to one panel, so the distinction is gone |
+| `alert-type-collapsed` | The emphasis on `[!IMPORTANT]`, which shares the `info` panel with `[!NOTE]`. `[!NOTE]` owns that panel, so it stays silent |
 | `task-list-numbering-dropped` | An ordered task list, which the macro cannot number |
 
 ## Checking a wiki

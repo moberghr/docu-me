@@ -50,9 +50,11 @@ preferences:
 Not because they are wrong, but because they degrade and the strict bar rejects them:
 
 - `> [!IMPORTANT]` — collapses into the same panel as `[!NOTE]`. Use one of the other four.
-- Column alignment in tables (`|:---:|`) — not representable in storage format.
+- Centered or right column alignment in tables (`:---:`, `---:`). An explicitly left `:---` column
+  publishes the way GitHub renders it and is fine.
 - Lists mixing task items and plain items.
 - Same-page anchor links.
 - Ordered lists starting at anything but 1.
-- Fence languages Confluence does not document. `bash`, `json`, `yaml`, `csharp`, `text`, `diff` and
-  `xml` are all safe.
+- Fence languages outside the brush map, which takes both Atlassian's documented list and a Prism
+  component id. Confluence documenting a language is not enough: `octave` is documented and still
+  degrades. `bash`, `json`, `yaml`, `csharp`, `text`, `diff` and `xml` are all safe.
