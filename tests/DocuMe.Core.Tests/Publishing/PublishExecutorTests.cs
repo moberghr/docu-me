@@ -36,6 +36,12 @@ public sealed class PublishExecutorTests : IDisposable
     private const string Svg = """<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>""";
     private const string LogoAttachment = "images_logo.png";
 
+    /// <summary>The v2 page endpoint, with the trailing slash the id follows.</summary>
+    private const string PagesPath = "/wiki/api/v2/pages/";
+
+    /// <summary>The query parameter a page read carries only when it asked for the body.</summary>
+    private const string BodyFormatParameter = "body-format";
+
     private static readonly ConfluenceCredentials Credentials = new(Email, ApiToken);
 
     private static readonly byte[] LogoBytes = [1, 2, 3, 4];
@@ -243,6 +249,55 @@ public sealed class PublishExecutorTests : IDisposable
         payload.GetProperty("id").GetString().ShouldBe(pageId);
 
         second.State.Pages["README.md"].PublishedVersion.ShouldBe(8);
+    }
+
+    /// <summary>
+    /// Rule §9.1's other half, asserted on the wire at the call site that would carry the breach: the
+    /// version read asks Confluence for a version, and does not bring the page body back with it.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Confluence.RemoteBodyReadTests"/> owns this rule and proves by source scan that only
+    /// the dashboard opts a page read into a body. That scan counts the token <c>includeBody</c>, so it
+    /// sees a named argument and cannot see a positional one — and MA0003 (<c>.editorconfig</c>) is
+    /// <c>none</c>, so <c>FindPageByIdAsync(pageId!, true, cancellationToken)</c> compiles with the
+    /// token absent. Here the property is a presence on a request rather than an absence over a tree,
+    /// which makes it executable: the query string either carries <c>body-format</c> or it does not.
+    /// </remarks>
+    [Fact]
+    public async Task The_version_read_does_not_ask_confluence_for_the_page_body()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+
+        Write("README.md", "# Home\n\nRewritten, with no image at all.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 7);
+        StubUpdate(server);
+
+        var second = await ExecuteAsync(server, first.State);
+
+        second.Succeeded.ShouldBeTrue();
+        second.UpdatedCount.ShouldBe(1);
+
+        var reads = VersionReads(server);
+
+        const string vacuous = "The publish run made no page read at all, so this check proved nothing. "
+            + "An update needs the version Confluence holds now (see the test above); if the read moved, "
+            + "point this at its new shape rather than deleting it.";
+
+        const string body = "The publish path's version read asked Confluence for the page body. It needs "
+            + "a version number and nothing else. Rule §9.1 allows exactly one body read — the "
+            + "dashboard's compare-and-skip — because a body in hand is one assignment away from "
+            + "'publish should preserve hand edits', and then the repo has stopped being the source of "
+            + "truth. RemoteBodyReadTests scans for the token `includeBody` and will not catch this if "
+            + "the argument was passed by position.";
+
+        reads.ShouldNotBeEmpty(vacuous);
+        reads.ShouldAllBe(read => !read.Query!.ContainsKey(BodyFormatParameter), body);
     }
 
     [Fact]
@@ -1196,6 +1251,15 @@ public sealed class PublishExecutorTests : IDisposable
     private static List<IRequestMessage> ChildReads(WireMockServer server) =>
         Requests(server, "GET", "/wiki/api/v2/pages/")
             .Where(request => request.Path.EndsWith("/children", StringComparison.Ordinal))
+            .ToList();
+
+    /// <summary>
+    /// The page reads themselves — <c>api/v2/pages/{id}</c> and nothing below it, so the comment and
+    /// child collections that hang off the same prefix are excluded. What rule §9.1 constrains.
+    /// </summary>
+    private static List<IRequestMessage> VersionReads(WireMockServer server) =>
+        Requests(server, "GET", PagesPath)
+            .Where(request => !request.Path.AsSpan(PagesPath.Length).Contains('/'))
             .ToList();
 
     private static List<IRequestMessage> Requests(WireMockServer server, string method, string pathPrefix) =>

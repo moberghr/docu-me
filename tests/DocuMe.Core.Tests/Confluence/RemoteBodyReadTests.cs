@@ -97,6 +97,49 @@ public sealed class RemoteBodyReadTests
         }
     }
 
+    /// <summary>
+    /// The same rule as <see cref="Only_the_dashboard_asks_Confluence_for_a_page_body"/>, counted by the
+    /// argument's <em>value</em> instead of the parameter's <em>name</em>.
+    /// </summary>
+    /// <remarks>
+    /// Naming an optional argument is a style choice, not a requirement, and
+    /// <c>dotnet_diagnostic.MA0003.severity = none</c> in <c>.editorconfig</c> leaves it one — so
+    /// <c>FindPageByIdAsync(pageId!, true, cancellationToken)</c> compiles, reads a body on the publish
+    /// path, and never writes the token the scan above counts. Measured: that edit passed the whole suite,
+    /// all five checks of this class included. A guard against <em>adding</em> an opt-in says nothing about
+    /// the spelling, so this one reads every invocation's arguments and accepts neither spelling outside
+    /// the dashboard.
+    /// </remarks>
+    [Fact]
+    public void A_body_opt_in_passed_by_position_is_counted_the_same_as_a_named_one()
+    {
+        var calls = PageReadCalls();
+
+        const string vacuous = "The invocation scan found no page read in src/ at all, so it is proving "
+            + "nothing. Every read goes through one of ConfluenceClient's two methods; if a name changed, "
+            + "follow it here rather than deleting the check.";
+
+        const string nested = "A page read now passes a call as an argument. This scan reads an argument "
+            + "list up to its first ')', so a nested one truncates it and the check silently weakens. "
+            + "Teach it to balance parentheses before trusting it again.";
+
+        const string opted = "A page read outside the dashboard asks Confluence for the page body. Rule "
+            + "§9.1 allows exactly one — the dashboard's compare-and-skip, whose value reaches a "
+            + "string.Equals and nothing else. Note that this fires on a bare `true` as well as on "
+            + "`includeBody: true`: the positional form leaves "
+            + "Only_the_dashboard_asks_Confluence_for_a_page_body green, because that check counts the "
+            + "token rather than the value.";
+
+        calls.ShouldNotBeEmpty(vacuous);
+        calls.ShouldAllBe(call => !call.Arguments.Contains('(', StringComparison.Ordinal), nested);
+
+        var optIns = calls
+            .Where(call => Arguments(call.Arguments).Any(IsBodyOptIn))
+            .ToList();
+
+        optIns.ShouldAllBe(call => string.Equals(call.File, DashboardFile, StringComparison.Ordinal), opted);
+    }
+
     [Fact]
     public void Every_body_the_client_asks_for_by_default_is_a_comment_collection()
     {
@@ -168,6 +211,57 @@ public sealed class RemoteBodyReadTests
         File.ReadAllText(ClientPath()).ShouldContain(Hardcoded);
         PageReads.Length.ShouldBe(2);
     }
+
+    /// <summary>
+    /// Every page-read invocation in <c>src/</c> with its argument list, the client's own declarations
+    /// excluded. Matched on the method name followed immediately by <c>(</c>, so the
+    /// <c>&lt;see cref="..."/&gt;</c> references in <c>ConfluenceModels.cs</c> are not mistaken for calls.
+    /// </summary>
+    private static List<(string File, string Arguments)> PageReadCalls()
+    {
+        var calls = new List<(string File, string Arguments)>();
+
+        foreach (var file in Sources())
+        {
+            if (string.Equals(Path.GetFileName(file), ClientFile, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var text = File.ReadAllText(file);
+
+            foreach (var read in PageReads)
+            {
+                var token = $"{read}(";
+                var index = text.IndexOf(token, StringComparison.Ordinal);
+
+                while (index >= 0)
+                {
+                    var open = index + token.Length;
+                    var close = text.IndexOf(')', open);
+
+                    if (close > open)
+                    {
+                        calls.Add((Path.GetFileName(file), text[open..close]));
+                    }
+
+                    index = text.IndexOf(token, open, StringComparison.Ordinal);
+                }
+            }
+        }
+
+        return calls;
+    }
+
+    /// <summary>An argument list split into its arguments, whitespace removed so spelling cannot hide.</summary>
+    private static IEnumerable<string> Arguments(string arguments) => arguments
+        .Split(',')
+        .Select(argument => argument.Replace(" ", string.Empty, StringComparison.Ordinal));
+
+    /// <summary>Both ways an argument can say "and bring the body": by name, and by position.</summary>
+    private static bool IsBodyOptIn(string argument) =>
+        string.Equals(argument, "true", StringComparison.Ordinal)
+        || string.Equals(argument, $"{Parameter}:true", StringComparison.Ordinal);
 
     /// <summary>
     /// Every <c>src/</c> file that opts a page read into a body, the client's own declaration excluded.
