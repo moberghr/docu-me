@@ -425,7 +425,7 @@
       "slice": "Spent lead 2(a) - the two-writers-one-fact axis on `publish` - and found it already defended. Kept one CLI-level chain test for the config -> CLI -> wire -> state.json path.",
       "finding": "NEGATIVE RESULT, and the lead is retired. The publish path's three shared facts are all already tied to the wire: pageId (CliConfluenceTests:97), version (:589-594) and contentHash (PublishExecutorTests.Sends_nothing_when_a_second_run_finds_nothing_changed). Four single-token mutations were each run against the full suite and each was caught by existing tests: hashing the banner-injected body (16 catchers), recording the uploaded body's hash instead of the plan's (18), letting `force` count as a content change (4), and dropping the lazy space probe (4). The new test caught all four but was never the sole catcher, and its own doc comment says so. PROCESS LESSON, the real output: mutate BEFORE writing the test - the mutation costs ~30s and answers 'is the gap real', the test costs an hour and only answers 'does it pass'.",
       "verification": "dotnet build DocuMe.slnx -c Release: 0 warnings, 0 errors. dotnet test --solution DocuMe.slnx -c Release: 1317/1317 passed, 0 failed (was 1316). All four mutations reverted - `git diff --stat src/` empty before the final run.",
-      "commit": "pending"
+      "commit": "f7beeab"
     }
   ],
   "spikes": {
