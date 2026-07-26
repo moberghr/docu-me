@@ -41,6 +41,16 @@ public sealed class CliDriftTests : IDisposable
     /// <summary>The dashboard title in the scaffolded docume.json (§6.5), which <c>--mark</c> refreshes.</summary>
     private const string DashboardTitle = "Documentation Status";
 
+    /// <summary>
+    /// The dashboard's own page id — deliberately unlike <see cref="LimitsPageId"/> and
+    /// <see cref="RatesPageId"/>, so "the refresh wrote the dashboard" and "the refresh wrote a page this
+    /// run just labelled" cannot read the same in an asserted request path.
+    /// </summary>
+    private const string DashboardPageId = "770900";
+
+    /// <summary>The version the dashboard is found at, so the refresh's PUT has a revision to increment.</summary>
+    private const int DashboardVersion = 4;
+
     /// <summary>The default <c>labels.stale</c> from the scaffolded docume.json.</summary>
     private const string StaleLabel = "stale";
 
@@ -154,6 +164,62 @@ public sealed class CliDriftTests : IDisposable
                 "POST /wiki/api/v2/pages",
             ],
             run.Diagnostics);
+    }
+
+    /// <summary>
+    /// The same footprint one run later, which is the run that actually recurs. Every check above stubs the
+    /// dashboard as absent, so §6.5's refresh is always a create — but a create happens once and the
+    /// six-hourly job takes the update branch forever after, and that branch had no whole-write assertion
+    /// behind it. Only the upsert did, one layer down
+    /// (<see cref="Dashboard.DashboardPublisherTests.Writes_a_version_when_the_data_above_the_provenance_line_moved"/>),
+    /// which cannot see what else the command wrote around it.
+    /// </summary>
+    /// <remarks>
+    /// What an exact list catches here and the create-path one cannot: a write aimed at the wrong page. A
+    /// create names no page in its path, so the update branch is the only place the dashboard's id can be
+    /// confused with a page id this very run holds in hand — and a body write onto one of those is exactly
+    /// §9.3's forbidden edit, landing on a page a reviewer may have approved.
+    /// </remarks>
+    [Fact]
+    public void A_mark_run_that_finds_its_dashboard_updates_that_page_and_no_other()
+    {
+        var work = Seeded(nameof(A_mark_run_that_finds_its_dashboard_updates_that_page_and_no_other));
+
+        // A sentence no render produces, so the body assertion below tells "wrote the render" apart from
+        // "echoed back what it read" — the stored dashboard is the product's one page-body read (§9.1).
+        const string handEdit = "<p>NOTE from a reviewer: keep this paragraph.</p>";
+
+        StubLabels();
+        StubExistingDashboard(handEdit);
+
+        var run = Invoke(work, "drift", "--mark");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        var writes = Writes()
+            .Select(request => $"{request.Method} {request.Path}")
+            .ToList();
+
+        writes.ShouldBe(
+            [
+                $"POST /wiki/rest/api/content/{LimitsPageId}/label",
+                $"POST /wiki/rest/api/content/{RatesPageId}/label",
+                $"PUT /wiki/api/v2/pages/{DashboardPageId}",
+            ],
+            run.Diagnostics);
+
+        // The one body a mark run may write, checked for what is in it rather than that it was sent.
+        var body = Payload("PUT", $"/wiki/api/v2/pages/{DashboardPageId}");
+
+        body.GetProperty("title").GetString().ShouldBe(DashboardTitle, run.Diagnostics);
+
+        const string echoed = "The dashboard refresh echoed back part of the body it read, so a hand edit "
+            + "in Confluence survives the next refresh and the page has two sources of truth (rule §9.1).";
+
+        var stored = body.GetProperty("body").GetProperty("storage").GetProperty("value").GetString();
+
+        stored.ShouldNotBeNull(run.Diagnostics);
+        stored!.ShouldNotContain("NOTE from a reviewer", Case.Sensitive, echoed);
     }
 
     /// <summary>
@@ -667,11 +733,73 @@ public sealed class CliDriftTests : IDisposable
             .Given(Request.Create().WithPath("/wiki/api/v2/pages").UsingPost())
             .RespondWith(Json($$"""
                 {
-                  "id": "770900",
+                  "id": "{{DashboardPageId}}",
                   "status": "current",
                   "title": {{DashboardTitleJson}},
                   "spaceId": "{{SpaceId}}",
                   "version": { "number": 1 }
+                }
+                """));
+    }
+
+    /// <summary>
+    /// The same four stubs as <see cref="StubDashboard"/> with the title lookup answering instead of
+    /// finding nothing, so the refresh takes its update branch: the space, the label state, the dashboard
+    /// carrying <paramref name="stored"/> at <see cref="DashboardVersion"/>, and the PUT that follows.
+    /// </summary>
+    /// <param name="stored">
+    /// The body Confluence holds. Compared above the provenance line, so anything unlike a current render
+    /// makes the refresh spend a version rather than skip as unchanged.
+    /// </param>
+    private void StubExistingDashboard(string stored)
+    {
+        _server
+            .Given(Request.Create().WithPath("/wiki/api/v2/spaces").UsingGet())
+            .RespondWith(Json($$"""
+                {
+                  "results": [{ "id": "{{SpaceId}}", "key": "{{SpaceKey}}", "name": "DocuMe Sandbox" }],
+                  "_links": {}
+                }
+                """));
+
+        _server
+            .Given(Request.Create().WithPath("/wiki/rest/api/content/search").UsingGet())
+            .RespondWith(Json("""
+                { "results": [], "start": 0, "limit": 50, "size": 0, "_links": {} }
+                """));
+
+        _server
+            .Given(Request.Create().WithPath("/wiki/api/v2/pages").UsingGet())
+            .RespondWith(Json($$"""
+                {
+                  "results": [
+                    {
+                      "id": "{{DashboardPageId}}",
+                      "status": "current",
+                      "title": {{DashboardTitleJson}},
+                      "spaceId": "{{SpaceId}}",
+                      "version": { "number": {{DashboardVersion}} },
+                      "body": {
+                        "storage": {
+                          "value": {{JsonSerializer.Serialize(stored)}},
+                          "representation": "storage"
+                        }
+                      }
+                    }
+                  ],
+                  "_links": {}
+                }
+                """));
+
+        _server
+            .Given(Request.Create().WithPath($"/wiki/api/v2/pages/{DashboardPageId}").UsingPut())
+            .RespondWith(Json($$"""
+                {
+                  "id": "{{DashboardPageId}}",
+                  "status": "current",
+                  "title": {{DashboardTitleJson}},
+                  "spaceId": "{{SpaceId}}",
+                  "version": { "number": {{DashboardVersion + 1}} }
                 }
                 """));
     }
