@@ -32,8 +32,17 @@ namespace DocuMe.Core.Tests.Build;
 /// compilation is verbatim, with the per-rule rows underneath thinned to three apiece and the repo
 /// path rewritten to a runner's. Refresh it by re-running the build the script runs
 /// (<c>dotnet build DocuMe.slnx --no-incremental -m:1 /p:ReportAnalyzer=true -v:d</c>) and sampling
-/// it the same way; the sampler is <c>.mtk/paths-118/</c>. Mutation evidence that the script is a
-/// real gate, 8/8: <c>.mtk/paths-118/mutate-analyzer-check.py</c>.
+/// it the same way; the sampler is <c>.mtk/paths-118/</c>.
+/// </para>
+/// <para>
+/// Every branch of the script that can go red is executed here. <c>.mtk/paths-118/mutate-analyzer-check.py</c>
+/// proved the same ground 8/8 at iter118, but a harness someone has to remember to run is evidence
+/// with a shelf life: the script's own guards were proven once and asserted by nothing, so an edit
+/// that deleted the "no report at all" branch would leave the suite green while the CI step started
+/// passing vacuously. The harness stays as the place to add a case quickly; these tests are what
+/// keeps it honest between runs. That the tests are gates rather than decoration is itself measured,
+/// 6/6, by <c>.mtk/paths-119/mutate-script.py</c> — which breaks one branch of the script per case
+/// and requires the matching test, and only that test, to go red.
 /// </para>
 /// </remarks>
 public sealed partial class AnalyzerExecutionCheckTests
@@ -41,6 +50,9 @@ public sealed partial class AnalyzerExecutionCheckTests
     private const string ScriptPath = "tools/verify-analyzers.sh";
 
     private const string SampleLog = "tests/DocuMe.Core.Tests/Build/report-analyzer.sample.log";
+
+    /// <summary>A flag the script does not take, spelled close enough to one it does to be a typo.</summary>
+    private static readonly string[] UnknownArgument = ["--report"];
 
     [Fact]
     public void The_check_expects_exactly_the_analyzer_packs_the_build_applies()
@@ -152,24 +164,135 @@ public sealed partial class AnalyzerExecutionCheckTests
 
         dropped.ShouldBeTrue($"{SampleLog} never mentions {assembly}, so nothing was mutated.");
 
-        var path = Path.Combine(Path.GetTempPath(), $"docume-analyzer-{Guid.NewGuid():N}.log");
-        File.WriteAllLines(path, mutated);
+        var result = RunOnLog(string.Join('\n', mutated));
 
-        try
-        {
-            var result = RunCheck(path);
-            var passed = $"{ScriptPath} passed a report in which {assembly} did not run:\n"
-                + result.Diagnostics;
-            var unnamed = "The failure has to name the pack that stopped running; a bare non-zero "
-                + $"exit sends the next reader back to the raw report.\n{result.Diagnostics}";
+        var passed = $"{ScriptPath} passed a report in which {assembly} did not run:\n"
+            + result.Diagnostics;
+        var unnamed = "The failure has to name the pack that stopped running; a bare non-zero "
+            + $"exit sends the next reader back to the raw report.\n{result.Diagnostics}";
 
-            result.Code.ShouldNotBe(0, passed);
-            result.Error.ShouldContain(assembly, customMessage: unnamed);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
+        result.Code.ShouldNotBe(0, passed);
+        result.Error.ShouldContain(assembly, customMessage: unnamed);
+    }
+
+    [Fact]
+    public void The_check_goes_red_when_the_log_holds_no_report_at_all()
+    {
+        // The vacuous-pass guard, and the only reason a green run means anything. With
+        // /p:ReportAnalyzer=true dropped or the verbosity lowered below -v:d, the log carries no
+        // report, every per-pack loop has nothing to iterate over, and a check missing this branch
+        // would exit 0 having read nothing at all — the exact silence the script exists to break.
+        const string log = """
+            Build succeeded.
+                0 Warning(s)
+                0 Error(s)
+            """;
+
+        var result = RunOnLog(log);
+
+        var passed = $"{ScriptPath} passed a log that holds no analyzer report, so a green step no "
+            + $"longer says the packs ran.\n{result.Diagnostics}";
+        var unnamed = "The failure has to name what went missing from the invocation — the reader "
+            + $"is looking at a build that succeeded.\n{result.Diagnostics}";
+
+        result.Code.ShouldNotBe(0, passed);
+        result.Error.ShouldContain("ReportAnalyzer", customMessage: unnamed);
+    }
+
+    [Fact]
+    public void The_check_goes_red_when_a_solution_project_never_compiled()
+    {
+        // A project quietly dropped from the build analyses nothing, and every compilation that DID
+        // run still reports all four packs — so the per-pack loop stays silent and only the
+        // solution-versus-log comparison can catch it.
+        var lines = File.ReadAllLines(Path.Combine(RepoRoot, SampleLog));
+        var last = Array.FindLastIndex(lines, line => LogProject().IsMatch(line));
+
+        const string single = $"{SampleLog} names fewer than two compilations, so dropping the last one "
+            + "leaves nothing to compare against. Recapture it.";
+
+        last.ShouldBeGreaterThan(0, single);
+
+        var dropped = Path.GetFileName(
+            LogProject().Match(lines[last]).Groups["path"].Value.Replace('\\', '/'));
+
+        var result = RunOnLog(string.Join('\n', lines[..last]));
+
+        var passed = $"{ScriptPath} passed a report missing {dropped} entirely. A project that "
+            + $"never compiled was analysed by nothing.\n{result.Diagnostics}";
+        var unnamed = $"The failure has to name the project that never compiled.\n{result.Diagnostics}";
+
+        result.Code.ShouldNotBe(0, passed);
+        result.Error.ShouldContain(dropped, customMessage: unnamed);
+    }
+
+    [Fact]
+    public void The_check_reads_a_report_printed_in_the_runners_locale()
+    {
+        // The committed sample is a comma-locale capture; ubuntu-latest prints "6.813 seconds". The
+        // script separates an assembly row from a rule row by ", Version=" precisely so the decimal
+        // separator cannot matter — and without this case the suite only ever reads the separator
+        // CI does not use.
+        var sample = File.ReadAllText(Path.Combine(RepoRoot, SampleLog));
+        var invariant = DecimalComma().Replace(sample, "${lead}.${fraction}");
+
+        const string unchanged = $"{SampleLog} holds no decimal commas, so this case converts nothing and "
+            + "proves nothing. It was recaptured on a machine whose locale matches CI's.";
+
+        invariant.ShouldNotBe(sample, unchanged);
+
+        var result = RunOnLog(invariant);
+
+        result.Code.ShouldBe(0, result.Diagnostics);
+    }
+
+    [Fact]
+    public void The_check_reads_a_project_name_msbuild_qualified_with_a_global_property()
+    {
+        // MSBuild names a project instance `X.csproj::TargetFramework=net10.0` once it carries
+        // global properties. The script strips that suffix, and exit 0 is what proves the strip:
+        // unstripped, the three reported names match no project in the solution and the
+        // never-compiled branch fires on all of them.
+        var sample = File.ReadAllText(Path.Combine(RepoRoot, SampleLog));
+
+        var qualified = LogProject()
+            .Replace(sample, @"from project ""${path}::TargetFramework=net10.0""");
+
+        const string unchanged = $"{SampleLog} names no project the way MSBuild does, so this case rewrote "
+            + "nothing. Recapture it.";
+
+        qualified.ShouldNotBe(sample, unchanged);
+
+        var result = RunOnLog(qualified);
+
+        result.Code.ShouldBe(0, result.Diagnostics);
+
+        var leaked = "The qualifier reached the report, so the project names CI prints cannot be "
+            + $"matched against the solution by eye.\n{result.Diagnostics}";
+
+        result.Output.ShouldNotContain("::TargetFramework", customMessage: leaked);
+    }
+
+    [Fact]
+    public void The_check_tells_its_own_misuse_apart_from_analyzers_that_did_not_run()
+    {
+        // CI reads the exit code before it reads the text. Exit 1 means "look at the build"; exit 2
+        // means "look at the invocation" — a log path that moved, a flag that was renamed. Collapse
+        // the two and the next reader hunts an analyzer regression that never happened.
+        var absent = RunCheck(
+            Path.Combine(Path.GetTempPath(), $"docume-analyzer-{Guid.NewGuid():N}.log"));
+
+        var missing = $"A --log file that is not there is misuse, not a failed analyzer run, and "
+            + $"has to exit 2.\n{absent.Diagnostics}";
+
+        absent.Code.ShouldBe(2, missing);
+
+        var unknown = RunScript(UnknownArgument);
+
+        var accepted = $"{ScriptPath} accepted an argument it does not understand instead of "
+            + $"exiting 2, so a renamed flag would be silently ignored.\n{unknown.Diagnostics}";
+
+        unknown.Code.ShouldBe(2, accepted);
     }
 
     /// <summary>
@@ -196,7 +319,25 @@ public sealed partial class AnalyzerExecutionCheckTests
         .Matches(File.ReadAllText(Path.Combine(RepoRoot, "DocuMe.slnx")))
         .Select(match => match.Groups["path"].Value.Replace('\\', '/').Split('/')[^1]);
 
-    private static CheckRun RunCheck(string log)
+    /// <summary>Runs the check over <paramref name="log"/>, written to a scratch file.</summary>
+    private static CheckRun RunOnLog(string log)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"docume-analyzer-{Guid.NewGuid():N}.log");
+        File.WriteAllText(path, log);
+
+        try
+        {
+            return RunCheck(path);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private static CheckRun RunCheck(string log) => RunScript(["--log", log]);
+
+    private static CheckRun RunScript(IReadOnlyList<string> arguments)
     {
         var info = new ProcessStartInfo("bash")
         {
@@ -207,8 +348,11 @@ public sealed partial class AnalyzerExecutionCheckTests
         };
 
         info.ArgumentList.Add(Path.Combine(RepoRoot, ScriptPath));
-        info.ArgumentList.Add("--log");
-        info.ArgumentList.Add(log);
+
+        foreach (var argument in arguments)
+        {
+            info.ArgumentList.Add(argument);
+        }
 
         using var process = Process.Start(info)
             ?? throw new InvalidOperationException("bash did not start.");
@@ -275,6 +419,23 @@ public sealed partial class AnalyzerExecutionCheckTests
         RegexOptions.ExplicitCapture,
         matchTimeoutMilliseconds: 1000)]
     private static partial Regex ProjectPath();
+
+    /// <summary>The marker MSBuild prints ~20 lines above each report, naming what it compiled.</summary>
+    [GeneratedRegex(
+        @"from project ""(?<path>[^""]+)""",
+        RegexOptions.ExplicitCapture,
+        matchTimeoutMilliseconds: 1000)]
+    private static partial Regex LogProject();
+
+    /// <summary>
+    /// A decimal comma, which is the only place in the report a comma sits between two digits —
+    /// <c>, Version=</c> and the rule lists are all comma-space.
+    /// </summary>
+    [GeneratedRegex(
+        @"(?<lead>[0-9]),(?<fraction>[0-9])",
+        RegexOptions.ExplicitCapture,
+        matchTimeoutMilliseconds: 1000)]
+    private static partial Regex DecimalComma();
 
     private static string RepoRoot { get; } = Locate();
 
