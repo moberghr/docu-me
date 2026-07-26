@@ -23,6 +23,7 @@
 **Context:** Dependency risk vs convenience for ~12 REST endpoints.
 **Decision:** Thin custom client on `HttpClient` (REST v2, plus v1 for label add and CQL); evaluate `Dapplo.Confluence` in spike S1 before committing.
 **Evidence:** `PLAN.md` §4, §13 S1.
+**Superseded by:** the 2026-07-26 entry "Spike S1 closed on evidence" at the foot of this log. The condition this entry attached to the choice has been discharged; the choice itself held. Left otherwise untouched because this log is append-only.
 
 ## 2026-07-24 — Custom Markdig renderer with golden-file contract
 
@@ -77,3 +78,15 @@
 **Consequence:** sandbox and production are different tenants, so neither the token nor the base URL is shared. Three follow-ons, all accepted: (a) M7 cutover swaps credentials *and* base URL, not just the space key; (b) `state.json → confluence` currently has no `sandboxBaseUrl` field, so the schema is single-tenant and needs that field threaded through the config loader before the first publish attempt — flagged as a checklist item in `GATES.md`; (c) tenant-specific behavior (custom macros, user-mention resolution, space permissions) stays unexercised until M7. Storage-format rendering is tenant-independent and M2's page-by-page human review is the check that would catch a difference, so (c) is a real but bounded gap.
 **Caveat:** `ITAPPS` could not be inspected (Atlassian MCP was disconnected, no `DOCUME_CONFLUENCE_*` credentials in the loop shell), so this assumes it is a live shared space. If it is in fact already an empty scratch space, the decision is cheap to reverse — set `confluence.sandboxSpaceKey` and nothing else changes.
 **Evidence:** `PLAN.md` §6.2 (`--prune`), §9.1, §14 M2 acceptance; `.claude/rules/security.md` §1.4; `GATES.md` sandbox setup item.
+
+## 2026-07-26 — Spike S1 closed on evidence: `Dapplo.Confluence` rejected, the thin client stays
+
+**Context:** The 2026-07-24 entry above took the thin custom client *conditionally* — the dependency was to be measured first. It was, at build-loop iteration 27, and the answer was written into `ConfluenceClient`'s XML remarks. It was never carried back here. So this log kept its "pending" heading, and `architecture-principles.md` P4 kept telling every reader the evaluation was still owed, for sixty-odd iterations after the code had committed to the outcome.
+
+**Decision:** The default was taken, and on a measured reason rather than by drift. `Dapplo.Confluence` is alive — 1.0.41, published January 2026, with a `net10.0` target — but it hard-wires its API root to `/rest/api`, the v1 content API, and reaches Atlassian through `Dapplo.HttpExtensions` + Newtonsoft. `PLAN.md` §4 asks for REST v2 with v1 only where v2 lacks (label add, CQL search), and for `Microsoft.Extensions.Http.Resilience` on the transport, so the package would have to be worked around on both counts for the ~12 endpoints DocuMe needs. DocuMe ships the hand-written client. Do not re-open this without new evidence that Dapplo has grown a v2 surface.
+
+**What it changes in the code:** nothing. `ConfluenceClient` has been the hand-written client since M2. What changes is that no reader of the reference docs is told a decision is still owed when it is not — which matters here more than in most repos, because these two files are auto-loaded into every agent session, so a stale "evaluate X before committing" reads as a live instruction.
+
+**The failure worth naming, because it is the recurring one:** a question gets answered, the answer is written down in the one place the person answering it was standing — an XML remark, a test name, a state field — and never reaches the artifact a reader consults. `SpikeTableTests` guards the `PLAN.md` §13 half of that. `SpikeClosureTests` now guards this half: no reader-facing doc may describe a spike as pending once §13's row records the outcome and reserves nothing.
+
+**Evidence:** `src/DocuMe.Core/Confluence/ConfluenceClient.cs` remarks; `PLAN.md` §13 row S1; `tools/loop/handoff-archive.md` (iter27); `tests/DocuMe.Core.Tests/Acceptance/SpikeClosureTests.cs`.

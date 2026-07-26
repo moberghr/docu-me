@@ -24,7 +24,7 @@ All logic lives in `DocuMe.Core` (library, NuGet); `DocuMe.Cli` is a thin System
 
 ## P4 — Confluence behind an interface, Cloud-only v1
 
-The REST client is designed behind an interface but only Confluence Cloud is built in v1. Default: thin custom client on `HttpClient` (~12 endpoints, REST v2 plus v1 where v2 lacks); spike S1 evaluates `Dapplo.Confluence` before committing. Evidence: `PLAN.md` §1 non-goals, §4, §13 S1.
+The REST client is designed behind an interface but only Confluence Cloud is built in v1: a thin custom client on `HttpClient` (~12 endpoints, REST v2 plus v1 where v2 lacks). Spike S1 is **settled** — `Dapplo.Confluence` was measured and rejected. It is alive (1.0.41, January 2026, with a `net10.0` target) but hard-wires its API root to `/rest/api`, the v1 content API, and reaches Atlassian through `Dapplo.HttpExtensions` + Newtonsoft, so it misses §4 on both counts: v2-first, and `Microsoft.Extensions.Http.Resilience` on the transport. The durable record is `ConfluenceClient`'s own remarks. Evidence: `PLAN.md` §1 non-goals, §4, §13 S1; `src/DocuMe.Core/Confluence/ConfluenceClient.cs`.
 
 ## P5 — Renderer, not regex
 
