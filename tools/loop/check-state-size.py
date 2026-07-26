@@ -41,6 +41,7 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LOOP_DIR = os.path.join(REPO, "tools", "loop")
 STATE = os.path.join(LOOP_DIR, "state.json")
+ARCHIVE = os.path.join(LOOP_DIR, "done-archive.jsonl")
 
 READ_TOKEN_CAP = 25_000
 READ_BYTE_CEILING = 256 * 1024
@@ -104,6 +105,61 @@ def report(rel, note):
     return tokens, state
 
 
+def check_done_archive(doc):
+    """Is done-archive.jsonl still the complete, authoritative log state.json says it is?
+
+    ADDED ITER133, after finding it was not. `doneArchive.note` calls the archive authoritative and
+    `doneRecent` a convenience tail, and `howToAppend` tells every iteration to trim `doneRecent` down
+    to the newest entry - so an entry that never reached the archive is destroyed by the next
+    iteration performing the documented ritual. That had already happened: iter132's 3,416-char record
+    existed ONLY in `doneRecent`, the archive's final line was a bare JSON string (no `n`) duplicating
+    n=132, and `doneCount` counted that malformed line so the total looked right.
+
+    Checked here rather than in a script of its own because this is the script `readMe` requires after
+    every edit to state.json, which is exactly when the invariant can break.
+    """
+    problems = []
+    with open(ARCHIVE, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+
+    parsed = []
+    for number, line in enumerate(lines, start=1):
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError as exc:
+            problems.append(f"line {number} is not valid JSON ({exc.msg})")
+            continue
+        if not isinstance(obj, dict) or "n" not in obj or "entry" not in obj:
+            kind = type(obj).__name__
+            problems.append(f'line {number} is a bare {kind}, not the declared {{"n","entry"}} object')
+            continue
+        parsed.append((number, obj))
+
+    for index, (number, obj) in enumerate(parsed, start=1):
+        if obj["n"] != index:
+            problems.append(f"line {number} has n={obj['n']}, expected {index} (n must be 1..N, contiguous)")
+            break
+
+    count = doc.get("doneCount")
+    if count != len(lines):
+        problems.append(f"doneCount is {count} but the archive has {len(lines)} lines")
+
+    # The load-bearing one: nothing may sit in doneRecent that the archive does not already hold.
+    entries = {obj["entry"] for _, obj in parsed if isinstance(obj["entry"], str)}
+    for recent in doc.get("doneRecent", []):
+        if isinstance(recent, str) and recent not in entries:
+            head = recent[:60].replace("\n", " ")
+            problems.append(f"doneRecent entry NOT in the archive, so trimming it would destroy it: {head!r}...")
+
+    print("\ndone-archive.jsonl integrity:")
+    print(f"  {len(lines)} lines, {len(parsed)} well-formed, doneCount {count}")
+    for problem in problems:
+        print(f"  BROKEN: {problem}")
+    if not problems:
+        print("  OK: every line is well-formed, n is contiguous, and doneRecent is fully archived.")
+    return problems
+
+
 def main():
     failures = []
 
@@ -140,12 +196,18 @@ def main():
         tokens = est_tokens(n_bytes, name)
         print(f"  {n_bytes:>8,}  ~{tokens:>7,} tok  {name}  {status_for(n_bytes, tokens)}")
 
+    archive_problems = check_done_archive(doc)
+
     if failures:
         print(f"\nFAIL: {', '.join(failures)} past budget. For state.json, move an append-heavy field")
         print("to an archive file and leave a short pointer behind - see `readMe` and `doneArchive`.")
         print("For GATES.md or PLAN.md, the content is the spec: archive settled sections, never drop them.")
         return 1
-    print("\nOK: all three step-1 Reads return their whole file.")
+    if archive_problems:
+        print("\nFAIL: done-archive.jsonl is not the complete log state.json claims. Repair it BEFORE")
+        print("trimming doneRecent - an entry held only there is destroyed by the next iteration.")
+        return 1
+    print("\nOK: all three step-1 Reads return their whole file, and the done archive is intact.")
     return 0
 
 

@@ -206,3 +206,60 @@
     racing the first. It was the command-substitution subshell running that iteration's `claude`, which
     inherits the parent's argv. Check `ppid` and the child list before reporting a concurrency bug, and
     cross-check `loop.log` for a matching `Loop started` line — there was none.
+
+## Hooks in a project settings file (iter133)
+
+  * **A FAILING `PostToolUse` HOOK IS INVISIBLE TO THE AGENT. This is the finding to carry forward,
+    because it is what let a dead hook sit unnoticed for 133 iterations.** Measured: the event carried
+    `exit_code=127, outcome='error'` and stderr `bash: /hooks/format-on-edit.sh: No such file or
+    directory`, while mentions of it inside user/assistant turns numbered **0** and the session's
+    `result.is_error` was **False**. A `PostToolUse` hook therefore cannot be verified by waiting for
+    it to complain, and a non-zero exit in one you write only hides a problem — exit 0 and print
+    nothing. (Contrast `PreToolUse`, which iter131 measured as surfacing loudly: `PreToolUse:Bash hook
+    error: [<command>]: <stderr>`. The two events differ, so do not generalise from one to the other.)
+  * **TO SEE HOOKS AT ALL, ASK FOR THE EVENTS:** `claude -p … --output-format stream-json
+    --include-hook-events --verbose`. They arrive as `{"type":"system","subtype":"hook_started"|
+    "hook_response","hook_name":"PostToolUse:Write","exit_code":…,"outcome":…,"stderr":…}`. That stream
+    is the only honest way to answer "did my hook run", the way `modelUsage` is for "which model ran".
+  * **`$CLAUDE_PLUGIN_ROOT` IS EMPTY IN A PROJECT SETTINGS FILE** — the CLI sets it only for hooks that
+    come FROM a plugin, so `bash "$CLAUDE_PLUGIN_ROOT/hooks/x.sh"` in `.claude/settings.json` runs
+    `bash "/hooks/x.sh"` and exits 127. **`$CLAUDE_PROJECT_DIR` resolves correctly** (measured:
+    `/Users/mirkobudimir/Dev/docu-me`), and the hook's **stdin payload** carries `cwd`, `tool_name`,
+    `tool_use_id`, `transcript_path` and `tool_input.file_path` — so a per-file hook can find its
+    target without any variable at all.
+  * **AN UNTRUSTED WORKSPACE GATES `permissions.allow` ONLY, NOT `hooks`.** `.claude/settings.json`'s
+    own hooks load and fire while the CLI is printing "Ignoring 3 permissions.allow entries from
+    .claude/settings.json: this workspace has not been trusted". This closes the lead iter131 left
+    open, and it cuts both ways: a project settings file the CLI is partly ignoring can still execute
+    commands on every edit.
+  * **A FORMATTER ONLY REVERSES DEFECTS OF ITS OWN CLASS, so a mutation harness must mangle in that
+    class.** The first run of `probe-format-on-edit-script.py` scored FAIL against a working hook
+    because its mutation INSERTED A LINE BREAK, and `dotnet format` does not re-join lines. Mangle
+    indentation and trailing whitespace with the line count held identical, and assert
+    `mangled.count("\n") == text.count("\n")` so the harness catches its own bad mutation.
+  * **AN ANCHOR MUST MATCH THE HOUSE BRACE STYLE.** `line.startswith("    public ") and
+    line.rstrip().endswith("{")` found nothing here: this codebase is Allman, so a member's `{` is on
+    its own next line.
+  * **`dotnet format` COSTS, MEASURED PER FILE VIA `--include`:** full run **~7.0 s** wall (26 s CPU,
+    parallel); `dotnet format whitespace` **~1.9 s** but whitespace only. The loop's own gate is the
+    FULL `--verify-no-changes`, so the cheap subcommand would leave diffs that gate still fails on.
+    Note the solution is `DocuMe.slnx`, not a `.sln` — `dotnet format DocuMe.sln` exits 2 with a
+    `ParseWorkspaceOptions` stack trace rather than a readable "no such solution".
+  * **`; echo "X=$?"` AFTER A PIPE PRINTS THE PAGER'S EXIT CODE, AND THAT IS WORSE THAN NOT CHECKING
+    AT ALL, because it prints a confident false green.** iter128's note above already said to drop the
+    pipe; iter133 still ran `dotnet format --verify-no-changes … | tail -3; echo "FORMAT_EXIT=$?"` and
+    read `FORMAT_EXIT=0` from a command that was returning **2**. If a claim depends on an exit code,
+    get it from `subprocess.run(...).returncode` in a `python3 -c` and print it there.
+  * **`dotnet format --verify-no-changes` WAS RED AT HEAD AT ITER133** (exit 2, `WHITESPACE`, in
+    `src/DocuMe.Core/Markdown/ConfluenceStorageRenderer.cs`) while iter132 recorded it as exit 0 — the
+    same shape as iter132's own finding about the red suite, one level down. Two things follow. It is
+    **isolated to the whitespace pass**: `dotnet format style` and `dotnet format analyzers` both exit
+    0, so naming the subcommand makes the claim checkable. And the fix is a **pure line-wrap**: 82
+    insertions / 34 deletions that are `TOKEN-IDENTICAL once all whitespace is removed`, which is the
+    assertion to make — `git diff -w` is NOT sufficient, because `-w` ignores whitespace *within* a
+    line and the formatter *adds newlines*, so it still reports a wrapped file as changed.
+  * **AN END-TO-END PASTE PROOF NEEDS THE NEGATIVE CELL MOST.** `probe-paste-end-to-end.py` asks a
+    child to introduce a formatting defect and checks the file afterwards; "file == committed bytes"
+    is equally consistent with "the hook fixed it" and "the child never edited". The control cell
+    (identical prompt, scratch settings with the `hooks` key removed) is what distinguishes them, and
+    it doubles as proof that the currently-declared hook does nothing.
