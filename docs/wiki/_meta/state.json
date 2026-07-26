@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "lastPublishedSha": "937c936edb73522c5371af73a9a6acfe2770a311",
+  "pages": {
+    "README.md": {
+      "pageId": "451936259",
+      "title": "DocuMe",
+      "parentPageId": "451871005",
+      "contentHash": "sha256:70dae7cf7d43dfccd26192169298cb010fbfc5c5041e207de002d409130e58da",
+      "publishedVersion": 1,
+      "attachments": {},
+      "diagramWidths": {},
+      "stale": false
+    },
+    "10-concepts/README.md": {
+      "pageId": "451969025",
+      "title": "Concepts",
+      "parentPageId": "451936259",
+      "contentHash": "sha256:07cae3a3983ac382ab3db238ee605e64d46ef5e1773c85af5e4496d01b806e29",
+      "publishedVersion": 1,
+      "attachments": {},
+      "diagramWidths": {},
+      "stale": false
+    },
+    "10-concepts/approval-and-drift.md": {
+      "pageId": "451706882",
+      "title": "Approval and Drift",
+      "parentPageId": "451969025",
+      "contentHash": "sha256:006fa54bf3948ea71b8ef3b356fe49e71a5784dd3ac1fabc3df84a755325fe3f",
+      "publishedVersion": 1,
+      "attachments": {},
+      "diagramWidths": {},
+      "stale": false
+    },
+    "10-concepts/lifecycle.md": {
+      "pageId": "451936288",
+      "title": "The Documentation Lifecycle",
+      "parentPageId": "451969025",
+      "contentHash": "sha256:677d3ba2074f546b2a69eaccbf827593e622f20afa689d2700dd7b98f4d20bea",
+      "publishedVersion": 1,
+      "attachments": {
+        "mermaid-02c4f9e7ccf0392c.svg": "sha256:2558a0eed6a1784cd4d456c35b9aa6db6f5da9c5c3767899929547578cf1fdcc"
+      },
+      "diagramWidths": {
+        "mermaid-02c4f9e7ccf0392c.svg": "1020"
+      },
+      "stale": false
+    },
+    "20-reference/README.md": {
+      "pageId": "451969060",
+      "title": "Reference",
+      "parentPageId": "451936259",
+      "contentHash": "sha256:f8508807846795213a194779fcc320b5a271480ab5fb9030d2ea6888921f4ca9",
+      "publishedVersion": 1,
+      "attachments": {},
+      "diagramWidths": {},
+      "stale": false
+    },
+    "20-reference/cli.md": {
+      "pageId": "451969089",
+      "title": "CLI Reference",
+      "parentPageId": "451969060",
+      "contentHash": "sha256:afb85023c27cb07f90feb9aaf837090cd116deaebccc5dbd875f1b89383a57b9",
+      "publishedVersion": 1,
+      "attachments": {},
+      "diagramWidths": {},
+      "stale": false
+    },
+    "20-reference/configuration.md": {
+      "pageId": "451936315",
+      "title": "Configuration and State",
+      "parentPageId": "451969060",
+      "contentHash": "sha256:83f4fb5761c6ff7084ed736e60e6ea8684e6736c793a52812725cb961b4a9c53",
+      "publishedVersion": 1,
+      "attachments": {},
+      "diagramWidths": {},
+      "stale": false
+    },
+    "20-reference/conversion.md": {
+      "pageId": "451936340",
+      "title": "Markdown to Confluence Storage Format",
+      "parentPageId": "451969060",
+      "contentHash": "sha256:97d7a5c700a08ecddddca3085e06a7bed2578b7bd2ede2ddbae4e66f1256ac85",
+      "publishedVersion": 1,
+      "attachments": {},
+      "diagramWidths": {},
+      "stale": false
+    },
+    "30-automation/README.md": {
+      "pageId": "451936363",
+      "title": "Automation",
+      "parentPageId": "451936259",
+      "contentHash": "sha256:7a3443d69a0fa6c713b2e71191c0c6f77a5f3b392c7036992b596f9b3d4c2458",
+      "publishedVersion": 1,
+      "attachments": {},
+      "diagramWidths": {},
+      "stale": false
+    },
+    "30-automation/skills.md": {
+      "pageId": "451936390",
+      "title": "Claude Skills",
+      "parentPageId": "451936363",
+      "contentHash": "sha256:1f60c8027b2fe8e03c6a293705719796f3c09bf8daa80241685bd70ffcf585b9",
+      "publishedVersion": 1,
+      "attachments": {},
+      "diagramWidths": {},
+      "stale": false
+    },
+    "30-automation/workflows.md": {
+      "pageId": "451969112",
+      "title": "GitHub Workflows",
+      "parentPageId": "451936363",
+      "contentHash": "sha256:3402c45e5beb83ca79ea754521eaa372a12e12d0c33b4e815a5284d81cb614e0",
+      "publishedVersion": 1,
+      "attachments": {},
+      "diagramWidths": {},
+      "stale": false
+    },
+    "_meta/GAPS.md": {
+      "pageId": "452001793",
+      "title": "Open Questions for the Team",
+      "parentPageId": "451936259",
+      "contentHash": "sha256:17def9443f9ea7247db241272852189896f5b270f4917bcb728a1bf60597cd2f",
+      "publishedVersion": 1,
+      "attachments": {},
+      "diagramWidths": {},
+      "stale": false
+    }
+  }
+}

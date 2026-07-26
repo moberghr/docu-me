@@ -1,0 +1,23 @@
+{
+  "$schema": "./schema/docume.schema.json",
+  "confluence": {
+    "baseUrl": "https://moberg.atlassian.net/wiki",
+    "spaceKey": "DOCUMESBX",
+    "spaceId": "451870722",
+    "rootPageId": "451871005",
+    "protectedSpaces": ["AUR"]
+  },
+  "wiki": {
+    "root": "docs/wiki",
+    "exclude": ["_meta/**"],
+    "extraPages": [
+      { "path": "_meta/GAPS.md", "title": "Open Questions for the Team" }
+    ],
+    "homePage": "README.md"
+  },
+  "labels": { "approved": "approved", "stale": "stale" },
+  "dashboard": { "title": "Documentation Status" },
+  "drift": { "defaultBranch": "main" },
+  "links": { "repoBlobUrl": null },
+  "mermaid": { "renderer": "tools/render-mermaid.mjs" }
+}
