@@ -38,7 +38,12 @@ public sealed class DogfoodWikiTests
     /// repository) is how DocuMe is made rather than what it hands over, and the wiki documents the
     /// product.
     /// </summary>
-    private static readonly string[] ShippedRoots =
+    /// <remarks>
+    /// Internal because <see cref="StyleGuidePageTests"/> holds the style guide's description of
+    /// "shipped" to this list: the guide is what a generation run reads, and a run that believes
+    /// <c>tests/</c> needs a page writes one.
+    /// </remarks>
+    internal static readonly string[] ShippedRoots =
         ["actions/", "plugin/", "schema/", "src/", "templates/"];
 
     /// <summary>

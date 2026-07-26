@@ -667,9 +667,9 @@ internal sealed class QuoteBlockRenderer : MarkdownObjectRenderer<ConfluenceStor
     /// <c>info</c> panel with <c>[!NOTE]</c>, so after conversion the two are indistinguishable
     /// and the author's stronger emphasis is gone. §7 spec'd the mapping; this counts what it costs.
     /// <para>
-    /// The set of collapsing markers is derived from <see cref="AlertPanelMacros"/> rather than
-    /// listed, so it stays true if the mapping changes — and the marker that <em>owns</em> the
-    /// shared panel stays silent. Reporting <c>[!NOTE]</c> as well would double the count without
+    /// The marker that <em>owns</em> a shared panel stays silent, which is the judgement
+    /// <see cref="CollapsedMarkers"/> writes out by hand rather than deriving from the panel map.
+    /// Reporting <c>[!NOTE]</c> as well would double the count without
     /// adding a fact: a NOTE keeps its low-key emphasis in an <c>info</c> panel, and the collision
     /// only costs a reader something where an IMPORTANT was flattened into looking like one.
     /// </para>

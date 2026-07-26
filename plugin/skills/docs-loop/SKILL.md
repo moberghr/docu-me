@@ -64,16 +64,18 @@ These clauses hold for every run. They are not style preferences.
 | the existing pages | under `wiki.root` | the shape to match. A page that reads like a different document is a page a reader distrusts |
 | the code | the repo | the only source of a factual claim |
 
-`_meta/STYLE.md` is scaffolded by `docume init` with four headings — **Audience**, **Tone**, **Structure**,
-**Verification** — and the placeholder text under them says "Fill these in for your project." If it is still
-unfilled, say so in the PR body and infer the taxonomy from the code's own top-level shape for this one run.
+`_meta/STYLE.md` is scaffolded by `docume init` as four one-line bullets under a single heading —
+**Audience**, **Tone**, **Structure**, **Verification** — introduced by "Fill these in for your project."
+A consumer who filled it in has usually grown each bullet into its own section, so look for the four topics
+by name rather than for a heading level. If it is still the four scaffolded lines, say so in the PR body and
+infer the taxonomy from the code's own top-level shape for this one run.
 Do not invent a house style and do not fill `STYLE.md` in yourself: it is the consumer's file, and a guessed
 style guide is worse than an empty one because the next run will follow it.
 
 ## The unit of work
 
 A **unit** is one page, or one section of one page, that a reader would recognise as a thing: a domain, a
-service, a workflow, an integration, a data contract. `STYLE.md`'s **Structure** heading names the taxonomy;
+service, a workflow, an integration, a data contract. `STYLE.md`'s **Structure** section names the taxonomy;
 the units come from the code, mapped onto that taxonomy.
 
 What makes something the right size for one run: you can read all of its code in this run, and the page you
@@ -269,8 +271,10 @@ is the point.
 
 ## Markers
 
-`STYLE.md`'s **Verification** heading owns these conventions and the scaffolded default is the one below.
-They pass through the converter as plain text (§7), so they are visible to a reader in Confluence, which is
+`STYLE.md`'s **Verification** section owns these conventions, and where it is silent the table below is the
+default. `docume init` scaffolds only `⚠️ UNVERIFIED`, so on a repo that has not filled `STYLE.md` in, the
+second marker is this skill's convention rather than the consumer's, and the PR body should say you used it.
+Both pass through the converter as plain text (§7), so they are visible to a reader in Confluence, which is
 the point of using them rather than a code comment.
 
 | Marker | When | What follows it |
