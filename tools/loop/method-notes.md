@@ -112,3 +112,39 @@
     care about.
   * ONE PROBE PER TOOL CALL. A denied Bash call aborts the ENTIRE command string, so `cmd-a; cmd-b` where
     `cmd-a` is denied tells you nothing about `cmd-b`. Send the variants as separate parallel calls.
+
+## The CLI's own stderr, and probing with child sessions (iter131)
+
+  * **`claude` WRITES REAL DIAGNOSTICS TO STDERR AND THIS LOOP HAS BEEN DISCARDING THEM FOR 130
+    ITERATIONS.** `docume-loop.sh` captures `2>&1` into the iteration log, where four warning lines sit
+    in front of every transcript and nothing has ever read them. They are not noise: they named the
+    untrusted workspace, the three ignored `.claude/settings.json` allow entries, and two dead deny
+    rules in the global settings (see the `settings-corrections` gate). WHEN PROBING THE CLI, CAPTURE
+    stdout AND stderr SEPARATELY. Merging them is what the harness does, so merge for a test OF the
+    harness — but iter131's first run merged them for everything, and (1) the trust warning landed in
+    front of the `--output-format json` payload so every `json.loads` failed silently into a fallback,
+    and (2) the word "Permission" in a warning about a *dead rule* made an ordinary `git status` classify
+    as blocked. A classifier must read the child's ANSWER, not the whole blob.
+  * **`Write(path)` PERMISSION RULES MATCH NOTHING.** The CLI says it outright: *"`Write(.claude/**)` is
+    not matched by file permission checks — only `Edit(path)` rules are. Use `Edit(...)` instead (Edit
+    rules cover all file-editing tools)."* This refines the archived `claude-dir-writes` blocker: the
+    `Write(.claude/**)` allow entry is dead because of its SHAPE, not only because of the sensitive-file
+    guard. `Read(path)` rules are fine (no complaint for the `Read(./.env)` denies). DO NOT "fix" the
+    `.claude/**` one — the prescribed rewrite is exactly what would grant the loop write access to its
+    own rules.
+  * **HOOKS *ARE* HONOURED FROM A `--settings` FILE**, and an untrusted workspace does not stop them
+    (measured while `.claude/settings.json`'s allow entries were being ignored for that very reason).
+    A `PreToolUse` hook that exits 2 surfaces to the agent as
+    `PreToolUse:Bash hook error: [<command>]: <stderr>`. Whether `.claude/settings.json`'s OWN hooks
+    survive the untrusted state is UNTESTED — it has a `PostToolUse` format-on-edit hook, and that is a
+    lead, not a finding.
+  * **TO TEST A SETTINGS CHANGE THE LOOP MAY NOT INSTALL, HAND IT TO A CHILD SESSION.**
+    `claude -p ... --settings <scratch>` under `.mtk/` tests the artefact end to end while the loop's own
+    authority stays untouched, which is the whole reason the guard exists. Make the harness REFUSE TO RUN
+    if the scratch would add an `allow` entry, and always pair the block case with (a) a control on the
+    live settings proving the command gets through without the hook and (b) a benign command proving the
+    hook is selective — a hook that blocked everything passes a one-case harness.
+  * A CHILD `claude -p` COSTS ~4-9 s WITH A TINY PROMPT. Pin `--model` (the plumbing under test is
+    model-independent), pass `--max-turns` so a blocked child cannot wander, and give the child the
+    reason the command is safe (`this remote does not exist`) or it may decline to run the probe at all.
+    Classify "the model declined" as its own outcome, distinct from "the layer refused it".

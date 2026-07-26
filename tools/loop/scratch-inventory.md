@@ -63,3 +63,16 @@ every-iteration check). SAFE TO DELETE: .mtk/state-69/update.mjs, .mtk/paths-68/
 
 WHEN A HARNESS CRASHES, CASES AFTER THE CRASH DID NOT RUN. iter81 learned this the expensive way on
 .mtk/hold-61/mutate.mjs. Read the tail of a harness run and check the N/N line, not the first CAUGHT.
+
+.mtk/paths-131/ (iter131), BOTH WORTH KEEPING AND BOTH SPAWN CHILD `claude -p` SESSIONS (~4-9 s each, so
+a run costs real time and tokens — do not re-run them idly):
+  * probe-resume-path.py — the four questions about `docume-loop.sh`'s `--resume` path (context carried,
+    session id preserved, the line-74 fallback regex, and the workspace-trust state). RE-RUN AFTER ANY EDIT
+    to the resume block at docume-loop.sh:66-80, or after a CLI upgrade — every answer in it is a fact
+    about CLI 2.1.219 and nothing pins these in tests/ (tests/ deliberately does not scan tools/loop).
+  * probe-hook-from-settings.py — proves a PreToolUse hook loads and fires from a `--settings` file, using
+    the exact fenced block in tools/loop/loop-settings-paste.md against a scratch copy. RE-RUN IF THAT
+    PASTE IS EDITED, and re-run it once more after Mirko installs it (it then measures the live file's
+    behaviour rather than a scratch copy's). It writes .mtk/paths-131/scratch-paste-settings.json, which is
+    SAFE TO DELETE — it is regenerated from the paste on every run, and it is a settings file that must
+    never be confused for the live one.
