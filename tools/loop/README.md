@@ -67,9 +67,21 @@ Ctrl-C works too (kills the current session mid-flight; state.json + git keep it
 ## Watch
 
 ```bash
-tail -f tools/loop/logs/loop.log        # one line per iteration
+tail -f tools/loop/logs/loop.log        # one line per driver pass
 cat tools/loop/state.json               # milestone, phase, next action, blockers
-ls tools/loop/logs/                     # full transcript per iteration
+ls tools/loop/logs/                     # full transcript per pass
+```
+
+**Two numbers, and they are not the same number.** `state.json -> iteration` is the loop's history
+counter, written by the agent; the driver's `pass_n` counts attempts of the current
+`docume-loop.sh` process. A usage-limit death burns a pass and writes no iteration, so the two drift
+apart in steps — 25 apart by iter137, when the loop's own logs were still named after the pass
+counter alone and 133 of 136 iterations sat in a file numbered for a different one. Transcripts are
+now `iter-<iteration>-pass<n>-<ts>.log`, so `ls logs/iter-0137-*` shows every attempt at iteration
+137. For anything logged **before** iter137, ask instead of guessing — the offset is not constant:
+
+```bash
+python3 tools/loop/check-state-size.py --find 113   # that iteration's record + its transcript path
 ```
 
 Notifications — two channels:

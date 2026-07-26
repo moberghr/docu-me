@@ -17,6 +17,7 @@ SETTINGS="$LOOP_DIR/loop-settings.json"
 STOP_FILE="$LOOP_DIR/STOP"
 MODEL_FILE="$LOOP_DIR/MODEL"
 MAIN_LOG="$LOG_DIR/loop.log"
+STATE_FILE="$LOOP_DIR/state.json"
 
 # Model for the headless workers, re-read every iteration so it can be changed live:
 #   tools/loop/MODEL file (an alias like `opus`/`fable`/`sonnet`, or a full model id)
@@ -32,6 +33,25 @@ current_model() {
     m=$(grep -vE '^[[:space:]]*(#|$)' "$MODEL_FILE" | head -1 | tr -d '[:space:]')
   fi
   printf '%s' "${m:-${DOCUME_LOOP_MODEL:-}}"
+}
+
+# THE LOOP'S ITERATION NUMBER IS state.json's, NOT THIS DRIVER'S (iter137). `pass_n` below counts
+# attempts of THIS process and resets to 1 whenever the script restarts; `iteration` in state.json is
+# written by the agent at the end of an iteration and only ever increments. Measured at iter137 from
+# this loop's own log: 161 completed passes had produced 136 iterations, because each of the 25
+# usage-limit deaths burns a pass number and writes no bookkeeping. The two therefore drift apart IN
+# STEPS - 0, 4, 9, 13, 17, 21, 25 across this run - so 133 of 136 iterations had a log file named
+# after a number that was not theirs, and no constant correction could recover the mapping. The three
+# restarts in loop.log contributed nothing to that drift: both of the reset runs were killed before a
+# pass finished. A pass works on `iteration + 1`; name its log that, and log both numbers so neither
+# one pretends to be the other.
+state_iteration() {
+  python3 -c 'import json,sys
+try:
+    v = json.load(open(sys.argv[1]))["iteration"]
+    print(v if isinstance(v, int) else "")
+except Exception:
+    print("")' "$STATE_FILE" 2>/dev/null
 }
 
 mkdir -p "$LOG_DIR"
@@ -50,7 +70,7 @@ if [ -z "${DOCUME_CONFLUENCE_EMAIL:-}" ] || [ -z "${DOCUME_CONFLUENCE_TOKEN:-}" 
 fi
 
 backoff=300      # seconds; doubles on consecutive failures, capped at 1h
-iter=0
+pass_n=0         # attempts of THIS process; NOT the loop's iteration number (state_iteration)
 resume_sid=""    # non-empty => previous iteration died mid-work; resume it
 
 log "Loop started (pid $$)."
@@ -63,13 +83,21 @@ while true; do
     exit 0
   fi
 
-  iter=$((iter + 1))
+  pass_n=$((pass_n + 1))
   ts=$(date '+%Y%m%d-%H%M%S')
-  iter_log="$LOG_DIR/iter-$(printf '%04d' "$iter")-$ts.log"
+  state_iter=$(state_iteration)
+  if [ -n "$state_iter" ]; then
+    next_iter=$((state_iter + 1))
+    iter_label=$(printf 'iter-%04d' "$next_iter")
+  else
+    next_iter="?"
+    iter_label="iter-unknown"
+  fi
+  iter_log="$LOG_DIR/$iter_label-pass$(printf '%04d' "$pass_n")-$ts.log"
   model=$(current_model)
 
   if [ -n "$resume_sid" ]; then
-    log "Iteration $iter: resuming interrupted session $resume_sid [model: ${model:-cli-default}]"
+    log "Iteration $next_iter (pass $pass_n): resuming interrupted session $resume_sid [model: ${model:-cli-default}]"
     out=$(claude --resume "$resume_sid" \
       -p "You were interrupted mid-iteration (likely a usage limit). Re-read tools/loop/state.json, verify what actually completed (git status, build), and continue the iteration protocol exactly where you left off." \
       --permission-mode acceptEdits --settings "$SETTINGS" \
@@ -85,7 +113,7 @@ while true; do
     sid="$resume_sid"
   else
     sid=$(uuidgen | tr '[:upper:]' '[:lower:]')
-    log "Iteration $iter: fresh session $sid [model: ${model:-cli-default}]"
+    log "Iteration $next_iter (pass $pass_n): fresh session $sid [model: ${model:-cli-default}]"
     out=$(claude -p "$(cat "$PROMPT_FILE")" \
       --session-id "$sid" \
       --permission-mode acceptEdits --settings "$SETTINGS" \
@@ -95,7 +123,7 @@ while true; do
 
   printf '%s\n' "$out" > "$iter_log"
   status=$(printf '%s\n' "$out" | grep -Eo 'LOOP-STATUS:[[:space:]]*[A-Z-]+[^"]*' | tail -1)
-  log "Iteration $iter finished (exit $code) — ${status:-no status line}"
+  log "Iteration $next_iter (pass $pass_n) finished (exit $code) — ${status:-no status line}"
 
   if [ $code -ne 0 ]; then
     if printf '%s' "$out" | grep -qiE 'usage limit|rate limit|limit reached|overloaded|too many requests'; then

@@ -349,3 +349,47 @@
     "exactly one message" assertion reports a false FAIL. Same shape as iter135's 6/7. Assert the
     expected SET — every predicted message fires and nothing else does — which still proves
     non-redundancy without pretending each mutation has exactly one consequence.
+
+## Two counters, and patching a script that is running (iter137)
+
+  * **THE RECORDED CAUSE OF A DRIFT CAN BE A MECHANISM THAT CONTRIBUTED NOTHING.** `nextAction`
+    carried lead (iii) for six iterations as "the driver's counter resets on every restart, so every
+    iterNNN mis-maps by ~26". Both halves were wrong in a way that changes the fix. The resets are
+    real — `loop.log` holds three `Loop started` lines, each followed by `Iteration 1` — but **both
+    reset runs were killed before a pass finished, so they contributed zero.** The whole gap is the
+    **25 usage-limit deaths**: 161 completed passes, exactly 136 exit-0 (= state.json's `iteration`)
+    and exactly 25 non-zero, each burning a pass number and writing no bookkeeping. And it is **not a
+    constant**: the drift steps 0 → 4 → 9 → 13 → 17 → 21 → 25, so subtracting 25 is right for the
+    tail and wrong for 109 of the 133 mis-mapped iterations. **Derive the offset from the log before
+    trusting a number written about it.**
+  * **TO PATCH A SCRIPT THAT IS EXECUTING RIGHT NOW, REPLACE THE INODE, NOT THE BYTES.** `Edit` and
+    `Write` truncate and rewrite the SAME inode — the one the live `bash` still holds an fd on —
+    while `os.replace` puts a new inode in the path and the running process keeps reading what it
+    started with. `docume-loop.sh` is the loop's own driver and every iteration is one of its passes,
+    so this applies every time it is touched. Shape used at iter137
+    (`.mtk/paths-137/patch-driver-iteration-number.py`): refuse unless each anchor matches EXACTLY
+    ONCE, `bash -n` the candidate in a tempfile BEFORE it goes near the real path, copy the mode
+    across, `os.replace`, then print both inodes as the evidence. Make it idempotent by detecting the
+    patched text and exiting 0.
+  * **`docume-loop.sh` IS THE LOOP'S TO EDIT AND COMMIT.** `scratchInventory` listed it among files
+    that were "harness/MTK churn from Mirko's side — leave all of it alone", which was true of an
+    uncommitted working copy and stopped being true once it was committed: c6fbf1e (iter132) is the
+    loop editing and committing this file, and `git status tools/loop/` has been clean since. Only
+    `tools/loop/loop-settings.json` carries a real guard (the harness refuses `Edit` on it). **Check
+    `git status` for the file rather than trusting a note about it** — an inventory of a working tree
+    goes stale the moment something is committed.
+  * **A LOOKUP THAT RESOLVES EVERY KEY TO ITSELF LOOKS EXACTLY LIKE A WORKING LOOKUP.** The first
+    `transcript_for()` read the pass number off its own running count instead of off the log line, so
+    all 136 iterations resolved to `iter-<same number>-*` — plausible output, and it would have been
+    believed if the one pair whose answer was already known (iter4 lives in `iter-0008-*`) had not
+    been spot-checked. The fix is not the spot-check, it is **turning the spot-check into the
+    assertion**: probe group D now cross-checks all 136 against a mapping derived independently, plus
+    the known pair and a must-decline case. Same family as iter136's archive lookup, one layer out.
+  * **EXTRACT-AND-DRIVE WORKS FOR A BASH BLOCK, NOT JUST A FUNCTION.** iter132's rule ("extract by
+    content anchors, never retype") extends to a fragment of the main loop: pull `state_iter=…`
+    through the `iter_log=` line out of the live script, prepend the helper and the variables it
+    reads (`$STATE_FILE`, `$LOG_DIR`, `$pass_n`), and assert the FILENAME the fragment builds. Two
+    cautions, both of which cost a 0/5 first run: the extracted fragment does **not** include the
+    `pass_n=$((pass_n + 1))` line above it, so the counter does not advance; and the tail is
+    `-<date>-<time>.log`, two dash-separated segments, so `rsplit("-", 1)` strips half a timestamp.
+    Assert with a regex over the whole basename instead of reconstructing a stem.

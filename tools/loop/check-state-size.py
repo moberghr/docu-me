@@ -43,6 +43,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 LOOP_DIR = os.path.join(REPO, "tools", "loop")
 STATE = os.path.join(LOOP_DIR, "state.json")
 ARCHIVE = os.path.join(LOOP_DIR, "done-archive.jsonl")
+LOG_DIR = os.path.join(LOOP_DIR, "logs")
+LOOP_LOG = os.path.join(LOG_DIR, "loop.log")
 
 READ_TOKEN_CAP = 25_000
 READ_BYTE_CEILING = 256 * 1024
@@ -217,6 +219,61 @@ def check_done_archive(doc):
     return problems
 
 
+def transcript_for(wanted):
+    """Which `logs/iter-*.log` holds iteration `wanted`'s transcript. NOT `iter-<wanted>-*` before 137.
+
+    MEASURED AT ITER137 from loop.log: the driver's own counter counted ATTEMPTS, so each of the 25
+    usage-limit deaths burned a number that no iteration ever owned, and 133 of the first 136
+    iterations were filed under someone else's. The drift is NOT a constant either - it steps 0, 4, 9,
+    13, 17, 21, 25 - so subtracting 25 is right for the tail and wrong for 109 of the 133. From
+    iter137 the driver names the file `iter-NNNN-passNNNN-<ts>.log` after state.json's iteration, so
+    the new shape is looked up directly and only the historic ones need counting.
+
+    Counting rule for the old shape: iteration i is the i-th pass that exited 0. A non-zero exit
+    finished no iteration (it died and got resumed), which is exactly why the two numbers parted.
+    """
+    if not os.path.exists(LOOP_LOG):
+        return None, "no logs/loop.log on this machine"
+
+    with open(LOOP_LOG, encoding="utf-8", errors="replace") as handle:
+        lines = handle.read().splitlines()
+
+    iteration, owner_pass, stated = 0, None, None
+    for line in lines:
+        match = re.search(r"Iteration (\d+|\?)(?: \(pass (\d+)\))? finished \(exit (\d+)\)", line)
+        if not match:
+            continue
+        said, pass_n, code = match.group(1), match.group(2), int(match.group(3))
+        if pass_n and said.isdigit():
+            # iter137 onward: the driver states the iteration, so believe it rather than counting.
+            if int(said) == wanted and code == 0:
+                stated = int(pass_n)
+            continue
+        if code == 0:
+            # In the old shape the number printed IS the driver's pass counter, so `said` is the
+            # filename's number and the running count is the iteration. Reading the pass number off
+            # the count instead resolved every iteration to itself - a confident wrong answer that
+            # only a spot-check against a known pair (iter4 lives in iter-0008-*) exposed.
+            iteration += 1
+            if iteration == wanted:
+                owner_pass = int(said)
+
+    if stated is not None:
+        pattern = f"iter-{wanted:04d}-pass{stated:04d}-"
+    elif owner_pass is not None:
+        pattern = f"iter-{owner_pass:04d}-"
+    else:
+        return None, f"loop.log records no completed pass for iteration {wanted}"
+
+    found = sorted(name for name in os.listdir(LOG_DIR) if name.startswith(pattern)) if os.path.isdir(LOG_DIR) else []
+    note = ""
+    if stated is None and owner_pass != wanted:
+        note = f" (filed under the driver's pass number {owner_pass}, not {wanted})"
+    if not found:
+        return None, f"expected logs/{pattern}*.log{note}, but no such file is on disk"
+    return found, f"logs/{found[0]}{note}"
+
+
 def find_iteration(wanted):
     """`grep -n 'iterNNN'` is WRONG for 27 of 135 iterations. This is the lookup that works.
 
@@ -255,6 +312,9 @@ def find_iteration(wanted):
     if mentions:
         print(f"\n({len(mentions)} OTHER entries mention iter{wanted} in prose: lines {mentions}."
               " A bare grep returns these too, and they are not this iteration's record.)")
+
+    _, where = transcript_for(wanted)
+    print(f"\ntranscript: {where}")
     return 0 if owners else 1
 
 

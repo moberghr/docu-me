@@ -27,11 +27,22 @@ the same slice), and `_meta/GAPS.md` is not scaffolded by init at all (§9 step 
 14th init target). ITER81 ADDS A THIRD OF THE SAME KIND: if you add a step a consumer's job needs, say so
 in the §10 bullet for that workflow in the same slice.
 
-STILL modified-or-untracked and STILL NOT THE LOOP'S TO COMMIT (harness/MTK churn from Mirko's
-side): .claude/analytics.json, tools/loop/{ITERATION-PROMPT.md,README.md,docume-loop.sh},
-tools/loop/MODEL (contains "claude-opus-5"), and the untracked stray tests/golden/.claude/ (an MTK
-analytics dir written by a tool that ran with cwd=tests/golden — harmless, the §4.3 corpus
-enumerates *.md only, but it should be deleted or gitignored by whoever owns MTK config).
+CORRECTED AT ITER137 — THIS LIST WAS FOUR FILES TOO LONG, AND THE ERROR COST SIX ITERATIONS. It named
+`tools/loop/{ITERATION-PROMPT.md,README.md,docume-loop.sh,MODEL}` as Mirko's uncommitted churn to
+leave alone. That was true of a working tree that has since been committed: `git status tools/loop/`
+is CLEAN, and c6fbf1e (iter132) is the loop itself editing and committing `docume-loop.sh`. Because
+`nextAction` quoted this paragraph as authority, the one-line fix for the driver's iteration number
+sat parked as a "paste-shaped ask" from iter131 to iter136 for a file the loop could simply edit.
+**ALL FOUR ARE THE LOOP'S TO EDIT AND COMMIT.** The only file under `tools/loop/` that is genuinely
+off-limits is `loop-settings.json` (the harness refuses `Edit` on it — ship it as a paste). And the
+rule this replaces: **check `git status <path>` for the file rather than trusting a note about it.**
+An inventory of a working tree goes stale the moment something is committed.
+
+STILL modified-or-untracked and STILL NOT THE LOOP'S TO COMMIT: `.claude/analytics.json` (MTK writes
+it every session; the loop cannot write `.claude/` anyway) and the untracked stray
+`tests/golden/.claude/` (an MTK analytics dir written by a tool that ran with cwd=tests/golden —
+harmless, the §4.3 corpus enumerates *.md only, but it should be deleted or gitignored by whoever
+owns MTK config).
 
 GITIGNORED, so never in git status: .mtk/order-smoke/, .mtk/move-smoke/, .mtk/brokenlink-smoke/,
 .mtk/prune-smoke/, .mtk/publish-cli-smoke/, .mtk/publish-e2e/, .mtk/status-state.json,

@@ -14,3 +14,6 @@ obj/
 # Node packages for the mermaid renderer (package.json pins the version; run `npm ci`).
 node_modules/
 
+# Written whenever a probe imports tools/loop/check-state-size.py as a module (iter137's group D).
+__pycache__/
+
