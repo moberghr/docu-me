@@ -39,6 +39,22 @@ public sealed class CliConfluenceTests : IDisposable
     /// <summary>The one page `docume init` scaffolds, as the state file keys it.</summary>
     private const string HomePath = "README.md";
 
+    /// <summary>
+    /// The version the fake Confluence holds when a republish reads the page. Deliberately not 1: the
+    /// version the first publish left in state.json is 1, so a run that sent that one instead of the one
+    /// it just read would still look right against a remote sitting at 1.
+    /// </summary>
+    private const int RemoteVersion = 9;
+
+    /// <summary>
+    /// A sentence no converter can produce from the repo's markdown, so finding it downstream can only
+    /// mean it came back out of a Confluence response.
+    /// </summary>
+    private const string Sentinel = "A HUMAN TYPED THIS STRAIGHT INTO CONFLUENCE";
+
+    /// <summary>The stored body a republish reads back, as a hand-edited page would answer.</summary>
+    private const string HandEdit = $"<p>{Sentinel} and expected it to survive.</p>";
+
     private readonly WireMockServer _server = WireMockServer.Start();
 
     private readonly string _root = Directory.CreateTempSubdirectory("docume-cli-confluence").FullName;
@@ -385,6 +401,148 @@ public sealed class CliConfluenceTests : IDisposable
         writes.ShouldBeEmpty(because);
     }
 
+    /// <summary>
+    /// The second publish of a page, which is every publish after the first — and the branch this class
+    /// could not reach until now: every other test here stubs a create, so the whole CLI-level suite was
+    /// a suite of first runs. A create happens once per page ever; an update happens on every scheduled
+    /// docs job for the rest of the wiki's life.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Asserted as the run's <em>whole</em> request list rather than "a PUT was sent", because what is
+    /// being checked is what the command did <em>around</em> the page write — the part
+    /// <see cref="Publishing.PublishExecutorTests.Updates_a_changed_page_at_the_version_confluence_holds_now"/>
+    /// cannot see from one layer down. An extra create, a re-read of the space per page, a label write
+    /// nobody asked for: each is invisible to an assertion that only looks for the request it expects.
+    /// </para>
+    /// <para>
+    /// The space is read once and the page is read before it is written (§6.2): the update carries the
+    /// version Confluence holds now, not the one state.json remembers, or two runs racing produce a
+    /// version conflict instead of a second revision.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_republish_updates_the_page_it_already_published_and_writes_nothing_else()
+    {
+        var work = Scaffolded(nameof(A_republish_updates_the_page_it_already_published_and_writes_nothing_else));
+
+        StubSpace();
+        StubCreate();
+
+        Invoke(work, "publish").Code.ShouldBe(0, "The fixture's own first publish failed.");
+
+        var pageId = _created.ShouldHaveSingleItem();
+
+        Write(work, HomePath, $"# {HomeTitle}\n\nRewritten in the repo after the first publish.\n");
+
+        // The create stub is deliberately left standing: a regression that creates instead of updating
+        // then succeeds against the server and is caught by the footprint below, which names the request
+        // it did not expect — rather than by a 404 that only says the run failed.
+        _server.ResetLogEntries();
+        StubRepublish(RemoteVersion);
+
+        var run = Invoke(work, "publish");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        var footprint = Seen()
+            .Select(request => $"{request.Method} {request.Path}")
+            .ToList();
+
+        var because = $"The second publish of a page sent Confluence "
+            + $"[{string.Join(", ", footprint)}].{Environment.NewLine}{run.Diagnostics}";
+
+        footprint.ShouldBe(
+            [
+                $"GET /wiki/api/v2/spaces",
+                $"GET /wiki/api/v2/pages/{pageId}",
+                $"GET /wiki/api/v2/pages/{pageId}/inline-comments",
+                $"PUT /wiki/api/v2/pages/{pageId}",
+            ],
+            because);
+
+        // The version travels from the read into the write, and out of the write's response into state:
+        // an update sent at the version state.json remembered would 409 the moment anything else touched
+        // the page.
+        var sent = Payload(Requests("PUT", $"/wiki/api/v2/pages/{pageId}").ShouldHaveSingleItem());
+
+        sent.GetProperty("version").GetProperty("number").GetInt32()
+            .ShouldBe(RemoteVersion + 1, because);
+
+        State(work).Pages[HomePath].PublishedVersion.ShouldBe(RemoteVersion + 1, because);
+    }
+
+    /// <summary>
+    /// Rule §9.1, on the write path this time: the repo is the source of truth, and a hand edit made in
+    /// Confluence is lost on republish by design. The executable half of the rule was pinned for the
+    /// dashboard only
+    /// (<see cref="Dashboard.DashboardPublisherTests.The_write_carries_the_render_it_was_given_not_the_body_it_read"/>);
+    /// this is the same proof on the page path, which is the one that carries the wiki.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Confluence.RemoteBodyReadTests"/> proves no publish call site <em>asks</em> for a body.
+    /// That is a different property from this one, and it is not enough on its own: a server may answer
+    /// with more than it was asked for, and <c>MapPage</c> maps <c>body.storage.value</c> whenever it is
+    /// present, so the remote text really does reach the publish path in memory. What must never happen
+    /// is that any of it reaches the write or the state file.
+    /// </para>
+    /// <para>
+    /// The sentinel is prose no converter can emit from the repo's markdown, so a single character of it
+    /// downstream can only have come from the response.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_hand_edit_made_in_confluence_reaches_neither_the_republished_body_nor_the_state_file()
+    {
+        var work = Scaffolded(
+            nameof(A_hand_edit_made_in_confluence_reaches_neither_the_republished_body_nor_the_state_file));
+
+        StubSpace();
+        StubCreate();
+
+        Invoke(work, "publish").Code.ShouldBe(0, "The fixture's own first publish failed.");
+
+        var pageId = _created.ShouldHaveSingleItem();
+
+        Write(work, HomePath, $"# {HomeTitle}\n\nThe repo's own sentence, and the only one allowed out.\n");
+
+        _server.ResetLogEntries();
+        StubRepublish(RemoteVersion, storedBody: HandEdit);
+
+        var run = Invoke(work, "publish");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        // The poison has to have been served, or the rest of this test proves nothing: a stub set that
+        // quietly stopped answering with a body would leave every assertion below passing vacuously.
+        const string unserved = "The fake Confluence never answered the page read with the hand edit, so "
+            + "this test is not exercising anything. Fix the stub before trusting it.";
+
+        Served($"/wiki/api/v2/pages/{pageId}").ShouldContain(Sentinel, customMessage: unserved);
+
+        var body = Payload(Requests("PUT", $"/wiki/api/v2/pages/{pageId}").ShouldHaveSingleItem())
+            .GetProperty("body")
+            .GetProperty("storage")
+            .GetProperty("value")
+            .GetString();
+
+        const string carried = "The republished body carries text that came back from Confluence, so a "
+            + "hand edit in the space survived a republish. Rule §9.1: the repo is the source of truth "
+            + "and Confluence page bodies are never a content source — a body that round-trips makes the "
+            + "space authoritative for anything nobody happened to overwrite.";
+
+        body.ShouldNotBeNull(run.Diagnostics);
+        body.ShouldNotContain(Sentinel, customMessage: carried);
+
+        // And it must not have been recorded either: a contentHash taken over what Confluence answered
+        // rather than what the repo rendered would make an approval turn on the space's text (§9.2).
+        const string recorded = "The state file holds text that came back from Confluence. Rule §9.1/§9.2: "
+            + "nothing the space says is a content source, contentHash included.";
+
+        File.ReadAllText(StatePath(work)).ShouldNotContain(Sentinel, customMessage: recorded);
+    }
+
     private static DocumeState State(string work) => StateStore.Load(StatePath(work));
 
     /// <summary>Adds a page to the scaffolded wiki, wiki-root-relative.</summary>
@@ -415,6 +573,18 @@ public sealed class CliConfluenceTests : IDisposable
             .Select(entry => entry.RequestMessage)
             .OfType<IRequestMessage>()
             .ToList();
+
+    /// <summary>
+    /// What the fake Confluence actually answered a GET of <paramref name="path"/> with. Lets a test that
+    /// poisons a response prove the poison was served rather than assume it.
+    /// </summary>
+    private string Served(string path) =>
+        string.Join(
+            Environment.NewLine,
+            _server.LogEntries
+                .Where(entry => string.Equals(entry.RequestMessage?.Path, path, StringComparison.Ordinal)
+                    && string.Equals(entry.RequestMessage?.Method, "GET", StringComparison.OrdinalIgnoreCase))
+                .Select(entry => entry.ResponseMessage?.BodyData?.BodyAsString ?? string.Empty));
 
     private List<IRequestMessage> Requests(string method, string path) =>
         Seen()
@@ -527,6 +697,55 @@ public sealed class CliConfluenceTests : IDisposable
                     }
                     """;
             }));
+
+    /// <summary>
+    /// What a second publish needs beyond a create: the page as Confluence holds it now (for the version
+    /// the update sends), the inline comments a body rewrite could strand (§6.2 step 6), and the update
+    /// itself. The comments stub takes priority because it sits under the same <c>pages/{id}/</c> prefix
+    /// as the page read.
+    /// </summary>
+    /// <param name="version">The version the remote is holding when the run reads it.</param>
+    /// <param name="storedBody">
+    /// Storage-format body to answer the page read with, or <c>null</c> to answer with none. Confluence
+    /// is under no obligation to omit a body just because the caller did not ask for one, and
+    /// <c>MapPage</c> maps whatever arrives — so this is how a hand-edited page is put in front of the
+    /// publish path.
+    /// </param>
+    private void StubRepublish(int version, string? storedBody = null)
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/inline-comments"))
+                .UsingGet())
+            .AtPriority(-1)
+            .RespondWith(Json("""{ "results": [], "_links": {} }"""));
+
+        _server
+            .Given(Request.Create().WithPath(new WildcardMatcher("/wiki/api/v2/pages/*")).UsingGet())
+            .RespondWith(Json(request => Page(request, version, storedBody)));
+
+        _server
+            .Given(Request.Create().WithPath(new WildcardMatcher("/wiki/api/v2/pages/*")).UsingPut())
+            .RespondWith(Json(request => Page(request, version + 1, storedBody)));
+    }
+
+    /// <summary>One page, echoing back the id the request named, at the version asked for.</summary>
+    private static string Page(IRequestMessage request, int version, string? storedBody)
+    {
+        var body = storedBody is null
+            ? string.Empty
+            : $$$""", "body": { "storage": { "value": {{{JsonSerializer.Serialize(storedBody)}}}, "representation": "storage" } }""";
+
+        return $$"""
+            {
+              "id": "{{request.Path.Split('/')[^1]}}",
+              "status": "current",
+              "title": {{JsonSerializer.Serialize(HomeTitle)}},
+              "spaceId": "{{SpaceId}}",
+              "version": { "number": {{version.ToString(CultureInfo.InvariantCulture)}} }{{body}}
+            }
+            """;
+    }
 
     /// <summary>The title lookup answering "no such page", which is what makes the dashboard a create.</summary>
     private void StubNoPageWithTitle() =>
