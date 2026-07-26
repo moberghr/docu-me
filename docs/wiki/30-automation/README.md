@@ -6,13 +6,18 @@ sources:
 
 # Automation
 
-Unattended, DocuMe is two halves that never overlap.
+Unattended, DocuMe is two halves: the CLI, the only thing that talks to Confluence, and the skills,
+which write markdown and can only ever open a pull request.
 
-- [GitHub Workflows](workflows.md) run the CLI. Deterministic, no model, no judgement.
+- [GitHub Workflows](workflows.md) schedule the work. Four of the six run the CLI and nothing else.
 - [Claude Skills](skills.md) write markdown. A model, always producing a pull request.
 
-The split is the safety property: a skill can be wrong and the worst case is a bad pull request that a
-human declines. A workflow cannot be wrong about *content* because it never writes any.
+The other two workflows, `docs-refresh.yml` and `docs-feedback.yml`, are where the halves meet, and the
+safety property is in *how* they meet. They invoke a skill, so they are the two that need
+`ANTHROPIC_API_KEY`, and they are the two that deliberately do not carry the Confluence credentials. A
+skill can be wrong and the worst case is a bad pull request that a human declines: nothing a model
+writes reaches Confluence until someone merges it and the publish workflow runs.
 
-`docume init` scaffolds the workflows into `.github/workflows/`, commented for the two things they
-cannot guess — your default branch and the name of your deploy workflow.
+`docume init` scaffolds all six into `.github/workflows/`. Each carries an `EDIT BEFORE USE` header for
+what it cannot guess: your default branch, your wiki root, the name of your deploy workflow, a
+cross-organisation packages token, `ANTHROPIC_API_KEY`, and the release to pin the plugin to.

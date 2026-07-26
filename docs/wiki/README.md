@@ -36,11 +36,14 @@ as an inbox item.
 ## Getting started
 
 Installation and the first publish are in the repository `README.md`, not here: they change with the
-release process, and duplicating them is how a wiki starts lying. The short version:
+release process, and duplicating them is how a wiki starts lying. Two steps in particular are left
+there on purpose, because both have a caveat that would rot in a copy: DocuMe ships to GitHub Packages,
+which authenticates every read, so the feed needs a token before the install line works at all.
+
+Once `docume` is on the path, setting up a repository is one command, run from its root:
 
 ```bash
-dotnet tool install --local DocuMe.Cli
-dotnet tool run docume init --space MYSPACE --base-url https://example.atlassian.net/wiki
+docume init --space MYSPACE --base-url https://example.atlassian.net/wiki
 ```
 
 `init` is idempotent. It never overwrites a file that already exists, and reports what it skipped, so
