@@ -144,6 +144,15 @@
     if the scratch would add an `allow` entry, and always pair the block case with (a) a control on the
     live settings proving the command gets through without the hook and (b) a benign command proving the
     hook is selective — a hook that blocked everything passes a one-case harness.
+  * **THE PHONE PUSH IS STILL DEAD, AND THE REASON GIVEN IS NOT THE ONE THE DOCS CLAIM.** iter131 called
+    `PushNotification` as the protocol now requires and got `Mobile push not sent (Remote Control
+    inactive)` — the same string iter126 measured. `tools/loop/ITERATION-PROMPT.md` and
+    `tools/loop/README.md` (both carrying uncommitted edits) say a push "delivers to his phone when he's
+    away" and "is auto-skipped when you're actively at the keyboard". The skip here is attributed to
+    **Remote Control being inactive**, which is precisely the unattended case the channel exists for, not
+    the redundant-at-keyboard case. So an unattended WAITING-GATE still reaches nobody. Keep calling it
+    (the protocol says to, and it costs nothing), but do NOT treat a push as having surfaced anything: the
+    gate in GATES.md and the blocker in state.json are the only channels that have ever worked.
   * A CHILD `claude -p` COSTS ~4-9 s WITH A TINY PROMPT. Pin `--model` (the plumbing under test is
     model-independent), pass `--max-turns` so a blocked child cannot wander, and give the child the
     reason the command is safe (`this remote does not exist`) or it may decline to run the probe at all.
