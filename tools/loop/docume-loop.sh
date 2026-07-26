@@ -15,7 +15,24 @@ LOG_DIR="$LOOP_DIR/logs"
 PROMPT_FILE="$LOOP_DIR/ITERATION-PROMPT.md"
 SETTINGS="$LOOP_DIR/loop-settings.json"
 STOP_FILE="$LOOP_DIR/STOP"
+MODEL_FILE="$LOOP_DIR/MODEL"
 MAIN_LOG="$LOG_DIR/loop.log"
+
+# Model for the headless workers, re-read every iteration so it can be changed live:
+#   tools/loop/MODEL file (an alias like `opus`/`fable`/`sonnet`, or a full model id)
+#   → else $DOCUME_LOOP_MODEL → else the CLI default.
+# Reads the first non-blank, non-comment line. A file that is missing, empty, or only
+# blanks/comments falls through to the env var — `-s` alone treated a newline-only file as a
+# value and skipped straight to the CLI default, and an unfiltered `tr` folded a trailing
+# comment into the id (`claude-opus-5` + `# note` → `claude-opus-5#note`, which every
+# iteration would then fail on).
+current_model() {
+  local m=""
+  if [ -f "$MODEL_FILE" ]; then
+    m=$(grep -vE '^[[:space:]]*(#|$)' "$MODEL_FILE" | head -1 | tr -d '[:space:]')
+  fi
+  printf '%s' "${m:-${DOCUME_LOOP_MODEL:-}}"
+}
 
 mkdir -p "$LOG_DIR"
 
@@ -49,13 +66,14 @@ while true; do
   iter=$((iter + 1))
   ts=$(date '+%Y%m%d-%H%M%S')
   iter_log="$LOG_DIR/iter-$(printf '%04d' "$iter")-$ts.log"
+  model=$(current_model)
 
   if [ -n "$resume_sid" ]; then
-    log "Iteration $iter: resuming interrupted session $resume_sid"
+    log "Iteration $iter: resuming interrupted session $resume_sid [model: ${model:-cli-default}]"
     out=$(claude --resume "$resume_sid" \
       -p "You were interrupted mid-iteration (likely a usage limit). Re-read tools/loop/state.json, verify what actually completed (git status, build), and continue the iteration protocol exactly where you left off." \
       --permission-mode acceptEdits --settings "$SETTINGS" \
-      ${DOCUME_LOOP_MODEL:+--model "$DOCUME_LOOP_MODEL"} 2>&1)
+      ${model:+--model "$model"} 2>&1)
     code=$?
     # A session that never got created can't be resumed — fall back to a fresh one.
     if [ $code -ne 0 ] && printf '%s' "$out" | grep -qiE 'no conversation|not found|invalid session'; then
@@ -67,11 +85,11 @@ while true; do
     sid="$resume_sid"
   else
     sid=$(uuidgen | tr '[:upper:]' '[:lower:]')
-    log "Iteration $iter: fresh session $sid"
+    log "Iteration $iter: fresh session $sid [model: ${model:-cli-default}]"
     out=$(claude -p "$(cat "$PROMPT_FILE")" \
       --session-id "$sid" \
       --permission-mode acceptEdits --settings "$SETTINGS" \
-      ${DOCUME_LOOP_MODEL:+--model "$DOCUME_LOOP_MODEL"} 2>&1)
+      ${model:+--model "$model"} 2>&1)
     code=$?
   fi
 

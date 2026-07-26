@@ -157,3 +157,52 @@
     model-independent), pass `--max-turns` so a blocked child cannot wander, and give the child the
     reason the command is safe (`this remote does not exist`) or it may decline to run the probe at all.
     Classify "the model declined" as its own outcome, distinct from "the layer refused it".
+  * **VERIFY GREEN BEFORE YOU START, NOT ONLY BEFORE YOU COMMIT.** iter132 opened with `dotnet test`
+    and found 1360/1361 with the failure inherited from HEAD: two commits had landed red because
+    iter131 ran build+test and THEN wrote one more file. Several tests in this repo sweep the tree's
+    own prose (RepositorySlugTests over every `*.md`/`*.yml`/`*.json` outside `tests/` and `tools/`;
+    QuickstartTests over fenced commands), so a docs-only or GATES.md-only edit is fully capable of
+    turning the suite red. Re-run after the LAST write of the iteration, including writes to GATES.md
+    and state.json.
+  * **A REGEX THAT CLASSIFIES REPO TEXT WILL EVENTUALLY MEET A FILESYSTEM PATH.** `owner/docu-me` with
+    only a `(?<![A-Za-z0-9-])` boundary matches `…/Dev/docu-me` and reports `Dev` as a GitHub owner.
+    Quoting CLI output, which routinely contains absolute paths, is enough to trip it. Fix the
+    classification, never the quoted evidence: `(?<!(?<!github(?:usercontent)?\.com)/)` rejects an
+    owner preceded by `/` unless that `/` closes a GitHub host. Variable-length lookbehind is a .NET
+    feature — Python's `re` refuses it, and splitting it into two fixed-width lookbehinds is NOT
+    equivalent (it silently drops every `github.com/` match). Apply the rule in code when mirroring
+    such a pattern in a Python diagnostic.
+  * **A SWEEP THAT ONLY REPORTS DISAGREEMENT CANNOT NOTICE ITSELF MATCHING NOTHING.** Pair it with two
+    guards: per-shape assertions (one `[InlineData]` per shape the tree actually carries, including the
+    shapes that must NOT match) and vacuous-pass floors set just under the measured truth. Floors must
+    be tight enough to catch over-exclusion: iter132's narrowing would have dropped all 5 `github.com/`
+    references, leaving 10 files, which the then-current floor of `> 8` waved through.
+  * **THIS HARNESS CANNOT RUN A SHELL SCRIPT.** `tools/loop/loop-settings.json` allows `Bash(python3:*)`
+    but there is no `Bash(bash:*)` or `Bash(sh:*)`, so `bash probe.sh` is denied — which is why every
+    prior probe under `.mtk/paths-*/` is Python. Write probes as `.py`; a Python probe may drive bash
+    through `subprocess` freely, which is also how to exercise a bash function (extract it from the real
+    script by content anchors, never retype it). Do not ask for a bash allowlist entry: a session
+    widening its own permission file is the thing that guard exists to prevent.
+  * MORE SHAPES THIS BASH TOOL STATICALLY REFUSES, on top of the ones already listed above: a heredoc
+    whose body contains `${...}` inside quotes ("brace with quote character"), `for x in a b; do … $x`
+    ("simple_expansion"), `cd DIR && git …` ("can execute untrusted hooks"), and command substitution
+    inside an argument such as `--model "$(cat f)"` ("shell syntax that cannot be statically
+    analyzed"). Also: **`cd` PERSISTS BETWEEN Bash CALLS** — one `cd tests/…` made every later relative
+    path resolve wrong until absolute paths were used. Prefer absolute paths always.
+  * `dotnet test` ON xUnit v3 / MTP HAS NO `--filter`; it is `--treenode-filter "/*/*/ClassName/*"`,
+    and passing `--filter` exits 5 with "Zero tests ran" plus a full usage dump that buries the cause.
+    Analyzer note: SA1515 requires a blank line before every single-line comment, which includes a
+    comment sitting between `[Theory]` and its `[InlineData]` attributes.
+  * **`2>&1` CORRUPTS EVERY `claude … --output-format json` PIPELINE HERE.** The untrusted-workspace
+    warning goes to stderr, so folding it into stdout puts prose ahead of the JSON and the parse fails
+    at char 0. Redirect the two streams to different files when you need both.
+  * **`modelUsage` IS THE ONLY HONEST WAY TO ASK WHICH MODEL RAN.** `claude -p … --output-format json`
+    returns `modelUsage: {"<id>": {…, canonicalModel, contextWindow}}`. Asking the model to report its
+    own id (the recipe README.md carried until iter132) is self-report and unreliable. Measured on CLI
+    2.1.219: `opus` -> `claude-opus-5`, `sonnet` -> `claude-sonnet-5`, so the alias lag README recorded
+    against 2.1.218 is gone; re-measure rather than trusting either note.
+  * **A `bash script.sh` SEEN IN `ps` MAY BE THE SCRIPT'S OWN `$(...)` SUBSHELL.** iter132 briefly read
+    a 5-minute-old `bash ./tools/loop/docume-loop.sh` beside the 2-day-old one as a second driver
+    racing the first. It was the command-substitution subshell running that iteration's `claude`, which
+    inherits the parent's argv. Check `ppid` and the child list before reporting a concurrency bug, and
+    cross-check `loop.log` for a matching `Loop started` line — there was none.

@@ -19,7 +19,41 @@ export DOCUME_CONFLUENCE_TOKEN="…"
 The script re-execs itself under `caffeinate -is`, so the Mac won't sleep while it runs.
 Run it inside `tmux`/`screen` (or `nohup … &`) if you want to close the terminal.
 
-Optional env: `DOCUME_LOOP_MODEL` (model override for the headless sessions).
+## Model
+
+`tools/loop/MODEL` holds the model for the headless workers. It is re-read **every iteration**, so
+changing it takes effect on the next pass with no restart:
+
+```bash
+echo claude-opus-5 > tools/loop/MODEL     # takes effect next iteration
+```
+
+Each iteration logs the model it used. Blank lines and `#` comments in the file are ignored and the
+first real line wins; a file that is missing, empty, or all blanks/comments falls through to
+`$DOCUME_LOOP_MODEL`, then to the CLI default. All fourteen cases of that chain are asserted by
+`.mtk/paths-132/probe-current-model.py`, which lifts `current_model()` out of the script rather than
+reimplementing it.
+
+Changing the MODEL *file* needs no restart. Changing `docume-loop.sh` itself does: the running
+driver already has the script parsed, so edits to it apply from the next `./tools/loop/docume-loop.sh`.
+
+**Aliases and explicit ids both work; ids are still the safer choice for an unattended loop.**
+Aliases (`opus`/`fable`/`sonnet`) track the latest model of a line. They have lagged: on CLI 2.1.218
+(2026-07-24) `opus` resolved to `claude-opus-4-8` while `claude-opus-5` was live. **That lag is gone
+as of CLI 2.1.219 (re-verified 2026-07-26): `opus` → `claude-opus-5`, `sonnet` → `claude-sonnet-5`.**
+An id still pins what you audited; an alias can move under you between iterations.
+
+Verify a model change with the CLI's own accounting rather than asking the model what it is (models
+self-report unreliably). `modelUsage` names the model that actually served the request:
+
+```bash
+claude -p hi --model opus --output-format json < /dev/null \
+  | python3 -c 'import json,sys; print(list(json.load(sys.stdin)["modelUsage"]))'
+```
+
+Keep `2>&1` out of that pipeline. The CLI writes warnings to stderr — this workspace currently emits
+an untrusted-workspace warning on every run (see the `settings-corrections` item in `GATES.md`) — and
+folding stderr into stdout puts that text ahead of the JSON and breaks the parse.
 
 ## Stop / pause
 
@@ -38,7 +72,14 @@ cat tools/loop/state.json               # milestone, phase, next action, blocker
 ls tools/loop/logs/                     # full transcript per iteration
 ```
 
-macOS notifications fire on: limit hit, gate opened, blocked, done.
+Notifications — two channels:
+- **Phone push** (Claude mobile app): sessions send a PushNotification when they open a gate, block
+  on a question, or finish. The message contains the actual question and where to put the answer
+  (state.json field / GATES.md checkbox); answer it by spawning a hub session from your phone.
+  Pushes are auto-skipped when you're actively at the keyboard (they'd be redundant).
+- **macOS notification center** (Mac-local): all of the above plus driver-level events. Usage-limit
+  hits can only be Mac-local — during a lockout no Claude call can succeed, so nothing can push.
+  (If you want limit alerts on your phone too, an ntfy.sh curl in the driver is the way — ask.)
 
 ## Human gates
 

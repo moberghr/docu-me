@@ -55,14 +55,22 @@ public sealed partial class RepositorySlugTests
         var references = References().ToList();
 
         // Vacuous-pass guards. The walk finding nothing would pass this test while proving nothing, and
-        // both floors sit below what the tree carries today: 155 files scanned, 20 references across 13
-        // of them, measured at iter80 (.mtk/paths-80/measure-slugs.mjs runs the same walk).
+        // the floors sit below what the tree carries today: 157 files scanned, 23 references across 15 of
+        // them, measured at iter132 (.mtk/paths-132/find-slug-offenders.py runs the same walk).
+        //
+        // The floors also have to be tight enough to catch the pattern matching too LITTLE, which is the
+        // way this sweep dies quietly: iter132 narrowed the regex to exclude filesystem paths, and a
+        // careless narrowing there drops every `github.com/…` reference at once — 10 files, which the
+        // previous floor of 8 waved through. Raise these with the tree; do not lower them to pass.
         references.ShouldNotBeEmpty("The walk found no reference to this repository at all.");
+        references
+            .Count
+            .ShouldBeGreaterThan(18, "The walk is matching fewer references than the tree carries.");
         references
             .Select(reference => reference.File)
             .Distinct(StringComparer.Ordinal)
             .Count()
-            .ShouldBeGreaterThan(8, "The walk is reading fewer files than the tree has.");
+            .ShouldBeGreaterThan(12, "The walk is reading fewer files than the tree has.");
 
         var wrong = references
             .Where(reference => !string.Equals(reference.Owner, declared, StringComparison.Ordinal))
@@ -73,6 +81,48 @@ public sealed partial class RepositorySlugTests
             $"plugin.json declares the owner `{declared}`. A reference naming another one points at a "
                 + "repository that does not exist, and it fails in a consumer's runner or editor rather "
                 + "than here. Offenders:");
+    }
+
+    /// <summary>
+    /// The classification itself, on one line each of every shape the tree carries.
+    /// </summary>
+    /// <remarks>
+    /// The sweep above only reports disagreement, so it cannot say whether a shape was read correctly or
+    /// skipped entirely — a pattern that matched nothing would pass it on the vacuous-pass floors alone.
+    /// These are the shapes measured in the tree at iter132: a GitHub URL, a raw-content URL, a bare slug
+    /// in prose or YAML, and the local filesystem path that must not read as an owner.
+    /// </remarks>
+    [Theory]
+
+    // Real references: the owner must be read, whole, whatever precedes it.
+    [InlineData("<RepositoryUrl>https://github.com/moberghr/docu-me</RepositoryUrl>", "moberghr")]
+    [InlineData("\"$schema\": \"https://raw.githubusercontent.com/moberghr/docu-me/main/schema.json\"", "moberghr")]
+    [InlineData("/plugin marketplace add moberghr/docu-me", "moberghr")]
+    [InlineData("          repository: moberghr/docu-me", "moberghr")]
+    [InlineData("- A composite action, `moberghr/docu-me/actions@v1`", "moberghr")]
+
+    // The wrong owner is still caught in every one of those positions.
+    [InlineData("https://github.com/moberg/docu-me", "moberg")]
+    [InlineData("/plugin marketplace add moberg/docu-me", "moberg")]
+
+    // Not references: a local path segment is not a GitHub owner.
+    [InlineData("projects[\"/Users/mirkobudimir/Dev/docu-me\"].hasTrustDialogAccepted", null)]
+    [InlineData("cd ~/Dev/docu-me && dotnet build", null)]
+    public void Every_shape_the_tree_carries_is_classified_the_way_a_reader_would(
+        string line,
+        string? expectedOwner)
+    {
+        var owners = Slug().Matches(line)
+            .Select(match => match.Groups["owner"].Value)
+            .ToList();
+
+        if (expectedOwner is null)
+        {
+            owners.ShouldBeEmpty($"`{line}` names no repository, so it must contribute no owner.");
+            return;
+        }
+
+        owners.ShouldBe([expectedOwner], $"`{line}` should read as exactly one owner.");
     }
 
     /// <summary>
@@ -142,8 +192,20 @@ public sealed partial class RepositorySlugTests
 
     // A leading boundary so `moberghr/docu-me` is one match with the whole owner, not a suffix of it: the
     // two spellings differ by two characters at the end, which is exactly what a sloppy pattern hides.
+    //
+    // The second lookbehind excludes a local filesystem path. An absolute path to this checkout ends
+    // `…/Dev/docu-me`, and the first boundary alone read `Dev` as an owner — so quoting a path in any
+    // scanned file failed this test with an owner nobody wrote. It cost a red suite for two commits
+    // (a87d6d8, 35d7529) after iter131 pasted the CLI's untrusted-workspace warning, which names
+    // `/Users/mirkobudimir/Dev/docu-me`, into GATES.md. A path segment cannot break a consumer's runner,
+    // which is the only thing this sweep exists to catch.
+    //
+    // So: reject an owner preceded by `/`, unless that `/` closes a GitHub host. Both host shapes the tree
+    // uses stay in scope (`github.com/…` and `raw.githubusercontent.com/…`), as does every bare
+    // `owner/docu-me` in prose, a fence, or a YAML value. Variable-length lookbehind is a .NET regex
+    // feature; Every_shape_the_tree_carries_is_classified_the_way_a_reader_would pins each case.
     [GeneratedRegex(
-        @"(?<![A-Za-z0-9-])(?<owner>[A-Za-z0-9][A-Za-z0-9-]*)/docu-me\b",
+        @"(?<![A-Za-z0-9-])(?<!(?<!github(?:usercontent)?\.com)/)(?<owner>[A-Za-z0-9][A-Za-z0-9-]*)/docu-me\b",
         RegexOptions.ExplicitCapture,
         matchTimeoutMilliseconds: 1000)]
     private static partial Regex Slug();
