@@ -85,6 +85,12 @@ The skill does its own verification against the code, writes the pages, and open
 `gh`. `docume status --json` goes into the body, so the reviewer sees the state of the space next to
 the diff.
 
+Both templates bound that step with `timeout-minutes`, and a job you write yourself should too. On the
+default output format `claude -p` prints nothing until it exits, so a run that hangs leaves an empty
+step log — and without a step timeout it holds the runner for the job default of six hours before
+anything says so. The timeout does not fill the log; it puts the runner's own "has timed out" beside
+it, which is what tells the reader the blank log is a killed run rather than a skill that did nothing.
+
 ## Writing a docs job of your own
 
 Every template opens with the same three lines — install the SDK, add the package feed,

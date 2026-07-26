@@ -198,8 +198,13 @@ jobs:
       # `--dangerously-skip-permissions` is deliberately absent. This job holds a token that can push
       # branches and open PRs, and its input is untrusted text a reviewer wrote in Confluence (rule §1.3).
       # Of every job in this template set, this is the one where the permission gate matters most.
+      #
+      # `timeout-minutes` for the reason docs-refresh.yml spells out: `claude -p` on the default output
+      # format writes nothing until it exits, so a killed run leaves an empty step log. The step timeout is
+      # what puts a labelled cause next to that blank log instead of a cancelled badge six hours later.
       - name: Triage the feedback
         if: steps.inbox.outputs.work == 'true'
+        timeout-minutes: 30
         run: |
           set -euo pipefail
           echo "::notice title=DocuMe::${{ steps.inbox.outputs.new }} untriaged inbox item(s) — running \

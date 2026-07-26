@@ -225,8 +225,21 @@ jobs:
       # `--dangerously-skip-permissions` is deliberately absent. This job holds a token that can push
       # branches and open PRs; the permission gate is the thing standing between an unattended model run
       # and that token, and a template is the worst possible place to remove it.
+      #
+      # `timeout-minutes` is not boilerplate here. `claude -p` on the default output format writes NOTHING
+      # until it exits — a run killed part-way leaves an empty step log, with no partial transcript to read
+      # and no line saying why. Without a step timeout that run would spend the job default (6 h) before
+      # anything cancelled it, and the reader would arrive at a blank log under a cancelled badge. With one,
+      # the runner labels it ("The action … has timed out") right where the blank log is, which is the only
+      # thing that makes the blank log legible. A real run is minutes: 168 s / 24 turns against a small
+      # wiki. Raise it if your wiki is large; do not remove it.
+      #
+      # `--output-format stream-json` would stream progress and solve the blank log directly. It is not used
+      # on purpose: it turns the step log into a wall of JSON objects for every ordinary run, which is a
+      # steep price for legibility in the rare killed one.
       - name: Refresh the drifted pages
         if: steps.drift.outputs.has == 'true'
+        timeout-minutes: 30
         run: |
           set -euo pipefail
           echo "::notice title=DocuMe::${{ steps.drift.outputs.affected }} page(s) drifted since \

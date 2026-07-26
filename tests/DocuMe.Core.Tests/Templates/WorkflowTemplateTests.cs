@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using DocuMe.Core.Drift;
 using DocuMe.Core.Feedback;
@@ -53,6 +54,12 @@ public sealed class WorkflowTemplateTests
     /// them writes to Confluence and none of them holds a credential.
     /// </summary>
     private static readonly string[] ModelDriven = ["docs-refresh.yml", "docs-feedback.yml"];
+
+    /// <summary>
+    /// GitHub's default job timeout in minutes — what a step with no <c>timeout-minutes</c> of its own
+    /// effectively inherits.
+    /// </summary>
+    private const int JobDefaultTimeoutMinutes = 360;
 
     /// <summary>
     /// The templates whose only <c>docume</c> invocation happens inside the skill they run, so the literal
@@ -351,6 +358,66 @@ public sealed class WorkflowTemplateTests
             extra.ShouldBeEmpty(
                 $"{name} grants tool(s) plugin/skills/{skill}/SKILL.md never declares. An unattended "
                 + "model holding a branch-push token gets reach the skill was not reviewed for.");
+        }
+    }
+
+    /// <summary>
+    /// Each headless model run is bounded by its own <c>timeout-minutes</c>, and bounded by less than the
+    /// job default it would otherwise inherit.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Measured at iteration 116: <c>claude -p</c> on the default output format writes nothing at all
+    /// until it exits — a run killed at 420 s left 0 bytes of stdout. So an unattended run that hangs
+    /// produces no partial transcript and no line saying what it was doing, and both templates' next step
+    /// tells the reader to "read the step log above". Without a step timeout the run holds the runner for
+    /// the job default (6 h) first, and what finally arrives is a cancelled badge over an empty log.
+    /// </para>
+    /// <para>
+    /// The timeout does not make the log any less empty. What it does is put the runner's own
+    /// "The action … has timed out" beside it, which is the difference between a blank log that states
+    /// its cause and a blank log that reads like the skill did nothing. A real run is minutes — 168 s,
+    /// 24 turns, the same iteration-116 measurement.
+    /// </para>
+    /// <para>
+    /// Asserted because it is invisible: no yaml linter wants it, the templates are green without it, and
+    /// the failure it prevents only ever happens in somebody else's repository at 03:00. The upper bound
+    /// is the point of the assertion as much as the lower one — a <c>timeout-minutes</c> raised past the
+    /// job default bounds nothing while looking like it does.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_model_run_is_bounded_by_a_step_timeout()
+    {
+        foreach (var name in ModelDriven)
+        {
+            var steps = ModelRunSteps(name);
+
+            // Vacuous-pass guard: a renamed or restructured invocation must fail here rather than leave
+            // the assertions below with nothing to read.
+            var oneRun = $"{name} should hold exactly one `claude -p` step (§11), and the timeout "
+                + "assertion below reads it.";
+
+            steps.Count.ShouldBe(1, oneRun);
+
+            var timeout = Value(steps[0], "timeout-minutes");
+
+            timeout.ShouldNotBeEmpty(
+                $"{name}'s model run carries no timeout-minutes, so a hung run holds the runner for the "
+                + "job default. Its output is buffered until exit, so the reader gets a cancelled badge "
+                + "over an empty log, hours late and with nothing naming the cause.");
+
+            int.TryParse(timeout, CultureInfo.InvariantCulture, out var minutes).ShouldBeTrue(
+                $"{name} spells timeout-minutes as '{timeout}', which is not a whole number of minutes.");
+
+            minutes.ShouldBeGreaterThan(
+                0,
+                $"{name}'s model run is given {minutes} minutes, which cannot complete a model run.");
+            var unbounded = $"{name}'s model run is given {minutes} minutes, at or past the "
+                + $"{JobDefaultTimeoutMinutes}-minute job default it would inherit anyway. A bound that "
+                + "never fires before the runner's own does is not a bound.";
+
+            minutes.ShouldBeLessThan(JobDefaultTimeoutMinutes, unbounded);
         }
     }
 
@@ -1418,6 +1485,23 @@ public sealed class WorkflowTemplateTests
                 Value(step, "if")))
             .ToList();
     }
+
+    /// <summary>
+    /// The steps of <paramref name="name"/> that invoke the model, as their yaml mappings, across every
+    /// job in the file.
+    /// </summary>
+    /// <remarks>
+    /// Found by what the step runs rather than by its name, because the two templates name theirs
+    /// differently ("Refresh the drifted pages", "Triage the feedback") and a name is the one part of a
+    /// step an editor is free to reword.
+    /// </remarks>
+    private static List<YamlMappingNode> ModelRunSteps(string name) =>
+        Mapping(Root(name), "jobs").Children
+            .Select(job => Mapping(job.Value).Children.FirstOrDefault(child => IsKey(child.Key, "steps")).Value)
+            .OfType<YamlSequenceNode>()
+            .SelectMany(steps => steps.Children.OfType<YamlMappingNode>())
+            .Where(step => Value(step, "run").Contains("claude -p", StringComparison.Ordinal))
+            .ToList();
 
     /// <summary>The scalar at <paramref name="key"/>, or empty when the step does not carry it.</summary>
     private static string Value(YamlMappingNode node, string key)
