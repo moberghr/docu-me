@@ -124,7 +124,8 @@ public sealed class DashboardPublisherTests
         // stored body is poisoned with a sentence no renderer produces; a write that merges, appends or
         // falls back to what it read carries the sentence, and the check above — version number and
         // message — would not notice.
-        const string handEdit = "<p>NOTE from a reviewer: keep this paragraph, we edited it here.</p>";
+        const string sentinel = "NOTE from a reviewer";
+        const string handEdit = $"<p>{sentinel}: keep this paragraph, we edited it here.</p>";
 
         using var server = WireMockServer.Start();
         StubSpace(server);
@@ -143,11 +144,21 @@ public sealed class DashboardPublisherTests
 
         result.Outcome.ShouldBe(DashboardUpsertOutcome.Updated);
 
+        // The poison has to have been served, or everything below passes vacuously — and `Updated` does
+        // not prove it: a lookup that answers with no body at all is Updated too
+        // (A_body_Confluence_did_not_return_counts_as_changed). This is the executable half of §9.1 for
+        // the dashboard, so a silent stub drift here would retire the rule's proof without failing
+        // anything.
+        const string unserved = "The fake Confluence never answered the title lookup with the hand edit, "
+            + "so this test is exercising nothing. Fix the stub before trusting it.";
+
+        ServedTitleSearch(server).ShouldContain(sentinel, customMessage: unserved);
+
         const string survived = "The write echoes back part of the body it read, so a hand edit in "
             + "Confluence now survives a republish and the page has two sources of truth (rule §9.1).";
 
         var body = RequestBody(server, "PUT");
-        body.ShouldNotContain("NOTE from a reviewer", Case.Sensitive, survived);
+        body.ShouldNotContain(sentinel, Case.Sensitive, survived);
 
         // Not merely "the sentence is gone": the whole body is the render, so nothing else leaked either.
         JsonDocument.Parse(body).RootElement
@@ -280,6 +291,19 @@ public sealed class DashboardPublisherTests
 
         return body!;
     }
+
+    /// <summary>
+    /// What the fake Confluence actually answered the title lookup with, response side rather than
+    /// request side. Lets a test that poisons that response prove the poison was served instead of
+    /// assuming it — the same guard <c>Cli.CliConfluenceTests.Served</c> gives the page path.
+    /// </summary>
+    private static string ServedTitleSearch(WireMockServer server) =>
+        string.Join(
+            Environment.NewLine,
+            server.LogEntries
+                .Where(log => string.Equals(log.RequestMessage?.Path, PagesPath, StringComparison.Ordinal)
+                    && string.Equals(log.RequestMessage?.Method, "GET", StringComparison.OrdinalIgnoreCase))
+                .Select(log => log.ResponseMessage?.BodyData?.BodyAsString ?? string.Empty));
 
     private static ConfluenceClient CreateClient(WireMockServer server) => ConfluenceClient.Create(
         new ConfluenceClientOptions

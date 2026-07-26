@@ -473,6 +473,107 @@ public sealed class CliConfluenceTests : IDisposable
     }
 
     /// <summary>
+    /// The same steady-state run at more than one page, which is the only place its per-page costs can be
+    /// told apart from its per-run ones.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="A_republish_updates_the_page_it_already_published_and_writes_nothing_else"/> pins the
+    /// footprint exactly, but at N=1 — where "once for the run", "once per parent" and "once per page" are
+    /// all the number 1 and no assertion can distinguish them. The distinction is the whole cost model of a
+    /// real wiki: a space lookup that moved inside the page loop would be 80 extra round trips on an
+    /// 80-page publish, and nothing here or one layer down would notice.
+    /// </para>
+    /// <para>
+    /// So this asserts the shape at N=3: the space resolved once before the first write, the child order
+    /// read once for the one parent that has siblings under it, and only the page read, the comment check
+    /// and the write itself repeating per page.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_three_page_republish_reads_the_space_once_for_the_run_and_costs_three_requests_per_page()
+    {
+        var work = Scaffolded(
+            nameof(A_three_page_republish_reads_the_space_once_for_the_run_and_costs_three_requests_per_page));
+
+        const string setup = "guides/setup.md";
+        const string deploy = "guides/deploy.md";
+
+        Write(work, setup, "---\ntitle: Setup Guide\n---\n\n# Setup\n\nHow to set the thing up.\n");
+        Write(work, deploy, "---\ntitle: Deploy Guide\n---\n\n# Deploy\n\nHow to ship it.\n");
+
+        StubSpace();
+        StubCreate();
+        StubChildren();
+
+        Invoke(work, "publish").Code.ShouldBe(0, "The fixture's own first publish failed.");
+
+        _created.Count.ShouldBe(3, "The fixture did not publish a three-page wiki.");
+
+        // Every page changed, so the second run has a body to write for all three: a page the planner
+        // skipped would cost nothing and hide whatever the ones that ran did cost.
+        Write(work, HomePath, $"# {HomeTitle}\n\nRewritten in the repo after the first publish.\n");
+        Write(work, setup, "---\ntitle: Setup Guide\n---\n\n# Setup\n\nRewritten too.\n");
+        Write(work, deploy, "---\ntitle: Deploy Guide\n---\n\n# Deploy\n\nAnd this one.\n");
+
+        _server.ResetLogEntries();
+        StubRepublish(RemoteVersion);
+
+        var run = Invoke(work, "publish");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        var footprint = Seen()
+            .Select(request => $"{request.Method} {request.Path}")
+            .ToList();
+
+        var because = $"A three-page republish sent Confluence "
+            + $"[{string.Join(", ", footprint)}].{Environment.NewLine}{run.Diagnostics}";
+
+        // Named first and on its own, because this is the regression the N=1 test cannot see and the
+        // exact list below would report as a diff rather than as a sentence.
+        var spaceReads = footprint.Count(entry =>
+            string.Equals(entry, "GET /wiki/api/v2/spaces", StringComparison.Ordinal));
+
+        var perRun = $"The space was resolved {spaceReads} time(s) for a 3-page run. It is a whole-run "
+            + "lookup, not a per-page one — one per page is 80 wasted round trips on an 80-page wiki, and "
+            + $"a token that cannot see the space is a run-level failure either way.{Environment.NewLine}"
+            + because;
+
+        spaceReads.ShouldBe(1, perRun);
+
+        // The pages in the order the first run created them, which is the tree order the second run walks
+        // in as well: home first, then the two under it.
+        var expected = new List<string> { "GET /wiki/api/v2/spaces" };
+
+        foreach (var pageId in _created)
+        {
+            expected.Add($"GET /wiki/api/v2/pages/{pageId}");
+            expected.Add($"GET /wiki/api/v2/pages/{pageId}/inline-comments");
+            expected.Add($"PUT /wiki/api/v2/pages/{pageId}");
+        }
+
+        // One read for the one parent with more than one child under it (§6.2's post-pass), after the
+        // writes rather than per page: the order it reconciles is the order the whole run left behind.
+        expected.Add($"GET /wiki/api/v2/pages/{_created[0]}/children");
+
+        footprint.ShouldBe(expected, because);
+
+        // And all three were recorded, not just the one the run happened to finish on: a page written but
+        // not recorded is a page the next run creates a second time (§6.2 step 8).
+        var pages = State(work).Pages;
+
+        var recorded = pages.Keys.Order(StringComparer.Ordinal).ToList();
+
+        recorded.ShouldBe([HomePath, deploy, setup], because);
+
+        foreach (var path in pages.Keys)
+        {
+            pages[path].PublishedVersion.ShouldBe(RemoteVersion + 1, $"{path}: {because}");
+        }
+    }
+
+    /// <summary>
     /// Rule §9.1, on the write path this time: the repo is the source of truth, and a hand edit made in
     /// Confluence is lost on republish by design. The executable half of the rule was pinned for the
     /// dashboard only
@@ -746,6 +847,43 @@ public sealed class CliConfluenceTests : IDisposable
             }
             """;
     }
+
+    /// <summary>
+    /// Answers §6.2's child-order read with the children already in the order the source tree wants, so
+    /// the post-pass has nothing to move and the footprint stays the one the page loop left. Priority as
+    /// for the comments stub: this path sits under the page-read wildcard too.
+    /// </summary>
+    /// <remarks>
+    /// The children are every page this server created except the one being asked about, in the order it
+    /// created them — which is tree order, because that is the order the run publishes in. Answering from
+    /// what the server actually handed out keeps the fixture honest about ids the test never chose.
+    /// </remarks>
+    private void StubChildren() =>
+        _server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/children"))
+                .UsingGet())
+            .AtPriority(-1)
+            .RespondWith(Json(request =>
+            {
+                var parent = request.Path.Split('/')[^2];
+
+                string[] children;
+                lock (_created)
+                {
+                    children = [.. _created.Where(id => !string.Equals(id, parent, StringComparison.Ordinal))];
+                }
+
+                var results = children.Select((id, index) => $$"""
+                    {
+                      "id": "{{id}}", "status": "current", "type": "page", "spaceId": "{{SpaceId}}",
+                      "title": "child {{index.ToString(CultureInfo.InvariantCulture)}}",
+                      "childPosition": {{index.ToString(CultureInfo.InvariantCulture)}}
+                    }
+                    """);
+
+                return $$"""{ "results": [{{string.Join(",", results)}}], "_links": {} }""";
+            }));
 
     /// <summary>The title lookup answering "no such page", which is what makes the dashboard a create.</summary>
     private void StubNoPageWithTitle() =>
