@@ -117,6 +117,45 @@ public sealed class DashboardPublisherTests
     }
 
     [Fact]
+    public async Task The_write_carries_the_render_it_was_given_not_the_body_it_read()
+    {
+        // Rule §9.1's executable half (see Confluence.RemoteBodyReadTests): this is the product's only
+        // page-body read, so it is the only place a hand edit in Confluence could survive a republish. The
+        // stored body is poisoned with a sentence no renderer produces; a write that merges, appends or
+        // falls back to what it read carries the sentence, and the check above — version number and
+        // message — would not notice.
+        const string handEdit = "<p>NOTE from a reviewer: keep this paragraph, we edited it here.</p>";
+
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubTitleSearch(server, existing: Body("one page stale", "2026-08-01 06:00 UTC") + handEdit, version: 4);
+        StubUpdate(server, version: 5);
+
+        using var client = CreateClient(server);
+        var rendered = Body("two pages stale", "2026-08-02 07:00 UTC");
+        var result = await DashboardPublisher.UpsertAsync(
+            client,
+            Confluence(),
+            SpaceKey,
+            Title,
+            rendered,
+            TestContext.Current.CancellationToken);
+
+        result.Outcome.ShouldBe(DashboardUpsertOutcome.Updated);
+
+        const string survived = "The write echoes back part of the body it read, so a hand edit in "
+            + "Confluence now survives a republish and the page has two sources of truth (rule §9.1).";
+
+        var body = RequestBody(server, "PUT");
+        body.ShouldNotContain("NOTE from a reviewer", Case.Sensitive, survived);
+
+        // Not merely "the sentence is gone": the whole body is the render, so nothing else leaked either.
+        JsonDocument.Parse(body).RootElement
+            .GetProperty("body").GetProperty("storage").GetProperty("value").GetString()
+            .ShouldBe(rendered);
+    }
+
+    [Fact]
     public async Task A_body_Confluence_did_not_return_counts_as_changed()
     {
         // A page a human rewrote by hand, or one the API answered without a body: overwritten, which is
