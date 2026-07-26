@@ -51,6 +51,14 @@ public sealed class CliFeedbackTests : IDisposable
 
     private const string ReviewerName = "Jónas Þór";
 
+    /// <summary>
+    /// A second human, so a run can have more than one distinct comment author. Every other test in the
+    /// repo has exactly one, and at one author "once per author" and "once per run" are the same number.
+    /// </summary>
+    private const string SecondReviewerAccount = "second-reviewer-account";
+
+    private const string SecondReviewerName = "Auður Ösp";
+
     /// <summary>The comment every ingestion test files, and the one the reply tests answer.</summary>
     private const string CommentId = "5001";
 
@@ -176,6 +184,164 @@ public sealed class CliFeedbackTests : IDisposable
             + run.Diagnostics;
 
         files.Length.ShouldBe(1, because);
+    }
+
+    /// <summary>
+    /// What one ingestion run costs, at a fixture where the three rates the code claims are three
+    /// different numbers: <strong>one identity read for the run</strong> (not per page), <strong>two
+    /// comment reads per published page</strong> (and none for a page state has never published), and
+    /// <strong>one author lookup per distinct author</strong> (not per comment). Three published pages,
+    /// four comments and two humans, so 3, 4 and 2 can all be told apart — and the whole request list is
+    /// pinned, in order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every other ingestion fixture in the repo runs at one page and one author, where all three rates
+    /// collapse to the same number and no regression between them has a signature.
+    /// <c>FeedbackReader</c>'s remarks state the cost in prose — "two requests per published page … plus
+    /// one for the authenticating account and one per distinct comment author" — and prose is not a gate.
+    /// On §6.3's six-hourly cron over an ~80-page wiki, an identity read that moved into the page loop is
+    /// 79 extra round trips a run, forever.
+    /// </para>
+    /// <para>
+    /// The author names are asserted alongside the counts because the cheap wrong implementation of
+    /// "cached per account" is "resolved once per run": it costs one request instead of two <em>and</em>
+    /// signs the second reviewer's comment with the first reviewer's name. A reviewer who cannot
+    /// recognize themselves in an inbox item is an inbox item nobody claims.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Two_reviewers_over_three_pages_cost_two_author_lookups_and_one_identity_read()
+    {
+        const string guidesHomePath = "guides/README.md";
+        const string guidesHomePageId = "770002";
+        const string ratesPath = "guides/rates.md";
+        const string ratesPageId = "770003";
+        const string draftPath = "drafts/new.md";
+
+        // Ordinal by page path is the order the reader walks state in: 'R' before 'd' before 'g'.
+        const string secondCommentId = "5002";
+        const string guidesCommentId = "5003";
+        const string botCommentId = "5004";
+        const string secondCommentCreatedAt = "2026-08-02T15:30:00.000Z";
+
+        var work = Seeded(
+            nameof(Two_reviewers_over_three_pages_cost_two_author_lookups_and_one_identity_read),
+            new Dictionary<string, PageState>(StringComparer.Ordinal)
+            {
+                [HomePath] = new() { PageId = PageId, Title = HomeTitle, PublishedVersion = 1 },
+                [guidesHomePath] = new() { PageId = guidesHomePageId, Title = "Guides", PublishedVersion = 1 },
+                [ratesPath] = new() { PageId = ratesPageId, Title = "Rates", PublishedVersion = 1 },
+
+                // Never published, so there is no Confluence page for a comment to be on. It must cost
+                // nothing at all — not a read, not a search.
+                [draftPath] = new(),
+            });
+
+        StubCurrentUser();
+        StubAuthor(ReviewerAccount, ReviewerName);
+        StubAuthor(SecondReviewerAccount, SecondReviewerName);
+
+        // Two comments by one reviewer, so "per comment" and "per author" cannot both be 1.
+        StubComments(
+            PageId,
+            footer: Collection(
+                FooterComment(PageId, CommentId, ReviewerAccount, CommentCreatedAt),
+                FooterComment(PageId, secondCommentId, ReviewerAccount, secondCommentCreatedAt)),
+            inline: NoComments);
+
+        StubComments(
+            guidesHomePageId,
+            footer: Collection(
+                FooterComment(guidesHomePageId, guidesCommentId, SecondReviewerAccount, "2026-08-03T08:00:00.000Z")),
+            inline: NoComments);
+
+        // DocuMe's own reply, which §6.3 skips — and which costs no lookup, because the identity read
+        // already named the bot and seeded the author cache with it.
+        StubComments(
+            ratesPageId,
+            footer: Collection(
+                FooterComment(ratesPageId, botCommentId, BotAccount, "2026-08-03T09:15:00.000Z")),
+            inline: NoComments);
+
+        var run = Invoke(work, "sync", "--comments");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        // First and on its own, so the regression reads as a sentence: four comments and three pages, and
+        // the lookups are neither of those numbers.
+        var lookups = Seen().Count(request =>
+            string.Equals(request.Path, "/wiki/rest/api/user", StringComparison.Ordinal));
+
+        var perAuthor = "An author lookup per comment (4) or per page (3), not per author."
+            + Environment.NewLine + run.Diagnostics;
+
+        lookups.ShouldBe(2, perAuthor);
+
+        var identityReads = Seen().Count(request =>
+            string.Equals(request.Path, "/wiki/rest/api/user/current", StringComparison.Ordinal));
+
+        var perRun = "The authenticating account was read once per page, not once per run."
+            + Environment.NewLine + run.Diagnostics;
+
+        identityReads.ShouldBe(1, perRun);
+
+        var expected = new List<string>
+        {
+            "GET /wiki/rest/api/user/current",
+            $"GET /wiki/api/v2/pages/{PageId}/footer-comments",
+            $"GET /wiki/api/v2/pages/{PageId}/inline-comments",
+            $"GET /wiki/rest/api/user?accountId={ReviewerAccount}",
+            $"GET /wiki/api/v2/pages/{guidesHomePageId}/footer-comments",
+            $"GET /wiki/api/v2/pages/{guidesHomePageId}/inline-comments",
+            $"GET /wiki/rest/api/user?accountId={SecondReviewerAccount}",
+            $"GET /wiki/api/v2/pages/{ratesPageId}/footer-comments",
+            $"GET /wiki/api/v2/pages/{ratesPageId}/inline-comments",
+        };
+
+        Footprint().ShouldBe(
+            expected,
+            $"The ingestion footprint changed.{Environment.NewLine}{run.Diagnostics}");
+
+        // Vacuity guard: a run that read nine requests and reconciled nothing would send the same nine.
+        run.Flowed.ShouldContain(
+            "4 comment(s) on 3 published page(s) (1 page(s) not published yet, skipped)",
+            customMessage: run.Diagnostics);
+
+        var filed = new DirectoryInfo(InboxPath(work))
+            .GetFiles($"*{FeedbackItemFile.Extension}")
+            .Select(file => file.Name)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        // The bot's comment is absent, and the slug carries the directory: a triager has to be able to
+        // tell which README a comment is on.
+        var inbox = new List<string>
+        {
+            $"README-{CommentId}.json",
+            $"README-{secondCommentId}.json",
+            $"guides-README-{guidesCommentId}.json",
+        };
+
+        filed.ShouldBe(inbox, $"The wrong items were filed.{Environment.NewLine}{run.Diagnostics}");
+
+        // Each reviewer signed their own comment — the half a once-per-run cache gets wrong.
+        Item(InboxPath(work), $"README-{secondCommentId}.json")
+            .GetProperty("author")
+            .GetString()
+            .ShouldBe(ReviewerName, run.Diagnostics);
+
+        Item(InboxPath(work), $"guides-README-{guidesCommentId}.json")
+            .GetProperty("author")
+            .GetString()
+            .ShouldBe(SecondReviewerName, run.Diagnostics);
+
+        // Both of the home page's comments were really processed, not just the first: the cursor sits on
+        // the later one.
+        var state = State(work);
+
+        state.Pages[HomePath].FeedbackCursor.ShouldBe(secondCommentCreatedAt, run.Diagnostics);
+        state.Pages[draftPath].FeedbackCursor.ShouldBeNull(run.Diagnostics);
     }
 
     /// <summary>
@@ -501,6 +667,25 @@ public sealed class CliFeedbackTests : IDisposable
 
     private static string NoComments => """{ "results": [], "_links": {} }""";
 
+    /// <summary>Wraps comment objects in the collection shape both comment endpoints answer with.</summary>
+    private static string Collection(params string[] comments) =>
+        $$"""{ "results": [{{string.Join(",", comments)}}], "_links": {} }""";
+
+    /// <summary>
+    /// One footer comment as a bare JSON object, for <see cref="Collection"/> — the spelling
+    /// <see cref="FooterComments"/> hard-codes, with its page, author and timestamp free.
+    /// </summary>
+    private static string FooterComment(string pageId, string id, string author, string createdAt) => $$"""
+        {
+          "id": "{{id}}",
+          "status": "current",
+          "pageId": "{{pageId}}",
+          "version": { "number": 1, "createdAt": "{{createdAt}}", "authorId": "{{author}}" },
+          "body": { "storage": { "representation": "storage",
+                    "value": "<p>The rate table is out of date.</p>" } }
+        }
+        """;
+
     /// <summary>One footer comment, with the two identities a read needs: its author and its timestamp.</summary>
     private static string FooterComments(string id, string body = "<p>The rate table is out of date.</p>")
         => $$"""
@@ -560,7 +745,20 @@ public sealed class CliFeedbackTests : IDisposable
     /// A consumer repo as `docume init` leaves it, pointed at this test's own server, with one published
     /// page in its state file.
     /// </summary>
-    private string Seeded(string name)
+    private string Seeded(string name) => Seeded(
+        name,
+        new Dictionary<string, PageState>(StringComparer.Ordinal)
+        {
+            [HomePath] = new()
+            {
+                PageId = PageId,
+                Title = HomeTitle,
+                PublishedVersion = 1,
+            },
+        });
+
+    /// <summary>The same repo with a page map of the caller's choosing, for a run at more than one page.</summary>
+    private string Seeded(string name, IReadOnlyDictionary<string, PageState> pages)
     {
         var work = Path.Combine(_root, name);
         Directory.CreateDirectory(work);
@@ -572,18 +770,7 @@ public sealed class CliFeedbackTests : IDisposable
         var path = StatePath(work);
         var state = StateStore.Load(path);
 
-        StateStore.Save(path, state with
-        {
-            Pages = new Dictionary<string, PageState>(StringComparer.Ordinal)
-            {
-                [HomePath] = new()
-                {
-                    PageId = PageId,
-                    Title = HomeTitle,
-                    PublishedVersion = 1,
-                },
-            },
-        });
+        StateStore.Save(path, state with { Pages = pages });
 
         return work;
     }
@@ -593,6 +780,23 @@ public sealed class CliFeedbackTests : IDisposable
         _server.LogEntries
             .Select(entry => entry.RequestMessage)
             .OfType<IRequestMessage>()
+            .ToList();
+
+    /// <summary>
+    /// Every request as <c>METHOD /path</c>, naming the account a user lookup asked about: two lookups
+    /// that differ only in their query string are the whole point of a two-author fixture.
+    /// </summary>
+    private List<string> Footprint() =>
+        Seen()
+            .Select(request =>
+            {
+                var query = request.Query;
+                var account = query is not null && query.TryGetValue("accountId", out var values)
+                    ? $"?accountId={values.FirstOrDefault()}"
+                    : string.Empty;
+
+                return $"{request.Method} {request.Path}{account}";
+            })
             .ToList();
 
     /// <summary>The requests that changed something, as method plus path.</summary>
@@ -616,15 +820,18 @@ public sealed class CliFeedbackTests : IDisposable
         return document.RootElement.Clone();
     }
 
-    /// <summary>The two comment collections of the one page this suite publishes.</summary>
-    private void StubComments(string footer, string inline)
+    /// <summary>The two comment collections of the one page most of this suite publishes.</summary>
+    private void StubComments(string footer, string inline) => StubComments(PageId, footer, inline);
+
+    /// <summary>The two comment collections of one page.</summary>
+    private void StubComments(string pageId, string footer, string inline)
     {
         _server
-            .Given(Request.Create().WithPath($"/wiki/api/v2/pages/{PageId}/footer-comments").UsingGet())
+            .Given(Request.Create().WithPath($"/wiki/api/v2/pages/{pageId}/footer-comments").UsingGet())
             .RespondWith(Json(footer));
 
         _server
-            .Given(Request.Create().WithPath($"/wiki/api/v2/pages/{PageId}/inline-comments").UsingGet())
+            .Given(Request.Create().WithPath($"/wiki/api/v2/pages/{pageId}/inline-comments").UsingGet())
             .RespondWith(Json(inline));
     }
 
@@ -634,9 +841,16 @@ public sealed class CliFeedbackTests : IDisposable
             .Given(Request.Create().WithPath("/wiki/rest/api/user/current").UsingGet())
             .RespondWith(Json($$"""{ "accountId": "{{BotAccount}}", "displayName": "DocuMe" }"""));
 
+    /// <summary>
+    /// One account, matched on the <c>accountId</c> it was asked about — so a run with two authors gets
+    /// two different names back rather than whichever stub was registered last.
+    /// </summary>
     private void StubAuthor(string accountId, string displayName) =>
         _server
-            .Given(Request.Create().WithPath("/wiki/rest/api/user").UsingGet())
+            .Given(Request.Create()
+                .WithPath("/wiki/rest/api/user")
+                .WithParam("accountId", accountId)
+                .UsingGet())
             .RespondWith(Json($$"""
                 { "accountId": "{{accountId}}", "displayName": {{Quoted(displayName)}} }
                 """));
