@@ -67,6 +67,13 @@ internal static class DocumeCli
         info.Environment["DOCUME_CONFLUENCE_EMAIL"] = Email;
         info.Environment["DOCUME_CONFLUENCE_TOKEN"] = ApiToken;
 
+        // Pinned for the same reason as the two above, and inherited from the host exactly as a token
+        // would be: Spectre.Console colorizes when it detects a CI host, so on a GitHub runner the CLI
+        // prints escape sequences mid-sentence and every assertion here reads the text. Measured at
+        // iter134 — GITHUB_ACTIONS alone does it, CI=true does not — after ci.yml's Test step turned out
+        // to be red on a runner over output that is green on every developer's machine.
+        info.Environment["NO_COLOR"] = "1";
+
         foreach (var (key, value) in environment ?? new Dictionary<string, string>(StringComparer.Ordinal))
         {
             info.Environment[key] = value;

@@ -145,6 +145,40 @@ public sealed partial class CliExecutionTests : IDisposable
     }
 
     [Fact]
+    public void What_the_cli_prints_does_not_depend_on_the_host_looking_like_a_runner()
+    {
+        const string name = nameof(What_the_cli_prints_does_not_depend_on_the_host_looking_like_a_runner);
+
+        var plain = Invoke(Scratch($"{name}-plain"), "init", "--space", SpaceKey, "--base-url", BaseUrl);
+
+        var runner = DocumeCli.Invoke(
+            Scratch($"{name}-runner"),
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["GITHUB_ACTIONS"] = "true" },
+            "init",
+            "--space",
+            SpaceKey,
+            "--base-url",
+            BaseUrl);
+
+        plain.Code.ShouldBe(0, plain.Diagnostics);
+        runner.Code.ShouldBe(0, runner.Diagnostics);
+
+        // Vacuity floor: two empty strings compare equal, so an output-only assertion would pass
+        // against a command that printed nothing. `init` reports one row per file it wrote.
+        plain.Output.ShouldContain("created", customMessage: plain.Diagnostics);
+
+        // Measured at iter134 against a clean clone: GITHUB_ACTIONS alone (CI=true does not do it) makes
+        // Spectre.Console colorize, every assertion in this folder reads the printed text, and the escape
+        // sequences land mid-sentence — so ci.yml's Test step fails on a runner over output that is green
+        // on every developer's machine. `init`'s table names no absolute path, so two runs in two
+        // directories print the same bytes and any difference here is the host leaking in.
+        var because = "The CLI's stdout changed because the host looks like a GitHub runner."
+            + Environment.NewLine + runner.Diagnostics;
+
+        runner.Output.ShouldBe(plain.Output, because);
+    }
+
+    [Fact]
     public void Init_refuses_a_legacy_map_without_adopt()
     {
         var work = Scratch(nameof(Init_refuses_a_legacy_map_without_adopt));
