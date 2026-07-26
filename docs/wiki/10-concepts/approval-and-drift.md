@@ -20,16 +20,18 @@ finding: somebody signed off on a description that is no longer true.
 ## How approval is recorded
 
 A reviewer adds the `approved` label in Confluence. `docume sync --labels` reads it and writes an
-approval entry into `_meta/state.json`, carrying the page version and the content hash it was
-approved at.
+approval entry into `_meta/state.json`, carrying the page version it was approved at. The entry
+holds no content hash: the hash lives on the page entry beside it and always describes the *last
+publish*, so invalidation is decided when a publish computes a new hash, not by comparing against a
+hash the approval remembered.
 
 | Field | Meaning |
 |---|---|
 | `status` | `approved` or `needs-review` |
 | `approvedBy` | Always `unknown` — see the note below |
-| `approvedAt` | When the sync run first saw the label |
+| `approvedAt` | When a sync run saw the label at `approvedVersion`. Restamped if the page reaches a new version with the label still on, and the stamp it displaces goes to `history` |
 | `approvedVersion` | The Confluence page version the approval applies to |
-| `history` | Every prior approval, kept when one is invalidated |
+| `history` | Every prior approval. One is archived when an approval is invalidated, and also when a still-valid approval is re-recorded at a newer version |
 
 > [!NOTE]
 > `approvedBy` reads `unknown` by design. Confluence Cloud exposes no label author anywhere the API
@@ -39,16 +41,31 @@ approved at.
 
 ## What invalidates an approval
 
-Republishing a page whose **content hash changed**. The hash is taken over the converted body before
-the banner is injected, which is what keeps machine noise out of it:
+Two things, and they run through the same transition.
 
-- A new publish date in the banner does not invalidate an approval.
+**A republish whose content hash changed.** The hash is taken over the converted body before the
+banner is injected, which is what keeps machine noise out of it:
+
+- Editing one sentence of the markdown invalidates.
+- A new publish date in the banner does not.
 - A dashboard refresh does not.
-- An attachment re-upload with identical bytes does not.
-- Editing one sentence of the markdown does.
+- Reparenting a page does not: where a page hangs is not what a reviewer approved.
+- `--force` does not on its own. It re-uploads everything, but an unchanged hash means unchanged
+  content, and §8 invalidates on content change only.
 
 When it happens, DocuMe removes the `approved` label from the page, moves the approval into `history`
 and sets `status` to `needs-review`. Nothing is lost, and nobody has to notice manually.
+
+Attachment bytes sit outside the hash entirely, and that has one consequence worth stating plainly:
+a hand-placed image whose bytes change is **re-uploaded with the approval left standing**, because
+the body still says the same thing. It is the one case where an approved page visibly changes
+without a re-review. A mermaid diagram is not that case — its attachment filename is derived from
+the diagram source, so editing a diagram changes the body and invalidates like any other edit.
+
+**A reviewer taking the label off.** `docume sync --labels` reads "label absent, state says approved"
+as a revocation and applies the identical transition: the approval is archived to `history` and
+`status` becomes `needs-review`. There is no label for DocuMe to remove here — the reviewer already
+removed it.
 
 ## How drift is found
 
