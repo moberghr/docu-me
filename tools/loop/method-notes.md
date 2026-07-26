@@ -263,3 +263,40 @@
     is equally consistent with "the hook fixed it" and "the child never edited". The control cell
     (identical prompt, scratch settings with the `hooks` key removed) is what distinguishes them, and
     it doubles as proof that the currently-declared hook does nothing.
+
+## CI fidelity: the host the suite is verified on (iter134)
+
+  * **`GITHUB_ACTIONS=true` CHANGES WHAT THE CLI PRINTS, AND `CI=true` DOES NOT.** Spectre.Console
+    colourises when it detects a CI host, so on a runner `docume` emits
+    `\x1b[38;5;2m4\x1b[0m comment(s) on …` and any assertion reading the text across a colour boundary
+    fails. This is why 133 iterations of green local runs said nothing about ci.yml: no developer
+    machine sets `GITHUB_ACTIONS`. **To verify a claim about CI, set the variable the runner sets** —
+    `CI=true` alone is not a runner, and it was the marker that did nothing here.
+  * **NEUTRALISE IT WITH `NO_COLOR`, MEASURED: `TERM=dumb` DOES NOT WORK,** and an **EMPTY `NO_COLOR`
+    STILL COUNTS AS SET** (Spectre keys on presence, not on the NO_COLOR spec's non-empty rule) — so
+    `NO_COLOR=""` cannot serve as the "colour back on" control cell. `ProcessStartInfo.Environment`
+    can only set a variable, never unset one, so a harness that pins `NO_COLOR` for its children has
+    no way to hand one of them colour again.
+  * **WHEN THE ASSERTION'S "EXPECTED" IS VISIBLY PRESENT IN THE "ACTUAL", STOP STRIPPING ANSI AND
+    PRINT `repr()`.** iter134's probe scrubbed escapes before printing, so Shouldly's
+    "should contain … but did not" sat directly above stdout that plainly contained the string, and
+    the cause stayed invisible for an hour. The same rule as `modelUsage` and `--include-hook-events`:
+    ask the layer for raw bytes rather than a rendering.
+  * **A "CLEAN CLONE" CHECK HAS TWO SHAPES AND ONLY ONE IS WHAT GITHUB DOES.** `git clone` gives
+    tracked files with full history; `actions/checkout@v4` gives `--depth 1`. Run both
+    (`.mtk/paths-134/probe-ci-clean-clone.py`): the full cell catches a dependency on a gitignored
+    file, the shallow cell catches a test that walks history. Clone from `file://<repo>` so the clone
+    is of LOCAL HEAD — cloning from `origin` would test iter74, since the loop has never pushed.
+  * **PIN THE ENVIRONMENT A CHILD PROCESS INHERITS, NOT JUST THE ONE YOU PASS IT.**
+    `tests/…/Cli/DocumeCli.cs` already pinned the credential placeholders on the reasoning that "a
+    suite whose output depends on whether the developer exported a token is a suite that passes
+    locally only"; `GITHUB_ACTIONS` was the same hazard one layer out, and the fix belonged in the
+    same three lines. When a test must be immune to the host, set the hostile variable on the CHILD
+    inside the test — then it fails on a laptop too, instead of only on the runner.
+  * **`state.json` HAS ~30 TOKENS OF HEADROOM AGAINST `check-state-size.py`'s 20,000-token BUDGET
+    (iter134), and these `done` records are lengthening: iter133 3.4 KB, iter134 5.6 KB.** When the
+    check trips, condense the `doneRecent` entry in BOTH state.json and the archive so the
+    duplication stays verbatim (`doneArchive.howToAppend` permits exactly that). Do not raise the
+    budget to suit the prose that broke it. And note where this paragraph lives: iter134 first wrote
+    it into `nextAction`, which pushed state.json over the budget it was warning about — durable
+    method advice goes HERE, which is the rule this file exists to enforce.
