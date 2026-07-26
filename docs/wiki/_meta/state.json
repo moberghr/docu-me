@@ -10,7 +10,7 @@
       "publishedVersion": 1,
       "attachments": {},
       "diagramWidths": {},
-      "stale": false
+      "stale": true
     },
     "10-concepts/README.md": {
       "pageId": "451969025",
@@ -20,7 +20,7 @@
       "publishedVersion": 1,
       "attachments": {},
       "diagramWidths": {},
-      "stale": false
+      "stale": true
     },
     "10-concepts/approval-and-drift.md": {
       "pageId": "451706882",
@@ -44,7 +44,7 @@
       "diagramWidths": {
         "mermaid-02c4f9e7ccf0392c.svg": "1020"
       },
-      "stale": false
+      "stale": true
     },
     "20-reference/README.md": {
       "pageId": "451969060",
@@ -54,7 +54,7 @@
       "publishedVersion": 1,
       "attachments": {},
       "diagramWidths": {},
-      "stale": false
+      "stale": true
     },
     "20-reference/cli.md": {
       "pageId": "451969089",
@@ -64,7 +64,7 @@
       "publishedVersion": 1,
       "attachments": {},
       "diagramWidths": {},
-      "stale": false
+      "stale": true
     },
     "20-reference/configuration.md": {
       "pageId": "451936315",
@@ -84,7 +84,7 @@
       "publishedVersion": 1,
       "attachments": {},
       "diagramWidths": {},
-      "stale": false
+      "stale": true
     },
     "30-automation/README.md": {
       "pageId": "451936363",
@@ -94,7 +94,7 @@
       "publishedVersion": 1,
       "attachments": {},
       "diagramWidths": {},
-      "stale": false
+      "stale": true
     },
     "30-automation/skills.md": {
       "pageId": "451936390",
@@ -104,7 +104,7 @@
       "publishedVersion": 1,
       "attachments": {},
       "diagramWidths": {},
-      "stale": false
+      "stale": true
     },
     "30-automation/workflows.md": {
       "pageId": "451969112",
@@ -114,7 +114,7 @@
       "publishedVersion": 1,
       "attachments": {},
       "diagramWidths": {},
-      "stale": false
+      "stale": true
     },
     "_meta/GAPS.md": {
       "pageId": "452001793",
