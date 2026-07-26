@@ -26,12 +26,28 @@ total (68900 tokens, cap 25000)". So the notice is explicit and machine-readable
 iter128's "truncation looks like success" was about an agent skimming past it, not about the tool
 hiding it. To re-measure: build a file over the cap but under 256 KB, Read it whole, and divide.
 
-  * JSON, measured iter128:     74,115 bytes -> 31,303 tokens = 2.368 B/tok
-  * Markdown, measured iter129: 179,382 bytes -> 68,900 tokens = 2.604 B/tok
-    (.mtk/paths-129/calibrate-read-tokens.py rebuilds that file from real repo prose)
+Every measurement taken that way is recorded in MEASURED below, and `check_calibration` asserts the
+constants stay conservative against all of them. Add a row when you measure a new file; do not
+adjust a constant without one.
 
-Both constants below are rounded DOWN from the measurement, so the estimate OVER-states tokens and
-the check trips slightly early rather than slightly late.
+WHAT ITER138 CORRECTED, BECAUSE THE REASONING HERE WAS WRONG. This docstring used to end:
+
+    "Both constants below are rounded DOWN from the measurement, so the estimate OVER-states
+     tokens and the check trips slightly early rather than slightly late."
+
+Rounding the constant down does make the estimate conservative - but only against the ONE file the
+constant was measured on. `tokens = bytes / constant`, so the estimate over-states tokens only while
+the constant is BELOW the file's true ratio. A denser file has a LOWER ratio, and once a real file
+sits under the constant the estimate UNDER-states it and the check trips LATE, which is the exact
+failure the script exists to prevent.
+
+That was not hypothetical. Markdown was calibrated at iter129 on a CONCATENATION of seven repo files
+(2.604 B/tok) and the constant set to 2.5. iter138 measured two individual files and they straddle
+it: PLAN.md is sparser at 2.646, but `tools/loop/handoff-archive.md` is DENSER at 2.447 - so its
+32,783 real tokens were being estimated at 32,080. Identifier-heavy prose (type names, XML
+fragments, paths) tokenizes worse than spec prose, and a blend cannot show that. THE RULE THAT
+REPLACES THE OLD ONE: pin each constant at or below the DENSEST file ever measured of that kind,
+never at the average.
 """
 
 import json
@@ -50,7 +66,21 @@ READ_TOKEN_CAP = 25_000
 READ_BYTE_CEILING = 256 * 1024
 
 BYTES_PER_TOKEN_JSON = 2.3
-BYTES_PER_TOKEN_MARKDOWN = 2.5
+# 2.4, not iter129's 2.5: handoff-archive.md measures 2.447 B/tok, so 2.5 under-stated it. See the
+# docstring's iter138 note - the constant belongs at or below the densest file measured, not the mean.
+BYTES_PER_TOKEN_MARKDOWN = 2.4
+
+# EVERY bytes-per-token measurement this loop has taken through the Read tool's truncation notice.
+# (kind, what was measured, bytes, tokens reported by the notice). `check_calibration` fails if a
+# constant above drifts over the smallest ratio here, which is what keeps the estimate conservative
+# instead of merely well-intentioned. To add a row: python3 .mtk/paths-138/calibrate-file.py <file>,
+# Read the scratch file it writes, then record its bytes and the notice's token total.
+MEASURED = [
+    ("markdown", "iter129 blend of 7 repo files (.mtk/paths-129/calib.md)", 179_382, 68_900),
+    ("markdown", "iter138 PLAN.md x3", 134_931, 50_996),
+    ("markdown", "iter138 tools/loop/handoff-archive.md", 80_200, 32_783),
+    ("json", "iter128 tools/loop/state.json", 74_115, 31_303),
+]
 
 # Headroom matters more than fitting. An iteration that appends 5 KB of prose to `phase` and
 # `nextAction` must not be the one that re-breaks step 1, so the budget leaves room for several.
@@ -94,6 +124,48 @@ def status_for(n_bytes, tokens):
 def headroom(path, tokens):
     """Bytes of the same kind of prose this file could still gain before it truncates."""
     return int((READ_TOKEN_CAP - tokens) * bytes_per_token(path))
+
+
+def check_calibration():
+    """Is every bytes-per-token constant still conservative against every file ever measured?
+
+    ADDED ITER138, after finding the docstring's safety argument inverted (see the module docstring).
+    A constant ABOVE a real file's true ratio makes `est_tokens` under-state that file, so the check
+    waves through something the Read tool will truncate - the one outcome this script exists to stop.
+    Being a check rather than a comment is the point: iter129's constant was optimistic for nine
+    iterations and nothing could notice, because the only record of the measurement was prose.
+    """
+    problems = []
+    constants = {"markdown": BYTES_PER_TOKEN_MARKDOWN, "json": BYTES_PER_TOKEN_JSON}
+
+    print("\nbytes-per-token calibration (measured through the Read tool's truncation notice):")
+    for kind, what, n_bytes, tokens in MEASURED:
+        ratio = n_bytes / tokens
+        constant = constants[kind]
+        margin = ratio - constant
+        flag = "ok" if margin >= 0 else "CONSTANT IS OPTIMISTIC"
+        print(f"  {kind:<8} {ratio:.4f} B/tok  (constant {constant}, margin {margin:+.4f})  {flag}  {what}")
+        if margin < 0:
+            understated = int(n_bytes / ratio) - int(n_bytes / constant)
+            problems.append(
+                f"{kind} constant {constant} exceeds the {ratio:.4f} B/tok measured on {what},"
+                f" so its {tokens:,} tokens estimate as {int(n_bytes / constant):,}"
+                f" - under by {understated:,}. Lower the constant to at or below {ratio:.4f}."
+            )
+
+    for kind, constant in constants.items():
+        ratios = [b / t for k, _, b, t in MEASURED if k == kind]
+        if not ratios:
+            problems.append(f"no measurement recorded for {kind} - the {constant} constant is unfounded")
+            continue
+        print(f"  {kind:<8} densest measured {min(ratios):.4f}; constant {constant} leaves"
+              f" {min(ratios) - constant:+.4f} of margin")
+
+    for problem in problems:
+        print(f"  BROKEN: {problem}")
+    if not problems:
+        print("  OK: every constant sits at or below the densest file measured of its kind.")
+    return problems
 
 
 def report(rel, note):
@@ -360,8 +432,14 @@ def main():
         tokens = est_tokens(n_bytes, name)
         print(f"  {n_bytes:>8,}  ~{tokens:>7,} tok  {name}  {status_for(n_bytes, tokens)}")
 
+    calibration_problems = check_calibration()
     archive_problems = check_done_archive(doc)
 
+    if calibration_problems:
+        print("\nFAIL: a bytes-per-token constant is optimistic, so every estimate and headroom")
+        print("figure above under-states the truth. Lower the constant in this file - do NOT drop the")
+        print("measurement, which is the evidence. See the docstring's iter138 note.")
+        return 1
     if failures:
         print(f"\nFAIL: {', '.join(failures)} past budget. For state.json, move an append-heavy field")
         print("to an archive file and leave a short pointer behind - see `readMe` and `doneArchive`.")
