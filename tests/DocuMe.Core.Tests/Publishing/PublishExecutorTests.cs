@@ -637,6 +637,95 @@ public sealed class PublishExecutorTests : IDisposable
         outcome.State.LastPublishedSha.ShouldBeNull();
     }
 
+    /// <summary>
+    /// Ctrl-C mid-run is a stop reason like an expired token, not an exception the caller has to
+    /// survive: it comes back as an outcome so the page ids the run already earned reach
+    /// <c>state.json</c> (<see cref="PublishOutcome.State"/>, §6.2 step 8).
+    /// </summary>
+    /// <remarks>
+    /// The loss this pins is silent and expensive. Every other stop returns an outcome the command
+    /// persists; cancellation used to throw out of <c>ExecuteAsync</c>, so the create that had just
+    /// succeeded was forgotten and the next run planned it as a create again — which Confluence
+    /// rejects on the duplicate title, leaving a wiki no re-run can move. `docume publish` gets the
+    /// token from <c>System.CommandLine</c>, which cancels it on SIGINT/SIGTERM, so this is what
+    /// Ctrl-C and a cancelled CI job both do.
+    /// </remarks>
+    [Fact]
+    public async Task Keeps_the_page_ids_it_earned_when_the_run_is_cancelled_partway()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        StubNoChildren(server);
+
+        using var cancellation = new CancellationTokenSource();
+
+        // The renderer runs for guides/setup.md alone, which is the second page — so cancelling here is
+        // Ctrl-C arriving after README.md's create came back with an id.
+        var outcome = await ExecuteAsync(
+            server,
+            new DocumeState(),
+            repoSha: "c0ffee",
+            renderer: async (_, _) =>
+            {
+                await cancellation.CancelAsync();
+                throw new OperationCanceledException(cancellation.Token);
+            },
+            cancellationToken: cancellation.Token);
+
+        outcome.Succeeded.ShouldBeFalse();
+        outcome.StoppedBecause.ShouldNotBeNull();
+        outcome.StoppedBecause.ShouldContain("cancelled");
+        outcome.StoppedBecause.ShouldContain("guides/setup.md");
+
+        // The point of the whole test: README.md was created, so its id is state's to keep.
+        outcome.StateChanged.ShouldBeTrue();
+        outcome.State.Pages.ShouldContainKey("README.md");
+        outcome.State.Pages["README.md"].PageId.ShouldNotBeNullOrEmpty();
+        outcome.Pages.Single().Path.ShouldBe("README.md");
+
+        // A partial run has not published the wiki at this commit, exactly as a failed page has not.
+        outcome.State.LastPublishedSha.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// A token already cancelled when the run starts stops it before anything is written, and says so
+    /// rather than throwing — the same shape as cancelling partway, with nothing yet earned to keep.
+    /// </summary>
+    /// <remarks>
+    /// The stop happens at the space-id resolution the write path does once up front, which is the first
+    /// request a publish makes — named here because the assertion below ("no page was posted") would read
+    /// as though the page loop had refused it, and the page loop is never reached.
+    /// </remarks>
+    [Fact]
+    public async Task Stops_before_anything_is_written_when_the_token_is_already_cancelled()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+
+        var outcome = await ExecuteAsync(
+            server,
+            new DocumeState(),
+            repoSha: "c0ffee",
+            cancellationToken: cancellation.Token);
+
+        outcome.Succeeded.ShouldBeFalse();
+        outcome.StoppedBecause.ShouldNotBeNull();
+        outcome.StoppedBecause.ShouldContain("cancelled");
+
+        // Nothing was written, so there is nothing to persist and no page was even attempted.
+        outcome.StateChanged.ShouldBeFalse();
+        outcome.Pages.ShouldBeEmpty();
+        outcome.State.LastPublishedSha.ShouldBeNull();
+        Requests(server, "POST", "/wiki/api/v2/pages").ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task Reports_a_page_whose_diagram_will_not_render_and_publishes_the_rest()
     {
@@ -1140,6 +1229,57 @@ public sealed class PublishExecutorTests : IDisposable
         var warning = outcome.Warnings.ShouldHaveSingleItem();
         warning.ShouldContain("README.md");
         warning.ShouldContain("left alone");
+    }
+
+    /// <summary>
+    /// Cancelling during the child-order post-pass is the worst moment to lose state and the easiest to
+    /// overlook: every page is published by then, so an exception escaping here would throw away the
+    /// whole run's ids over a pass that only reorders a menu.
+    /// </summary>
+    [Fact]
+    public async Task Keeps_every_page_it_published_when_the_child_order_pass_is_cancelled()
+    {
+        Siblings();
+
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        using var cancellation = new CancellationTokenSource();
+
+        // The children read is the first request the post-pass makes, and it is made only after every
+        // page has been created — so cancelling from it is Ctrl-C landing squarely in the post-pass.
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/children"))
+                .UsingGet())
+            .AtPriority(-1)
+            .RespondWith(Json(_ =>
+            {
+                cancellation.Cancel();
+
+                return ChildrenBody([]);
+            }));
+
+        var outcome = await ExecuteAsync(
+            server,
+            new DocumeState(),
+            repoSha: "c0ffee",
+            cancellationToken: cancellation.Token);
+
+        outcome.StoppedBecause.ShouldNotBeNull();
+        outcome.StoppedBecause.ShouldContain("cancelled");
+        outcome.StoppedBecause.ShouldContain("child-order");
+
+        // Every page published, and every id is state's to keep — that is what the pass runs after.
+        outcome.CreatedCount.ShouldBe(4);
+        outcome.Failures.ShouldBeEmpty();
+        outcome.StateChanged.ShouldBeTrue();
+        outcome.State.Pages.Count.ShouldBe(4);
+
+        // The pages are all published at this commit, and the pass touches no state, so the stamp stands.
+        outcome.State.LastPublishedSha.ShouldBe("c0ffee");
     }
 
     /// <summary>
@@ -1725,7 +1865,8 @@ public sealed class PublishExecutorTests : IDisposable
         bool reorder = true,
         bool checkComments = true,
         bool blockOnOpenComments = false,
-        bool notifyReviewers = false)
+        bool notifyReviewers = false,
+        CancellationToken? cancellationToken = null)
     {
         config ??= Config();
 
@@ -1755,7 +1896,12 @@ public sealed class PublishExecutorTests : IDisposable
             NotifyReviewers = notifyReviewers,
         };
 
-        return await executor.ExecuteAsync(config, report, state, execution, TestContext.Current.CancellationToken);
+        return await executor.ExecuteAsync(
+            config,
+            report,
+            state,
+            execution,
+            cancellationToken ?? TestContext.Current.CancellationToken);
     }
 
     private Task<MermaidDiagram> Render(string source, CancellationToken cancellationToken)

@@ -3,6 +3,7 @@ using DocuMe.Core.Confluence;
 using DocuMe.Core.Publishing;
 using DocuMe.Core.State;
 using Shouldly;
+using WireMock;
 using WireMock.Matchers;
 using WireMock.RequestBuilders;
 using WireMock.ResponseBuilders;
@@ -226,6 +227,94 @@ public sealed class PruneExecutorTests
         outcome.State.Pages.Keys.ShouldBe(["a/README.md"]);
     }
 
+    /// <summary>
+    /// Ctrl-C between deletes stops the prune the way a failed delete does — an outcome carrying the
+    /// state the run had already produced, not an exception that throws it away.
+    /// </summary>
+    /// <remarks>
+    /// The deletes run deepest-first and each drops its state entry as Confluence confirms it, so a
+    /// cancellation that escaped <c>PruneAsync</c> would leave <c>state.json</c> still listing pages that
+    /// are in the trash. The next run then plans them as updates, finds them gone, and recreates the very
+    /// orphans this command was told to remove.
+    /// </remarks>
+    [Fact]
+    public async Task Cancelling_stops_the_prune_and_returns_the_state_it_had_reached()
+    {
+        using var server = WireMockServer.Start();
+        StubDelete(server);
+
+        using var cancellation = new CancellationTokenSource();
+
+        var state = State(("a/README.md", "10", "1"), ("a/gone.md", "20", "10"));
+        var plan = PrunePlanner.Plan(state, ["a/README.md", "a/gone.md"]);
+
+        // Answering the prompt and then cancelling is the shape Ctrl-C takes here: the confirmation is the
+        // last thing before the first delete, so nothing has been trashed yet.
+        var outcome = await PruneAsync(
+            server,
+            plan,
+            state,
+            confirm: true,
+            cancellation: cancellation,
+            cancelAtConfirmation: true);
+
+        outcome.Succeeded.ShouldBeFalse();
+        outcome.StoppedBecause.ShouldNotBeNull();
+        outcome.StoppedBecause.ShouldContain("cancelled");
+        outcome.Confirmed.ShouldBeTrue();
+
+        // Nothing was deleted, so nothing may be dropped from state — and no DELETE was sent.
+        outcome.Deleted.ShouldBeEmpty();
+        outcome.StateChanged.ShouldBeFalse();
+        outcome.State.Pages.Keys.ShouldBe(["a/README.md", "a/gone.md"], ignoreOrder: true);
+        server.LogEntries.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Cancelling once the deletes are under way keeps the entries the run had already dropped: those
+    /// pages are gone, and state claiming otherwise would plan an update against a page in the trash.
+    /// </summary>
+    /// <remarks>
+    /// Whether the token trips the in-flight <c>DELETE</c> or is seen at the next page's turn is timing the
+    /// test does not pin, and does not need to: both are cancellation, both come back as an outcome, and
+    /// the entries dropped before either are the same. What is asserted is what holds on both paths.
+    /// </remarks>
+    [Fact]
+    public async Task Cancelling_mid_delete_keeps_the_entries_already_dropped()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var server = WireMockServer.Start();
+        StubDelete(server);
+        server
+            .Given(Request.Create().WithPath("/wiki/api/v2/pages/30").UsingDelete())
+            .AtPriority(-1)
+            .RespondWith(Response.Create().WithCallback(_ =>
+            {
+                cancellation.Cancel();
+
+                return new ResponseMessage { StatusCode = (int)HttpStatusCode.NoContent };
+            }));
+
+        // a/aaa.md carries no pageId, so it is dropped from state before any request is sent — the
+        // bookkeeping this run had already done by the time the cancellation arrives. It sorts ahead of
+        // the page whose delete cancels, which is what puts it on the done side of the interruption.
+        var state = State(
+            ("a/README.md", "10", "1"),
+            ("a/aaa.md", null, "10"),
+            ("a/bbb.md", "30", "10"));
+
+        var plan = PrunePlanner.Plan(state, ["a/README.md", "a/aaa.md", "a/bbb.md"]);
+        var outcome = await PruneAsync(server, plan, state, confirm: true, cancellation: cancellation);
+
+        outcome.Succeeded.ShouldBeFalse();
+        outcome.StoppedBecause.ShouldNotBeNull();
+        outcome.StoppedBecause.ShouldContain("cancelled");
+
+        outcome.StateChanged.ShouldBeTrue();
+        outcome.State.Pages.ShouldNotContainKey("a/aaa.md");
+        outcome.State.Pages.ShouldContainKey("a/README.md");
+    }
+
     private static void StubDelete(WireMockServer server) =>
         server
             .Given(Request.Create().WithPath(new WildcardMatcher("/wiki/api/v2/pages/*")).UsingDelete())
@@ -244,7 +333,9 @@ public sealed class PruneExecutorTests
         WireMockServer server,
         PrunePlan plan,
         DocumeState state,
-        bool confirm)
+        bool confirm,
+        CancellationTokenSource? cancellation = null,
+        bool cancelAtConfirmation = false)
     {
         var options = new ConfluenceClientOptions
         {
@@ -259,12 +350,17 @@ public sealed class PruneExecutorTests
         return await new PruneExecutor(client).PruneAsync(
             plan,
             state,
-            (paths, _) =>
+            async (paths, _) =>
             {
                 _confirmations.Add(paths);
 
-                return Task.FromResult(confirm);
+                if (cancelAtConfirmation && cancellation is not null)
+                {
+                    await cancellation.CancelAsync();
+                }
+
+                return confirm;
             },
-            TestContext.Current.CancellationToken);
+            cancellation?.Token ?? TestContext.Current.CancellationToken);
     }
 }

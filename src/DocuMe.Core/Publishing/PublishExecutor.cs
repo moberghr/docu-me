@@ -245,6 +245,10 @@ public sealed class PublishExecutor
             {
                 return Outcome(TimedOut(ex));
             }
+            catch (OperationCanceledException)
+            {
+                return Outcome(Cancelled(path: null, published: 0));
+            }
 
             if (spaceId.Length == 0)
             {
@@ -257,7 +261,12 @@ public sealed class PublishExecutor
 
         foreach (var planned in report.Pages)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            // Returned, not thrown: an interrupted run's state is the caller's to persist, and a page id
+            // earned moments ago is exactly what must not be lost with it (see PublishOutcome.State).
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return Outcome(Cancelled(planned.Path, results.Count));
+            }
 
             if (planned.Action == PagePublishAction.Skip)
             {
@@ -331,6 +340,12 @@ public sealed class PublishExecutor
                     $"Confluence stopped answering at '{planned.Path}', with {results.Count} page(s) "
                     + "published. Nothing after it was attempted.");
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Not a page failure: the page was not refused, the operator stopped the run. Whatever it
+                // had already written is in `state`, and returning is what carries that to the caller.
+                return Outcome(Cancelled(planned.Path, results.Count));
+            }
             catch (MermaidRenderException ex)
             {
                 failures.Add(new PagePublishFailure(planned.Path, ex.Message));
@@ -364,19 +379,22 @@ public sealed class PublishExecutor
         // id, and the id of a page created moments ago does not exist until its create returns (§6.2,
         // "after all upserts"). Unreachable from the early returns above on purpose — a run that
         // stopped on an expired token or a dead connection has no business issuing more requests.
+        string? stopped = null;
         if (options.Reorder && writes > 0)
         {
-            await ReconcileChildOrderAsync(
+            stopped = await ReconcileChildOrderAsync(
                     report, pageIds, config.Confluence.RootPageId, reorders, warnings, cancellationToken)
                 .ConfigureAwait(false);
         }
 
+        // Stamped even when the post-pass was cancelled: every page published, and the pass touches no
+        // state by design — what was interrupted is the order of a menu, not the wiki this sha describes.
         if (failures.Count == 0 && options.RepoSha is { Length: > 0 } sha)
         {
             state = StateUpdates.RecordLastPublishedSha(state, sha);
         }
 
-        return Outcome(null);
+        return Outcome(stopped);
     }
 
     /// <summary>Publishes one page: page write, attachment uploads, approval, state (§6.2 steps 5-8).</summary>
@@ -669,7 +687,11 @@ public sealed class PublishExecutor
     /// retried, or turned off without the next run planning differently.
     /// </para>
     /// </remarks>
-    private async Task ReconcileChildOrderAsync(
+    /// <returns>
+    /// Why the pass stopped early, or <c>null</c>. Only cancellation fills it: the pass's own troubles are
+    /// warnings by the contract above, but a run the operator interrupted is not a run that succeeded.
+    /// </returns>
+    private async Task<string?> ReconcileChildOrderAsync(
         PublishReport report,
         Dictionary<string, string> pageIds,
         string? rootPageId,
@@ -681,7 +703,10 @@ public sealed class PublishExecutor
 
         foreach (var group in groups)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return CancelledReorder(group.ParentName);
+            }
 
             try
             {
@@ -694,17 +719,21 @@ public sealed class PublishExecutor
                 warnings.Add(
                     $"child order was left alone from {group.ParentName} onwards: {ex.Message} The pages "
                     + "themselves are published.");
-                return;
+                return null;
             }
             catch (HttpRequestException ex)
             {
                 warnings.Add($"child order was left alone from {group.ParentName} onwards: {Unreachable(ex)}");
-                return;
+                return null;
             }
             catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
             {
                 warnings.Add($"child order was left alone from {group.ParentName} onwards: {TimedOut(ex)}");
-                return;
+                return null;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return CancelledReorder(group.ParentName);
             }
             catch (ConfluenceException ex)
             {
@@ -713,6 +742,8 @@ public sealed class PublishExecutor
                 warnings.Add($"the child order under {group.ParentName} was left alone: {ex.Message}");
             }
         }
+
+        return null;
     }
 
     private async Task ReconcileAsync(
@@ -1016,6 +1047,25 @@ public sealed class PublishExecutor
     private static string TimedOut(Exception ex) =>
         $"Confluence did not answer before the client timeout ran out: {ex.Message} A bulk publish can "
         + "raise it through ConfluenceClientOptions.Timeout.";
+
+    /// <summary>
+    /// What a Ctrl-C says. It names the count that survived because that is the question an operator who
+    /// just interrupted a bulk publish has: re-running is safe, and it resumes rather than starting over.
+    /// </summary>
+    private static string Cancelled(string? path, int published)
+    {
+        var where = path is { Length: > 0 }
+            ? $"the run was cancelled at '{path}'"
+            : "the run was cancelled before any page was published";
+
+        return $"{where}, with {published} page(s) published. Nothing after it was attempted, and what did "
+            + "publish is recorded in state — re-run to carry on from there.";
+    }
+
+    private static string CancelledReorder(string parentName) =>
+        $"the run was cancelled during the child-order pass, at {parentName}. Every page published and its "
+        + "content is correct; the order under that parent and any after it was left as Confluence had it, "
+        + "and the next run reconciles it.";
 
     private static string MediaType(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
     {

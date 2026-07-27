@@ -138,7 +138,12 @@ public sealed class PruneExecutor
 
         foreach (var page in plan.Pages)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            // Returned, not thrown, for the reason every other stop here returns: the entries already
+            // dropped describe pages that are in the trash, and state has to keep that.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return Outcome(Cancelled(page.Path, deleted.Count), confirmed: true);
+            }
 
             if (page.PageId is not { Length: > 0 } pageId)
             {
@@ -193,6 +198,10 @@ public sealed class PruneExecutor
 
                 return Outcome(Stopped(page.Path, deleted.Count), confirmed: true);
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return Outcome(Cancelled(page.Path, deleted.Count), confirmed: true);
+            }
 
             deleted.Add(page);
             state = StateUpdates.RemovePage(state, page.Path);
@@ -200,6 +209,15 @@ public sealed class PruneExecutor
 
         return Outcome(null, confirmed: true);
     }
+
+    /// <summary>
+    /// What a Ctrl-C says. A delete that was in flight when the token tripped may or may not have reached
+    /// Confluence, which is worth saying plainly: it is the one page whose fate this outcome cannot state.
+    /// </summary>
+    private static string Cancelled(string path, int deletedCount) =>
+        $"the prune was cancelled at '{path}' with {deletedCount} page(s) deleted. Those deletes are "
+        + "recorded in state; a delete already in flight may still have completed, and the next run "
+        + "reports whatever is still there.";
 
     private static string Stopped(string path, int deletedCount) =>
         $"the prune stopped at '{path}' with {deletedCount} page(s) deleted. Deletes run deepest-first, "
