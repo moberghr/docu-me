@@ -18,7 +18,7 @@
 > and 2 are **full and frozen**: `method-notes-archive.md` at 32 KB since iter162, and
 > `method-notes-archive-2.md` at 54 KB / ~22.5 K tok since iter166, which is already past the
 > 20,000-token band and inside the Read tool's 25,000-token cap. **Do not rotate into either.**
-> Worked recipe, re-runnable: `.mtk/paths-162/rotate-method-notes.py`, with
+> Worked recipe, re-runnable: `tools/loop/rotate-method-notes.py`, with
 > `.mtk/paths-166/rotate-iter166.py` as the one-section form that also shows how to retarget it at a
 > new generation. **A generation 4 must be declared in BOTH `ARCHIVE_FILES` and
 > `METHOD_NOTES_GENERATIONS` in the same change that creates it — that is now a failing check, not
@@ -435,7 +435,7 @@ was written down and never mechanised.*
 
   * **MOVED to `tools/loop/method-notes-archive-2.md` at iter165**, verbatim and round-trip asserted,
     to leave this file the headroom one rotation did not buy. Nothing was discarded, and all three
-    mechanisms it records are committed and re-proven green by `.mtk/paths-163/run-all.py` (4/4).
+    mechanisms it records are committed and re-proven green by `tools/loop/run-harnesses.py` (4/4).
     **The headlines:** **a check can print a verdict it never reached** - the mirror image of iter162,
     and `check_gate_pointers` printed "every pointer resolves" over an empty population for 12
     iterations, so **assert the WALK, not the finding count**, and note that **the check most likely
@@ -506,44 +506,55 @@ was written down and never mechanised.*
 
 ## The probe that reproduced iter166's bug three times while implementing its lesson (iter167)
 
-  * **THE INSTRUMENT GUARD BELONGS INSIDE THE CHECK AS A FAILING FACT, NOT IN ITS DOCSTRING.** iter166's
-    lesson was "an enumeration keyed on a phrase must be checked against an INDEPENDENT count of the same
-    population". iter167 set out to apply it, wrote two independent extractions on purpose - and then
-    shipped the same class of bug **three times in a row** anyway: 43 fabricated findings, then 4, then 2.
-    Every batch was confident, specific and wrong, and every one was caught ONLY by the two extractions
-    disagreeing. So in `check_citation_resolution` the agreement is **fact (1), and a disagreement FAILS
-    the check outright**: when the instrument is wrong the other three facts are noise, and a green from
-    them is worse than no check at all. **Knowing the lesson does not protect you from the bug; wiring the
-    counter-measure into the thing you ship does.**
-  * **THE THREE BUGS, BECAUSE THE SHAPES RECUR.** (a) **Stripping punctuation from BOTH ends of a token
-    eats a leading dot**: every dot-rooted path lost it, and 43 perfectly good scratch-probe paths
-    reported MISSING. (b) **A sentence-ending period is INSIDE the segment class**, so a citation that
-    ends a sentence keeps the period, fails the extension test, and is dropped *silently* - the opposite
-    failure mode, an under-count nobody would have queried. (c) **Scanning a serialisation is not
-    scanning the content**: reading `tools/loop/state.json` as raw text made the newline ESCAPE inside a
-    string literal part of the next token, gluing a stray `n` to the front of four paths. **Parse the
-    JSON and walk its string values.** All three normalisations now live in ONE function both
-    extractions route through, because a rule applied in two places is a disagreement waiting to happen.
-  * **THE CHECK PUTS ONE SMALL DISCIPLINE ON PROSE, AND IT CAUGHT THIS SECTION FIRST.** An illustrative
-    fake path in a sentence is indistinguishable from an instruction to open a file, so the first run
-    after this section was written failed on two invented example paths in the bullet above. **Do not
-    write specimen paths; name the real file or describe the shape in words.**
-  * **A BLUNT "EVERY CITATION MUST RESOLVE" RULE WOULD HAVE REPORTED THE TREE'S CLEAREST DOCUMENTATION AS
-    FOUR DEFECTS.** Three of the four non-resolving citations are absences the orientation layer is
-    deliberately *telling* you about: `tools/hooks/format-on-edit.py` is cited to say DO NOT RECREATE IT,
-    `cases/mermaid.md` is cited as deliberately absent, `_meta/feedback/inbox/` is a CONSUMER-repo path.
-    **A pointer to a thing that is meant not to exist is not a broken pointer.** Hence
-    `CITATION_KNOWN_ABSENT`, declared with a reason each, and checked in BOTH directions - a declaration
-    that starts resolving is stale (and for format-on-edit.py that direction *is* the event worth
-    catching), and a declaration nobody cites any more exempts nothing.
-  * **SCOPE THAT IS DECLINED MUST BE COUNTED, OR IT READS AS COVERAGE.** 74 bare filenames with no
-    directory (`docs-drift-pr.yml`, `PublishGuard.cs`) are deliberately NOT checked: resolving them
-    needs a tree search, and a search that finds *a* file named that is exactly how a probe fabricates.
-    The measurement prints the number it is not checking. Same for single-segment directory refs.
-  * **A MEASURED FINDING WORTH MORE THAN THE CHECK: 26 OF THE 81 RESOLVING CITATIONS POINT INTO
-    GITIGNORED SCRATCH.** `.mtk/` is untracked (`.gitignore:7`), and `nextAction` calls
-    `.mtk/paths-163/run-all.py` "THE ONE COMMAND THAT RE-CHECKS EVERYTHING ITERS 162-166 TOUCHED". It
-    resolves on this machine and on no other: a clone, or anyone who cleans scratch, loses the loop's own
-    regression harness with no error message. **The check cannot enforce this without failing today**, and
-    iter162's rule forbids a printed defect that exits 0 - so it is recorded here and in `nextAction`
-    rather than added as a flag that trains its reader to skim.
+  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter168**, verbatim and round-trip asserted.
+    Nothing was discarded. **The headlines:** **the instrument guard belongs inside the check as a
+    failing fact, not in its docstring** - iter167 set out to apply iter166's "check the enumeration
+    against an independent count", wrote two extractions on purpose, and STILL shipped that class of
+    bug three times (43 fabricated findings, then 4, then 2), so the agreement of the two is now fact
+    (1) of `check_citation_resolution` and a disagreement fails it outright; **knowing a lesson does
+    not protect you from the bug, wiring the counter-measure into the thing you ship does**; the three
+    bug shapes were **stripping punctuation from both ends of a token**, **a sentence period inside the
+    segment class** (a silent under-count, the opposite failure mode) and **scanning a serialisation
+    instead of the content**; **a blunt "every citation must resolve" rule would have reported the
+    tree's clearest documentation as four defects**, because a pointer to a thing meant not to exist is
+    not a broken pointer, hence `CITATION_KNOWN_ABSENT` checked in both directions; **do not write
+    specimen paths in prose**, an invented example being indistinguishable from an instruction to open a
+    file; and **scope that is declined must be counted or it reads as coverage**.
+  * **THE LAST BULLET OF THE ARCHIVED BODY WAS ACTED ON AT ITER168**: the seven re-runnable harnesses
+    moved into `tools/loop/`, `check_harness_tracking` (check #11) now fails when a harness or its
+    runner is untracked, and that move retargeted the runner path quoted inside the archived bullet.
+
+## Existing is not the same as being available to anyone else (iter168)
+
+  * **A CITATION THAT RESOLVES CAN STILL RESOLVE ON ONE MACHINE ONLY.** iter167's check #10 asked
+    whether the orientation layer's ~85 cited paths exist and called all of them green - while the
+    seven harnesses guarding this loop's own tooling lived in gitignored `.mtk/`, including the one
+    `nextAction` calls the single command that re-checks everything. **Existence and availability are
+    different properties and only the second survives a clone.** The fix was not another resolution
+    rule: the files moved into `tools/loop/` and check #11 asserts each is TRACKED - a fact about
+    someone else's machine, not this one.
+  * **THE CHECK'S FIRST LIVE RUN FOUND THE HOLE IN ITSELF: THE CONTAINER IS IN THE POPULATION TOO.**
+    Facts (1) and (2) pair every declared harness with `tools/loop/run-harnesses.py`, and both are
+    satisfied by a runner that is merely READABLE - so an untracked runner passed them while taking
+    every harness it calls out of a clone's reach with it. **When a check enumerates a declared set, ask
+    what CARRIES the set and put that in the same population** (iter161's container-vs-body lesson, one
+    level up again). The live tree showed it because `git add` had not happened yet, so the cell guarding
+    it records a real miss. (That pairing reads STEPS by IMPORTING the runner rather than
+    pattern-matching it: iter167's two-extractions rule is for when importing is unavailable.)
+  * **A RATCHET IS THE THIRD OPTION WHEN A DEFECT CLASS CANNOT BE FIXED TODAY.** 23 orientation
+    citations still point into scratch, every one provenance for a measurement already taken, so
+    demanding zero fails today for no gain - and iter162's rule forbids the alternative iter167 was left
+    with, a defect printed at exit 0. **A ceiling at today's count is neither**: it asserts nothing about
+    the 23 and everything about the 24th, so writing a new re-runnable thing into scratch fails until it
+    is tracked or argued for out loud.
+  * **A MOVE THAT PRESERVES DEPTH EDITS NO PATH ARITHMETIC**: a scratch probe directory and
+    `tools/loop/` are both two directories below the repo root, so every REPO computation stayed
+    byte-identical and the one real edit was a harness importing another's fixture recipe by path.
+    **Wrong path math crashes rather than lying** - the new harness computed its REPO one level short
+    and died at once. **This bullet first named that directory with a wildcard and check #10 red on
+    it**: second iteration running that the specimen-path rule broke inside the section teaching it.
+  * **A CHECK THAT NEEDS GIT MUST SEPARATE "FIXTURE" FROM "BROKEN"**: no `.git` at all means
+    tracked-ness is UNKNOWABLE, not false, and every sibling harness runs the checker in exactly that
+    kind of temp tree; `.git` present and unreadable is a failure. Collapse the two and those fixtures
+    quietly stop asserting the git fact. Worked out in full in `tools/loop/mutate-harness-tracking.py`,
+    which has a cell per half.

@@ -34,7 +34,7 @@ paste wires it). It refuses `git push` when a force flag appears **anywhere** in
 `--force-with-lease`, `--force-if-includes`, `--mirror`, short clusters like `-uf`, a `+refspec`
 force that carries no flag at all, global options before the subcommand (`git -c … push … --force`),
 and a force push in the second half of a `&&` chain. Proven both directions, 25/25, by
-`python3 .mtk/paths-130/mutate-force-push-guard.py` — 13 must-block cases (the first three are the
+`python3 tools/loop/mutate-force-push-guard.py` — 13 must-block cases (the first three are the
 rows measured as allowed above), 10 must-allow cases covering the commands this loop runs every
 iteration, one documented over-block, and one non-Bash tool that must pass through untouched.
 

@@ -134,3 +134,46 @@
     probe hardcoded the two generations, and creating generation 3 falsified it the same session. It now
     imports `METHOD_NOTES_GENERATIONS` from the checker. iter144's "a mirror nobody diffs" applies to
     throwaway harnesses too, and the cost of importing is one `importlib.util.spec_from_file_location`.
+## The probe that reproduced iter166's bug three times while implementing its lesson (iter167)
+
+  * **THE INSTRUMENT GUARD BELONGS INSIDE THE CHECK AS A FAILING FACT, NOT IN ITS DOCSTRING.** iter166's
+    lesson was "an enumeration keyed on a phrase must be checked against an INDEPENDENT count of the same
+    population". iter167 set out to apply it, wrote two independent extractions on purpose - and then
+    shipped the same class of bug **three times in a row** anyway: 43 fabricated findings, then 4, then 2.
+    Every batch was confident, specific and wrong, and every one was caught ONLY by the two extractions
+    disagreeing. So in `check_citation_resolution` the agreement is **fact (1), and a disagreement FAILS
+    the check outright**: when the instrument is wrong the other three facts are noise, and a green from
+    them is worse than no check at all. **Knowing the lesson does not protect you from the bug; wiring the
+    counter-measure into the thing you ship does.**
+  * **THE THREE BUGS, BECAUSE THE SHAPES RECUR.** (a) **Stripping punctuation from BOTH ends of a token
+    eats a leading dot**: every dot-rooted path lost it, and 43 perfectly good scratch-probe paths
+    reported MISSING. (b) **A sentence-ending period is INSIDE the segment class**, so a citation that
+    ends a sentence keeps the period, fails the extension test, and is dropped *silently* - the opposite
+    failure mode, an under-count nobody would have queried. (c) **Scanning a serialisation is not
+    scanning the content**: reading `tools/loop/state.json` as raw text made the newline ESCAPE inside a
+    string literal part of the next token, gluing a stray `n` to the front of four paths. **Parse the
+    JSON and walk its string values.** All three normalisations now live in ONE function both
+    extractions route through, because a rule applied in two places is a disagreement waiting to happen.
+  * **THE CHECK PUTS ONE SMALL DISCIPLINE ON PROSE, AND IT CAUGHT THIS SECTION FIRST.** An illustrative
+    fake path in a sentence is indistinguishable from an instruction to open a file, so the first run
+    after this section was written failed on two invented example paths in the bullet above. **Do not
+    write specimen paths; name the real file or describe the shape in words.**
+  * **A BLUNT "EVERY CITATION MUST RESOLVE" RULE WOULD HAVE REPORTED THE TREE'S CLEAREST DOCUMENTATION AS
+    FOUR DEFECTS.** Three of the four non-resolving citations are absences the orientation layer is
+    deliberately *telling* you about: `tools/hooks/format-on-edit.py` is cited to say DO NOT RECREATE IT,
+    `cases/mermaid.md` is cited as deliberately absent, `_meta/feedback/inbox/` is a CONSUMER-repo path.
+    **A pointer to a thing that is meant not to exist is not a broken pointer.** Hence
+    `CITATION_KNOWN_ABSENT`, declared with a reason each, and checked in BOTH directions - a declaration
+    that starts resolving is stale (and for format-on-edit.py that direction *is* the event worth
+    catching), and a declaration nobody cites any more exempts nothing.
+  * **SCOPE THAT IS DECLINED MUST BE COUNTED, OR IT READS AS COVERAGE.** 74 bare filenames with no
+    directory (`docs-drift-pr.yml`, `PublishGuard.cs`) are deliberately NOT checked: resolving them
+    needs a tree search, and a search that finds *a* file named that is exactly how a probe fabricates.
+    The measurement prints the number it is not checking. Same for single-segment directory refs.
+  * **A MEASURED FINDING WORTH MORE THAN THE CHECK: 26 OF THE 81 RESOLVING CITATIONS POINT INTO
+    GITIGNORED SCRATCH.** `.mtk/` is untracked (`.gitignore:7`), and `nextAction` calls
+    `tools/loop/run-harnesses.py` "THE ONE COMMAND THAT RE-CHECKS EVERYTHING ITERS 162-166 TOUCHED". It
+    resolves on this machine and on no other: a clone, or anyone who cleans scratch, loses the loop's own
+    regression harness with no error message. **The check cannot enforce this without failing today**, and
+    iter162's rule forbids a printed defect that exits 0 - so it is recorded here and in `nextAction`
+    rather than added as a flag that trains its reader to skim.

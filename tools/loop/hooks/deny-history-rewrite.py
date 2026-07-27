@@ -37,7 +37,7 @@ Matching is on shlex TOKENS, which is more precise than it first looks and the h
 sides of it: `grep -rn "git push --force" docs/` is ALLOWED, because the quoted mention is a single
 token and neither `git` nor `push` stands alone. The residual over-block is an UNQUOTED mention --
 `echo git push --force >> notes.md` tokenises exactly like the real command and is refused. That
-case is asserted in .mtk/paths-130/mutate-force-push-guard.py so the cost stays visible.
+case is asserted in tools/loop/mutate-force-push-guard.py so the cost stays visible.
 
 WHAT IT DOES NOT DO: it does not widen any authority, and it does not touch `--delete` or plain
 pushes. §8.2 is about force-updating refs; deleting a branch is a different question nobody has

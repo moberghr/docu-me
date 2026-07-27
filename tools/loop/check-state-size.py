@@ -50,9 +50,11 @@ REPLACES THE OLD ONE: pin each constant at or below the DENSEST file ever measur
 never at the average.
 """
 
+import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -226,6 +228,47 @@ CITATION_KNOWN_ABSENT = {
         " the same file. The suffix form is prose, not a second file.",
 }
 
+# ---------------------------------------------------------------------------
+# HARNESS TRACKING (iter168, check #11)
+#
+# THE DIMENSION CHECK #10 COULD NOT REACH. iter167 measured that 26 of the orientation layer's 81
+# resolving citations point into `.mtk/`, which is gitignored (.gitignore:7) - and one of them was
+# `nextAction`'s "the ONE command that re-checks everything iters 162-167 touched". Those citations
+# RESOLVED, so check #10 was green; they resolved on one machine only, so the loop's entire
+# regression harness was one `rm -rf .mtk` or one clone away from vanishing with no error message.
+# Existence is not the same property as availability, and only the second one survives a handoff.
+#
+# Each entry says what the file guards and what it reports when it is green, so a failure here can
+# name the cost of the missing file rather than just its path. DECLARED, never inferred from a
+# `mutate-*`/`probe-*` name shape, for ARCHIVE_FILES' reason - and paired BOTH WAYS with the runner
+# below, because a harness the runner never calls is the rot iter162 named: a guard nobody re-runs.
+HARNESSES = {
+    "mutate-soft-flags.py": "iter163's four hardened branches plus iter164/165's vacuity cells (35/35)",
+    "mutate-force-push-guard.py": "the force-push hook, both directions (25/25)",
+    "mutate-size-check.py": "this checker's five original red branches, and the fixture recipe the"
+                            " other harnesses import (5/5)",
+    "mutate-method-notes-check.py": "method-notes.md's stub/body pairing (7/7)",
+    "probe-refusal-appends.py": "that a vacuity refusal appends rather than returns (exit 0)",
+    "mutate-citation-check.py": "check #10's four directions and its refusal (12/12)",
+    "mutate-harness-tracking.py": "this check's own red branches, fixture-vs-broken-git included"
+                                  " (12/12)",
+    # NOT a guard - the guarded thing. The runner calls it last as the live-tree control, and it is
+    # held to the same tracked-ness as the rest, so listing it here keeps the pairing exact instead
+    # of needing a second declaration for the one exception.
+    "check-state-size.py": "the checker itself on the live tree, run last as the control (exit 0)",
+}
+
+HARNESS_RUNNER = "run-harnesses.py"
+
+# The orientation layer's remaining `.mtk/` citations, counted at iter168 after the seven harnesses
+# and the rotation engine moved into tracked space, and iter167's resolved finding left `nextAction`:
+# 26 -> 21. A RATCHET, NOT A TARGET. Every one of the 23 is provenance for
+# a measurement already taken ("39 dialects, measured here"), so losing them costs history, not
+# capability, and demanding zero would fail today for no gain. What must not happen is the number
+# GROWING - that is a new re-runnable thing written into scratch, which is the defect this check
+# exists to stop. Lower it freely; raising it is a decision to be made out loud, in the same change.
+SCRATCH_CITATION_CEILING = 21
+
 _SEG = r"[A-Za-z0-9_.@+-]+"
 _CITE_RE = re.compile(rf"(?<![A-Za-z0-9_/:.-])((?:{_SEG})?(?:/{_SEG})+/?)")
 _CITE_DELIMS = re.compile(r"[\s`'\"()\[\]{},;<>*]+")
@@ -376,7 +419,7 @@ def check_done_archive(doc):
     # is already empty, and COVERAGE and HEAD both skip themselves because `attributed` is empty -
     # so the HEAD check that exists to catch ONE missing record cannot fire when EVERY record is
     # missing. Measured: truncating the file and setting doneCount to 0 made this whole script exit 0
-    # (.mtk/paths-163/mutate-soft-flags.py, cell done-archive/emptied-with-count).
+    # (tools/loop/mutate-soft-flags.py, cell done-archive/emptied-with-count).
     if not parsed:
         problems.append(
             "done-archive.jsonl holds no well-formed entries at all, so every check below is vacuous"
@@ -1155,7 +1198,7 @@ def check_read_whole_files():
                 " every read-whole file here must fit. Rotate its oldest settled sections into an"
                 " archive VERBATIM, assert the round trip before rewriting the live file, and leave"
                 " the heading plus its headlines behind (recipe:"
-                " .mtk/paths-162/rotate-method-notes.py). If it is genuinely never read whole,"
+                " tools/loop/rotate-method-notes.py). If it is genuinely never read whole,"
                 " declare it in ARCHIVE_FILES with the reason instead"
             )
 
@@ -1424,6 +1467,206 @@ def check_citation_resolution():
     return problems
 
 
+def harness_runner_steps():
+    """The (basename, expected) pairs tools/loop/run-harnesses.py will really execute.
+
+    IMPORTED, NOT PATTERN-MATCHED, and that is the iter167 lesson applied rather than repeated. That
+    iteration's fix for a fabricating extraction was a second, independent extraction; the better fix
+    where it is available is NO extraction - importing the runner returns the list it will actually
+    iterate, so there is no pattern to get wrong. The module guards its work behind __main__, so the
+    import executes nothing.
+    """
+    path = os.path.join(LOOP_DIR, HARNESS_RUNNER)
+    if not os.path.isfile(path):
+        return None, f"tools/loop/{HARNESS_RUNNER} is not on disk"
+    try:
+        spec = importlib.util.spec_from_file_location("loop_harness_runner", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        steps = module.STEPS
+    except Exception as exc:  # a runner that will not import runs nothing, which is the failure
+        return None, f"tools/loop/{HARNESS_RUNNER} could not be imported: {exc!r}"
+    return [(os.path.basename(rel), expected) for _, rel, expected in steps], None
+
+
+def harness_git_mode():
+    """Can tracked-ness be asserted against THIS tree? -> ('repo' | 'fixture' | 'broken', detail)
+
+    Three answers, and the middle one is why this is a function rather than one subprocess call.
+      repo     REPO/.git is present and git answers - fact (3) below is asserted.
+      fixture  no .git at all: a mutation harness's temp tree, where tracked-ness is UNKNOWABLE
+               rather than false. Printing a verdict this tree cannot support would invent a defect,
+               which is the reasoning iter163 recorded for ALWAYS_LOADED's missing status column. The
+               other facts still assert here, so a fixture run is not a vacuous pass.
+      broken   .git EXISTS but git could not answer. That is a FAILURE, not a fixture: in the live
+               repo fact (3) must always be reached, and "git went missing" must never read the same
+               as "this is a scratch copy".
+    """
+    if not os.path.isdir(os.path.join(REPO, ".git")):
+        return "fixture", "no .git in this tree, so nothing here can be tracked by anything"
+    try:
+        proc = subprocess.run(["git", "-C", REPO, "rev-parse", "--is-inside-work-tree"],
+                              capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "broken", f"{REPO}/.git exists but git could not be run: {exc!r}"
+    if proc.returncode != 0 or proc.stdout.strip() != "true":
+        return "broken", (f"{REPO}/.git exists but `git rev-parse --is-inside-work-tree` said"
+                          f" {proc.stdout.strip()!r} (exit {proc.returncode})")
+    return "repo", "git work tree"
+
+
+def harness_is_tracked(name):
+    proc = subprocess.run(
+        ["git", "-C", REPO, "ls-files", "--error-unmatch", "--", f"tools/loop/{name}"],
+        capture_output=True, text=True, timeout=30,
+    )
+    return proc.returncode == 0
+
+
+def check_harness_tracking():
+    """Do the loop's own regression harnesses survive a clone?
+
+    ADDED ITER168, and it is the dimension check #10 measured but could not assert. Check #10 asks
+    whether a cited path EXISTS; every one of the seven harnesses did, so it was green - and all
+    seven lived in gitignored `.mtk/`, where they existed for this machine and no other. `nextAction`
+    called one of them the one command that re-checks everything iters 162-167 touched. A clone got
+    that command and not the file, with no error message anywhere.
+
+    EXISTENCE AND AVAILABILITY ARE DIFFERENT PROPERTIES and only the second one survives a handoff.
+    This check asserts the second.
+
+    Five facts, and a vacuity refusal:
+      (1) every declared harness is on disk
+      (2) the declaration and the runner's STEPS name the same set BOTH WAYS - a harness the runner
+          never calls is iter162's rot (a guard nobody re-runs), and a step naming an undeclared file
+          is a harness whose tracked-ness nothing here asserts
+      (3) every declared harness is TRACKED - asserted wherever a git work tree exists, and honestly
+          reported as unknowable in a mutation fixture (see harness_git_mode)
+      (4) the runner's expected result for each harness is recorded, so a step cannot quietly become
+          a no-op that "passes" by printing nothing
+      (5) the orientation layer's remaining `.mtk/` citations do not GROW past SCRATCH_CITATION_CEILING
+
+    THE REFUSAL APPENDS RATHER THAN RETURNS (iter165's shape): facts (3) and (5) have populations of
+    their own, and a returning refusal would skip them in the same run that the declaration emptied.
+    """
+    problems = []
+    print("\nthe loop's own harnesses <-> git (iter168):")
+
+    declared = set(HARNESSES)
+    steps, runner_error = harness_runner_steps()
+    if runner_error:
+        problems.append(
+            f"{runner_error}. That file IS the re-run command `nextAction` sends every cold session"
+            " to, so this check cannot pair anything until it imports"
+        )
+    mode, detail = harness_git_mode()
+
+    # (1) ON DISK.
+    on_disk = sorted(n for n in declared if os.path.isfile(os.path.join(LOOP_DIR, n)))
+    for name in sorted(declared - set(on_disk)):
+        problems.append(
+            f"HARNESSES declares tools/loop/{name} but it is not on disk - it guards"
+            f" {HARNESSES[name]}, and that guard is now asserting nothing. Restore it"
+            " (`git log --diff-filter=D --name-only -- tools/loop/`) or delete the declaration"
+        )
+
+    # (2) THE DECLARATION AND THE RUNNER AGREE, BOTH WAYS.
+    if steps is not None:
+        run_names = {name for name, _ in steps}
+        for name in sorted(run_names - declared):
+            problems.append(
+                f"tools/loop/{HARNESS_RUNNER} runs tools/loop/{name} but HARNESSES does not declare"
+                " it, so nothing here asserts it is tracked - the exact hole iter168 closed. Declare"
+                " it with what it guards, in this change"
+            )
+        for name in sorted(declared - run_names):
+            problems.append(
+                f"HARNESSES declares {name} but {HARNESS_RUNNER} never runs it, so it is a guard"
+                " nobody re-runs (iter162's rot). Add it to STEPS with its expected result, or drop"
+                " the declaration if the thing it guarded is gone"
+            )
+        # (4) EVERY STEP STATES WHAT GREEN LOOKS LIKE.
+        for name, expected in steps:
+            if not str(expected).strip():
+                problems.append(
+                    f"{HARNESS_RUNNER}'s step for {name} declares no expected result, so a harness"
+                    " that silently stopped asserting anything would still read as green"
+                )
+
+    # (3) TRACKED - THE PROPERTY THAT HOLDS ON SOMEONE ELSE'S MACHINE.
+    if mode == "broken":
+        problems.append(
+            f"tracked-ness could not be established: {detail}. In the live repo this fact must always"
+            " be reached; a git that cannot answer must not read like a scratch fixture"
+        )
+    # THE RUNNER IS IN THIS POPULATION, and it was not until the live tree showed why: facts (1) and
+    # (2) only need it to be READABLE, so an untracked runner passes both while taking every harness
+    # it calls out of a clone's reach with it.
+    tracked_population = {name: HARNESSES[name] for name in on_disk}
+    if steps is not None:
+        tracked_population[HARNESS_RUNNER] = (
+            f"nothing itself - it is the re-run command for all {len(steps)} steps above"
+        )
+    untracked = []
+    if mode == "repo":
+        untracked = sorted(n for n in tracked_population if not harness_is_tracked(n))
+    for name in untracked:
+        problems.append(
+            f"tools/loop/{name} is on disk but NOT tracked by git, so it guards"
+            f" {tracked_population[name]} on this machine only. `git add` it in this change - a clone"
+            " gets the citation and not the file, which is exactly how iter167 found the whole"
+            " harness set living in .mtk/"
+        )
+
+    # (5) THE SCRATCH RATCHET. Reuses check #10's population, so the two checks cannot disagree
+    # about what the orientation layer cites.
+    scratch = set()
+    for rel in CITATION_SOURCES:
+        path = os.path.join(REPO, rel)
+        if not os.path.isfile(path):
+            continue
+        try:
+            text = cite_source_text(path)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        for tok in cite_extract_pattern(text) | cite_extract_tokens(text):
+            if tok.startswith(".mtk/"):
+                scratch.add(tok)
+    if len(scratch) > SCRATCH_CITATION_CEILING:
+        fresh = sorted(scratch)
+        problems.append(
+            f"the orientation layer now cites {len(scratch)} paths under gitignored .mtk/, past the"
+            f" {SCRATCH_CITATION_CEILING} standing at iter168: {fresh[:8]}. If the new one is"
+            " RE-RUNNABLE, move it into tools/loop/ and retarget the citation in the same change -"
+            " depth is preserved, so no path arithmetic inside it needs editing. If it is provenance"
+            " for a measurement already taken, raise the ceiling here and say which citation it is"
+        )
+
+    print(f"  {len(on_disk)}/{len(declared)} declared harnesses on disk;"
+          f" {len(steps) if steps else 0} runner steps; tracked-ness: {mode} ({detail})")
+    if mode == "repo":
+        print(f"  {len(tracked_population) - len(untracked)}/{len(tracked_population)} tracked by git"
+              " (harnesses plus the runner) - these survive a clone, which is the whole point")
+    print(f"  {len(scratch)} orientation citations still point into gitignored .mtk/"
+          f" (ceiling {SCRATCH_CITATION_CEILING}, all provenance)")
+
+    # THE VACUITY REFUSAL. Every failure above is per-harness or per-step, so an emptied declaration
+    # passes clean while asserting nothing at all - and this check's whole subject is guards that
+    # quietly stopped guarding.
+    if not declared:
+        problems.append(
+            "HARNESSES is empty, so this check asserted nothing - the declaration is wrong, not the"
+            " tree. A check about guards nobody re-runs must not become one"
+        )
+
+    for problem in problems:
+        print(f"  BROKEN: {problem}")
+    if not problems:
+        print("  OK: every declared harness is on disk, paired with the runner both ways, states its")
+        print("      expected result, and is tracked by git, so a clone gets the guards too.")
+    return problems
+
+
 def markdown_sections(path):
     """{heading: body} for every '## ' section. Shared by check_method_notes_stubs."""
     out, current, buf = {}, None, []
@@ -1667,6 +1910,7 @@ def main():
     archive_mirror_problems = check_gates_archive(doc)
     method_notes_problems = check_method_notes_stubs()
     citation_problems = check_citation_resolution()
+    harness_problems = check_harness_tracking()
 
     if calibration_problems:
         print("\nFAIL: a bytes-per-token constant is optimistic, so every estimate and headroom")
@@ -1724,7 +1968,7 @@ def main():
         print("assert the round trip BEFORE the destructive write to method-notes.md, and leave the")
         print("heading plus its headlines behind as a stub. The stub is the only thing that knows the")
         print("body exists - recover a lost one with `git log -S <heading> -- tools/loop/`, and never")
-        print("delete a stub or a body to make this pass. Recipe: .mtk/paths-162/rotate-method-notes.py.")
+        print("delete a stub or a body to make this pass. Recipe: tools/loop/rotate-method-notes.py.")
         return 1
     if citation_problems:
         print("\nFAIL: the orientation layer cites a path that is not there, or its absent-on-purpose")
@@ -1734,13 +1978,22 @@ def main():
         print("extractions disagreeing, fix that FIRST and ignore everything else this check said:")
         print("a mis-matching extractor does not miss findings quietly, it invents them (iter167).")
         return 1
+    if harness_problems:
+        print("\nFAIL: a harness that guards this loop's own tooling is not on disk, not tracked by")
+        print("git, or not paired with tools/loop/run-harnesses.py. A guard that exists on ONE machine")
+        print("guards nothing a clone or a cold session can run - that is how iter167 found the whole")
+        print("set living in gitignored .mtk/ while check #10 called every citation green. `git add`")
+        print("the file, or declare it in HARNESSES and STEPS together; never drop a declaration to")
+        print("make this pass, because the declaration is the only thing that knows the guard exists.")
+        return 1
     print("\nOK: all three step-1 Reads return their whole file, every read-whole file under")
     print("tools/loop/ fits in one too, the done archive is intact, every GATES.md checkbox is")
     print("mirrored, no open gate points at work that is finished, every blocker/decision stub")
     print("resolves to its archived body, every settled tombstone still has the body it was archived")
     print("from, `gates`'s long-mirror archive pairs both ways, every method-notes.md stub")
-    print("resolves to the archived body it claims, and every path the orientation layer cites")
-    print("either exists or is declared absent on purpose.")
+    print("resolves to the archived body it claims, every path the orientation layer cites")
+    print("either exists or is declared absent on purpose, and every harness that guards this")
+    print("tooling is tracked by git rather than living in scratch.")
     return 0
 
 
