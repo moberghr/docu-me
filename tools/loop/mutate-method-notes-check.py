@@ -121,8 +121,14 @@ def mut_fourth_spelling():
     # anchor carries the sentence that follows it in iter164's stub only. This assertion fired for
     # real the moment the second rotation landed, which is the iter165 lesson working: a no-op
     # replace leaves the tree healthy and grades MISSED, i.e. a fabricated find.
+    #
+    # RE-SYNCED AT ITER175, when it fired for real a second time: that iteration INDEXED the iter164
+    # stub down to a pointer to fund a note of its own, which is the sanctioned budget lever, and the
+    # trailing sentence this anchor pairs with went with it. The fix is to follow the live text, never
+    # to restore prose so a harness keeps matching (the same rule rotate-method-notes.py states for a
+    # trimmed stub). Direction (4) is unchanged and still the cell that matters.
     anchor = ("**MOVED to `tools/loop/method-notes-archive-3.md` at iter166**, verbatim and"
-              " round-trip asserted,\n    into the generation this rotation opened.")
+              " round-trip asserted;\n    the seam is closed")
     assert text.count(anchor) == 1, f"anchor must match exactly once, matched {text.count(anchor)}"
     return {NOTES: text.replace(
         anchor, "**RELOCATED INTO `tools/loop/method-notes-archive-3.md`, iter166.**"

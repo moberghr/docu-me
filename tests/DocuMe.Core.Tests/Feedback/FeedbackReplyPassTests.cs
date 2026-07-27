@@ -4,6 +4,7 @@ using DocuMe.Core.Confluence;
 using DocuMe.Core.Feedback;
 using DocuMe.Core.State;
 using Shouldly;
+using WireMock;
 using WireMock.RequestBuilders;
 using WireMock.ResponseBuilders;
 using WireMock.Server;
@@ -208,6 +209,97 @@ public sealed class FeedbackReplyPassTests : IDisposable
     }
 
     /// <summary>
+    /// A Ctrl-C partway keeps the failures the run had already collected, because nothing else will ever
+    /// report them: the item whose close failed is stamped, and <see cref="FeedbackReplyPlanner"/> never
+    /// plans a stamped item again. Throwing here left that comment answered, open, and unmentioned.
+    /// </summary>
+    /// <remarks>
+    /// Whether the token trips the in-flight <c>POST</c> or is seen at the next item's turn is timing this
+    /// test does not pin, and does not need to: both are cancellation, both come back as a result, and the
+    /// 6001 failure collected before either is the same. What is asserted is what holds on both paths.
+    /// The cancelling stub is on the <em>footer</em> POST, so 6001's inline reply and its 409 close are
+    /// untouched by it.
+    /// </remarks>
+    [Fact]
+    public async Task Keeps_the_failures_it_collected_when_the_run_is_cancelled_partway()
+    {
+        WriteItem(Inbox, "a-6001.json", Item("6001", LoansPath, FeedbackStatus.Fixed));
+        WriteItem(Inbox, "b-5002.json", Item("5002", LoansPath, FeedbackStatus.Fixed));
+        WriteItem(Inbox, "c-5003.json", Item("5003", LoansPath, FeedbackStatus.Fixed));
+
+        using var cancellation = new CancellationTokenSource();
+        using var server = WireMockServer.Start();
+        StubComments(server, LoansPageId, FooterBody("5002", "5003"), InlineBody("6001", version: 3));
+        StubReply(server);
+
+        // 6001 is answered, stamped, and its close is refused — the failure that must survive what follows.
+        server
+            .Given(Request.Create().WithPath("/wiki/api/v2/inline-comments/6001").UsingPut())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Conflict).WithBody("{}"));
+
+        // Then the operator interrupts, on the next item's reply.
+        server
+            .Given(Request.Create().WithPath("/wiki/api/v2/footer-comments").UsingPost())
+            .AtPriority(-1)
+            .RespondWith(Response.Create().WithCallback(_ =>
+            {
+                cancellation.Cancel();
+
+                return new ResponseMessage { StatusCode = (int)HttpStatusCode.OK };
+            }));
+
+        var result = await RunAsync(server, cancellation);
+
+        result.StoppedBecause.ShouldNotBeNull();
+        result.StoppedBecause.ShouldContain("cancelled");
+
+        // The point of the whole test: the 409 is still in the report the caller renders.
+        var failure = result.Failures.ShouldHaveSingleItem();
+        failure.CommentId.ShouldBe("6001");
+        failure.Replied.ShouldBeTrue();
+
+        // And it is unrecoverable without that report, which is why losing it mattered.
+        Stamp(Inbox, "a-6001.json").ShouldNotBeNull();
+        result.Resolved.ShouldBe(0);
+
+        // 5003 was never attempted, so it is still answerable on the next run.
+        Stamp(Inbox, "c-5003.json").ShouldBeNull();
+    }
+
+    /// <summary>
+    /// A token already cancelled when the execute starts stops it before anything is posted, and says so
+    /// rather than throwing.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <c>PublishExecutor</c>, this reaches the item loop's own guard: the reply pass makes no
+    /// up-front request to trip on, so the stop below really is the loop refusing the first item.
+    /// </remarks>
+    [Fact]
+    public async Task Stops_before_anything_is_posted_when_the_token_is_already_cancelled()
+    {
+        WriteItem(Inbox, "loans-5001.json", Item("5001", LoansPath, FeedbackStatus.Fixed));
+
+        using var server = WireMockServer.Start();
+        StubComments(server, LoansPageId, FooterBody("5001"), Empty);
+        StubReply(server);
+
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+
+        var result = await RunAsync(server, cancellation);
+
+        result.StoppedBecause.ShouldNotBeNull();
+        result.StoppedBecause.ShouldContain("cancelled");
+        result.StoppedBecause.ShouldContain("5001");
+        result.Posted.ShouldBe(0);
+        result.Failures.ShouldBeEmpty();
+
+        // Nothing was said to anybody and nothing stamped, so the item is untouched for the next run.
+        Writes(server).ShouldBeEmpty();
+        Stamp(Inbox, "loans-5001.json").ShouldBeNull();
+    }
+
+    /// <summary>
     /// Rule §1.2: an expired token stops the run instead of being replayed across every remaining item,
     /// and the report says how far it got.
     /// </summary>
@@ -282,7 +374,14 @@ public sealed class FeedbackReplyPassTests : IDisposable
             .Skipped.Single().Reason.ShouldBe(FeedbackReplySkipReason.PageNotPublished);
     }
 
-    private async Task<FeedbackReplyResult> RunAsync(WireMockServer server)
+    /// <summary>
+    /// Reads, plans and executes. <paramref name="cancellation"/> is given to the <em>execute</em> alone —
+    /// the read runs on a live token, so a cancellation test is about the write half and cannot pass by
+    /// stopping before the plan exists.
+    /// </summary>
+    private async Task<FeedbackReplyResult> RunAsync(
+        WireMockServer server,
+        CancellationTokenSource? cancellation = null)
     {
         using var client = CreateClient(server);
 
@@ -298,7 +397,7 @@ public sealed class FeedbackReplyPassTests : IDisposable
             client,
             plan,
             RepliedAt,
-            TestContext.Current.CancellationToken);
+            cancellation?.Token ?? TestContext.Current.CancellationToken);
     }
 
     private void WriteItem(string directory, string name, FeedbackItem item)

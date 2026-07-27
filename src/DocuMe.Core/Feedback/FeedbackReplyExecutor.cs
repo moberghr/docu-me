@@ -44,6 +44,14 @@ public sealed record FeedbackReplyResult(
 /// <c>PublishExecutor</c> takes, for the reason rule §1.2 gives: replaying an expired token across forty
 /// replies is how an account gets locked out. One comment that 404s is one comment; a 401 is the run.
 /// </para>
+/// <para>
+/// <strong>A cancellation is returned, never thrown.</strong> Every stop above comes back as a
+/// <see cref="FeedbackReplyResult.StoppedBecause"/> so the caller can report it, and a Ctrl-C is no
+/// different — <em>because</em> the stamp makes it different from a publish. An interrupted publish loses
+/// page ids the next run re-earns; here the replies are already on disk as answered, so what a throw
+/// discards is the only notice that a close failed. <see cref="FeedbackReplyPlanner"/> will never plan a
+/// stamped item again, so a discarded report is a comment left open that nothing will mention twice.
+/// </para>
 /// </remarks>
 public static class FeedbackReplyExecutor
 {
@@ -67,7 +75,13 @@ public static class FeedbackReplyExecutor
 
         foreach (var reply in plan.Replies)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            // Returned, not thrown: a close that failed after its reply was posted is reported nowhere
+            // else, and the item's `repliedAt` stamp means no later run will ever plan it again — so
+            // throwing the list away leaves an answered comment sitting open with nothing to say so.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return new FeedbackReplyResult(posted, resolved, failures, Cancelled(reply.CommentId, posted));
+            }
 
             try
             {
@@ -98,6 +112,13 @@ public static class FeedbackReplyExecutor
                     + $"{posted} reply/replies posted.";
 
                 return new FeedbackReplyResult(posted, resolved, failures, stopped);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Not a failed reply: the reply was not refused, the operator stopped the run. Whether the
+                // token trips the request in flight or is seen at the next item's turn, the answer is the
+                // same — come back with what the run already did rather than discarding it.
+                return new FeedbackReplyResult(posted, resolved, failures, Cancelled(reply.CommentId, posted));
             }
 
             posted++;
@@ -136,10 +157,39 @@ public static class FeedbackReplyExecutor
             {
                 failures.Add(new FeedbackReplyFailure(reply.CommentId, Replied: true, ex.Message));
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // The reply is posted and stamped, so this comment is answered and will never be planned
+                // again. Only this return says its close did not happen.
+                return new FeedbackReplyResult(
+                    posted,
+                    resolved,
+                    failures,
+                    CancelledAfterReply(reply.CommentId, posted));
+            }
         }
 
         return new FeedbackReplyResult(posted, resolved, failures, StoppedBecause: null);
     }
+
+    /// <summary>
+    /// What a Ctrl-C says. It names the count that was posted because that is the question an operator who
+    /// just interrupted a reply pass has: every reply that landed is stamped, so re-running answers only
+    /// what is still unanswered rather than posting a second time.
+    /// </summary>
+    private static string Cancelled(string commentId, int posted)
+        => $"the run was cancelled at comment {commentId}, with {posted} reply/replies posted and stamped. "
+            + "Nothing after it was attempted; re-run to carry on from there, and see any failure above — "
+            + "an item that was answered is never planned again, so this report is the only record of it.";
+
+    /// <summary>
+    /// The same, for a cancellation that arrives between a reply and its close: the answer is out and
+    /// stamped, so the comment is done being planned while still showing as open to a human.
+    /// </summary>
+    private static string CancelledAfterReply(string commentId, int posted)
+        => $"the run was cancelled while closing comment {commentId}. {posted} reply/replies were posted "
+            + "and stamped, so nothing will be said twice — but that comment may still show as open and "
+            + "no later run will revisit it, so close it by hand.";
 
     private static async Task PostAsync(
         ConfluenceClient client,

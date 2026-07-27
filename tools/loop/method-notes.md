@@ -417,39 +417,20 @@ was written down and never mechanised.*
     REFUSE a partially applied input**, not merely detect a fully applied one.
 ## A verdict nobody reached, and warnings that cannot be heard (iter163)
 
-  * **MOVED to `tools/loop/method-notes-archive-2.md` at iter165**, verbatim and round-trip asserted,
-    to leave this file the headroom one rotation did not buy. Nothing was discarded, and all three
-    mechanisms it records are committed and re-proven green by `tools/loop/run-harnesses.py` (4/4).
-    **The headlines:** **a check can print a verdict it never reached** - the mirror image of iter162,
-    and `check_gate_pointers` printed "every pointer resolves" over an empty population for 12
-    iterations, so **assert the WALK, not the finding count**, and note that **the check most likely
-    to be vacuous is the one whose defect was fixed by removing its population**; **"warn and
-    continue" is not always on the menu - measure the channel first**, because in the driver's
-    invocation a PreToolUse hook's stderr is silent at exit 0 AND exit 1 and only exit 2 is quoted
-    back, so a branch that knows it inspected nothing must block; **a probe that enables the
-    visibility it is measuring proves nothing** (reproduce the invocation under test, flags included);
-    **an anchor phrase must be CONTIGUOUS in the source**, or a wrapped string literal makes a correct
-    hook score WRONG-CHECK; and **a number the protocol asks every iteration to eyeball is a missing
-    assertion** - "expect 1390 tests" is now `EXPECTED_AT_LEAST`, a floor that fires when the count
-    drops and needs no edit when it grows.
+  * **MOVED to `tools/loop/method-notes-archive-2.md` at iter165**, verbatim and round-trip asserted;
+    all three mechanisms are committed and green in `run-harnesses.py`. **INDEXED at iter175** to fund
+    that iteration's own note, which is the lever iter170 named: a stub is a pointer, not a summary.
+    Open the archive for: a check printing a verdict it never reached (assert the WALK, not the
+    finding count); "warn and continue" needing the channel measured first; a probe that enables the
+    visibility it measures; anchors having to be CONTIGUOUS in source; and `EXPECTED_AT_LEAST`.
 ## Proving a vacuity judgement instead of writing one (iter164)
 
-  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter166**, verbatim and round-trip asserted,
-    into the generation this rotation opened. Nothing was discarded, and the seam it records is
-    closed: iter165 proved the four declared refusals fire and fixed the two that skipped their
-    findings. **The headlines:** **"non-vacuous by construction" is a claim, and three of four were
-    false** - when an iteration hardens one instance of a defect and reasons the siblings safe, the
-    cheapest real work available is a cell per sibling; **"the checker exited non-zero" attributes
-    nothing when `main()` runs every check**, so slice stdout by each check's own section header and
-    ask whether THAT block holds a `BROKEN:` line, which yields the verdict **WRONG-CHECK - a sibling
-    covered for it**; **the population that silently empties is the one whose counter the same edit
-    can repair**; **scoping a check to a prose prefix is a one-keystroke vacuity**, and an instruction
-    that depends on somebody remembering it is not a fix, placement is; **a non-empty assertion is the
-    wrong fix for a population that legitimately empties** - put the refusal on the one population
-    that may never empty and catch the rest by flagging a status marker the classifier cannot read;
-    **predict each cell's verdict in writing before the first run**, which is what makes a count a
-    measurement rather than a story told after the fact; and **this Bash tool statically refuses
-    `<->` inside a quoted argument** (a zsh numeric-range glob) and refuses redirecting to `/tmp`.
+  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter166**, verbatim and round-trip asserted;
+    the seam is closed (iter165 fixed the two refusals that skipped their findings). **INDEXED at
+    iter175** to fund that iteration's note. Open the archive for: "non-vacuous by construction" being
+    a claim (three of four false); attributing a failure when `main()` runs every check (WRONG-CHECK);
+    scoping to a prose prefix as one-keystroke vacuity; **predicting each cell's verdict in writing
+    before the first run**; and this Bash tool refusing `<->` in a quoted argument and `/tmp` redirects.
 ## A refusal that returns is a refusal that skips (iter165)
 
   * **MOVED to `tools/loop/method-notes-archive-3.md` at iter166**, verbatim and round-trip asserted,
@@ -564,3 +545,25 @@ was written down and never mechanised.*
     `errors.Add(...)` left `owner` and the `errors` parameter unused and therefore unbuildable.
     Passing `[]` at the one call site expresses the same "collect but never fail" semantics and
     compiles, which is what makes it evidence.
+
+## A zero-test run also scores GREEN, and a racy cancellation test means the fix is short (iter175)
+
+  * **iter173 CLOSED ONE DOOR TO "NEVER INVOKED READS AS NO OBJECTION"; THERE IS A SECOND.** This
+    iteration's harness carried `--nologo`, which `nextAction` warns **runs zero tests and exits 1**
+    (iter172). Every cell came back `0 failed of 0` and the grader scored all five GREEN — so it
+    reported the live defect it had just re-planted as **undetectable**, with a build-failure detector
+    that worked perfectly. **Ask "did it run?" before "did it object?": grade against the POPULATION,
+    not the failure count.** `CLASS_SIZE = 12`, a total below it is its own `NO-TESTS` verdict, and
+    both floors sit in `grade()` where every cell must pass them. The generalisation of iter163's
+    `EXPECTED_AT_LEAST` and iter162's vacuity rule: **a count of zero problems is only evidence once
+    the denominator is asserted.**
+  * **A CANCELLATION TEST THAT CAN ONLY BE MADE DETERMINISTIC BY A DELEGATE IS TELLING YOU THE FIX IS
+    INCOMPLETE.** iter174 dodged the in-flight-vs-next-turn race with an injectable renderer; the
+    reply pass has no such seam, and the race looked like a test problem. It was a **code** problem:
+    a loop-top `IsCancellationRequested` guard leaves the window where the token trips the request
+    itself, so the honest fix is that guard **plus** `catch (OperationCanceledException) when
+    (cancellationToken.IsCancellationRequested)` at every await that writes. With both, the two paths
+    return the same accumulated result and the race stops mattering — the WireMock
+    `WithCallback(_ => cts.Cancel())` seam then needs no delegate. **Scope the `when` clause to the
+    token**, or the same catch starts swallowing client timeouts, which arrive as `TaskCanceledException`
+    with the token untouched.
