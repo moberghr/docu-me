@@ -86,7 +86,7 @@ def failing_from_stdout(text):
 # project dropped from the solution, a filter left in place, a runner that collected nothing. Raise
 # it when the suite legitimately grows; lowering it is a deliberate act that needs a reason in the
 # commit message, exactly like check-state-size.py's MEASURED constants.
-EXPECTED_AT_LEAST = 1399  # iter172: +4, dot-path scope guards + the unreferenced-asset invariant
+EXPECTED_AT_LEAST = 1400  # iter173: +1, the flatten-collision owner/whole-tree-fold invariant
 
 
 def verdict(returncode, blob):

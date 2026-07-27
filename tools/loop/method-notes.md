@@ -468,42 +468,30 @@ was written down and never mechanised.*
     before predicting that one cell is the sole detector.
 ## The stub layer nobody had paired, and a regex that fabricated 18 findings (iter166)
 
-  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter167**, verbatim and round-trip asserted.
-    Nothing was discarded, and the seam it records is closed: 24/24 stubs resolved and
-    `check_method_notes_stubs` (check #9) now stands over them. **The headlines:** **a "verbatim,
-    round-trip asserted" claim is asserted ONCE, by the script doing the rotating, and then never
-    again**, so pair the stub with its body in a check - and when an earlier iteration enumerates
-    "every stub/body split" scoped to one file, **the sibling in another file is the thing to look
-    for**; **a regex that under-matches does not miss findings, it FABRICATES them** - `[Mm]oved`
-    missed the all-caps `**MOVED to`, reclassified 18 stubs as live bodies and reported their good
-    archived bodies as 18 orphans, confident and specific and wrong - so **an enumeration keyed on a
-    phrase must be checked against an INDEPENDENT count of the same population before its findings
-    are believed**, because **a partial match is worse than no match** (a vacuity refusal fires on
-    zero and stays silent on 6-of-24, so the floor must be a hard minimum); **the fourth direction of
-    a pairing check is therefore "a stub that does not parse is NOT a live body"**, detected
-    structurally, or the classifier's own blind spot is unobservable from inside the check; **a
-    remedy instruction goes stale like any other claim** - "condense the stub layer" was withdrawn
-    after measuring that only 1,829 B of 26,556 B is repeated phrasing, so **measure what the bytes
-    ARE, not just how many there are**; and **a scratch probe that restates a committed declaration
-    goes stale inside one iteration** (this one hardcoded the generations and creating generation 3
-    falsified it the same session - import the declaration instead).
+  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter167**, verbatim, round trip asserted.
+    **An INDEX, not a restatement — open the archive when one of these bites.** Seam closed:
+    `check_method_notes_stubs` (check #9) stands over 24/24 stubs. Topics: a "round-trip asserted"
+    claim is asserted ONCE by the rotating script and never again, so pair stub to body in a check,
+    and when an iteration enumerates "every stub/body split" scoped to one file, look for the
+    sibling in another file; **a regex that under-matches FABRICATES findings rather than missing
+    them** (`[Mm]oved` vs the all-caps `**MOVED to` — 18 confident, specific, wrong orphans), so
+    check a phrase-keyed enumeration against an INDEPENDENT count and make a vacuity floor a hard
+    minimum, a partial match being worse than none; the fourth pairing direction is "a stub that
+    does not parse is NOT a live body"; measure what the bytes ARE, not how many; and a scratch
+    probe restating a committed declaration goes stale inside one iteration.
 
 ## The probe that reproduced iter166's bug three times while implementing its lesson (iter167)
 
-  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter168**, verbatim and round-trip asserted.
-    Nothing was discarded. **The headlines:** **the instrument guard belongs inside the check as a
-    failing fact, not in its docstring** - iter167 set out to apply iter166's "check the enumeration
-    against an independent count", wrote two extractions on purpose, and STILL shipped that class of
-    bug three times (43 fabricated findings, then 4, then 2), so the agreement of the two is now fact
-    (1) of `check_citation_resolution` and a disagreement fails it outright; **knowing a lesson does
-    not protect you from the bug, wiring the counter-measure into the thing you ship does**; the three
-    bug shapes were **stripping punctuation from both ends of a token**, **a sentence period inside the
-    segment class** (a silent under-count, the opposite failure mode) and **scanning a serialisation
-    instead of the content**; **a blunt "every citation must resolve" rule would have reported the
-    tree's clearest documentation as four defects**, because a pointer to a thing meant not to exist is
-    not a broken pointer, hence `CITATION_KNOWN_ABSENT` checked in both directions; **do not write
-    specimen paths in prose**, an invented example being indistinguishable from an instruction to open a
-    file; and **scope that is declined must be counted or it reads as coverage**.
+  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter168**, verbatim, round trip asserted.
+    **An INDEX — open the archive when one of these bites.** Topics: **the instrument guard belongs
+    inside the check as a failing fact, not in its docstring** — iter167 set out to apply iter166's
+    lesson, wrote two extractions on purpose, and STILL shipped that bug three times (43 fabricated
+    findings, then 4, then 2), so their agreement is fact (1) of `check_citation_resolution`;
+    **knowing a lesson does not protect you, wiring the counter-measure into what you ship does**;
+    the three bug shapes (punctuation stripped from both ends, a sentence period inside the segment
+    class, scanning a serialisation not the content); why a blunt "every citation must resolve"
+    would indict the tree's clearest documentation, hence `CITATION_KNOWN_ABSENT` both ways; **do
+    not write specimen paths in prose**; and declined scope must be counted or it reads as coverage.
   * **THE LAST BULLET OF THE ARCHIVED BODY WAS ACTED ON AT ITER168**: the seven re-runnable harnesses
     moved into `tools/loop/`, `check_harness_tracking` (check #11) now fails when a harness or its
     runner is untracked, and that move retargeted the runner path quoted inside the archived bullet.
@@ -561,3 +549,18 @@ was written down and never mechanised.*
     a future document could hide behind. And **a partial mutation grades the CHECK broken**: two
     hand-listed anchors both `count == 1`, a third ratio in the check's own comment, tree healthy,
     MISSED. Sweep, and assert none survives.
+
+## A build failure that scores GREEN, which is worse than scoring CAUGHT (iter173)
+
+  * **A BUILD-FAILURE DETECTOR KEYED ON `error CS` IS BLIND TO THIS REPO.** Max-strict analyzers
+    mean most mutations die on `error S1172` / `IDE0059` / `S1481`, and the banner reads
+    `Build FAILED.`, not `Build failed` — two independent misses, both silent. iter158 warned that
+    build-failed READS LIKE caught; landing on **GREEN is worse**, because a test that was never
+    invoked scores as a test that had no objection, and the harness then certifies the mutation as
+    undetectable. Match `error [A-Z]+\d+` case-insensitively, treat a non-zero exit with no parsed
+    failure as BUILD-FAILED, and **carry a cell that MUST report BUILD-FAILED** so the detector is
+    proven to fire rather than assumed to (orphan a local; the analyzers do the rest).
+  * **DELETING A FAILURE PATH ORPHANS ITS VARIABLES — MUTATE THE CALL SITE INSTEAD.** Removing an
+    `errors.Add(...)` left `owner` and the `errors` parameter unused and therefore unbuildable.
+    Passing `[]` at the one call site expresses the same "collect but never fail" semantics and
+    compiles, which is what makes it evidence.

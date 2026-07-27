@@ -175,13 +175,36 @@ public sealed class WikiTreeTests : IDisposable
     [Fact]
     public void Load_fails_when_two_assets_flatten_to_one_attachment_filename()
     {
-        // The one residual ambiguity of flattening '/' to '_'.
+        // The one residual ambiguity of flattening '/' to '_'. NEITHER of these is referenced by
+        // any page in the fixture, and the tree still fails to load: the check is whole-tree on
+        // purpose, not scoped to assets a run would actually upload.
         Write("a_b/c.png", "x");
         Write("a/b_c.png", "x");
 
         var ex = Should.Throw<WikiTreeException>(() => BuildTree());
 
-        ex.Errors.ShouldHaveSingleItem().ShouldContain("a_b_c.png");
+        var error = ex.Errors.ShouldHaveSingleItem();
+        error.ShouldContain("a_b_c.png");
+        error.ShouldContain("a_b/c.png");
+        error.ShouldContain("a/b_c.png");
+    }
+
+    [Fact]
+    public void A_flatten_collision_is_owned_by_the_ordinal_first_path_which_is_why_it_fails_at_load()
+    {
+        // Three paths, one attachment filename. Which one KEEPS the name is decided by the tree's
+        // sort order ('/' 0x2F sorts before '_' 0x5F), not by which page references it — and that
+        // is the whole reason the error belongs at load rather than at the reference. Deferred, it
+        // would blame a page picked by an unrelated file's name and report the other two as broken
+        // images to files that exist. Here it is two lines, both naming the owner, in one pass.
+        Write("a_b/c.png", "x");
+        Write("a/b_c.png", "x");
+        Write("a_b_c.png", "x");
+
+        var ex = Should.Throw<WikiTreeException>(() => BuildTree());
+
+        ex.Errors.Count.ShouldBe(2);
+        ex.Errors.ShouldAllBe(error => error.Contains("'a/b_c.png' and", StringComparison.Ordinal));
     }
 
     [Fact]

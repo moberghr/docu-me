@@ -348,6 +348,23 @@ public sealed class WikiTree
     /// Asset path → attachment filename, with flatten collisions reported rather than
     /// silently letting one asset overwrite another's upload.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Whole-tree on purpose, which costs an abort on a colliding pair no page references and no
+    /// run would ever upload. Scoping it to referenced assets is not available here: references
+    /// resolve per page, during conversion, long after <see cref="Load"/>. The only alternative is
+    /// deferring the error to the first page that resolves one of the pair.
+    /// </para>
+    /// <para>
+    /// That alternative is worse rather than merely later. The colliding name is kept by whichever
+    /// path sorts first, so the losers get no entry here and <see cref="AttachmentNameFor"/>
+    /// answers null for them — a file that exists on disk reported as a broken image reference, on
+    /// a page whose author did nothing wrong, with the blame decided by an unrelated file's name.
+    /// Order-dependence of exactly that kind is what <see cref="FlattenToAttachmentName"/> exists
+    /// to prevent. Reported at load it is one accurate line naming both paths, in the same pass as
+    /// every other tree problem, and the fix is to rename a file.
+    /// </para>
+    /// </remarks>
     private static Dictionary<string, string> AttachmentNames(List<string> assets, List<string> errors)
     {
         var names = new Dictionary<string, string>(StringComparer.Ordinal);
