@@ -259,6 +259,13 @@ HARNESSES = {
                                    " floating-install declaration both ways, and its vacuity"
                                    " refusal (8/8, plus a 3/3 self-check that its own cells can"
                                    " report FAIL)",
+    # iter170, and the first guard here whose defect was already LIVE when the check was written -
+    # every earlier one was green on arrival. Its stale-copy cell replants the exact sentence that
+    # stood in method-notes.md from iter129 to iter170, which is why this file is a declared fixture
+    # above rather than swept prose.
+    "mutate-prose-constants.py": "check_prose_constants' red branches: a stale copy, a stripped"
+                                 " attribution, a moved constant, a blinded sweep, and its vacuity"
+                                 " refusal (6/6)",
     # NOT a guard - the guarded thing. The runner calls it last as the live-tree control, and it is
     # held to the same tracked-ness as the rest, so listing it here keeps the pairing exact instead
     # of needing a second declaration for the one exception.
@@ -275,6 +282,57 @@ HARNESS_RUNNER = "run-harnesses.py"
 # GROWING - that is a new re-runnable thing written into scratch, which is the defect this check
 # exists to stop. Lower it freely; raising it is a decision to be made out loud, in the same change.
 SCRATCH_CITATION_CEILING = 21
+
+# ---------------------------------------------------------------------------
+# PROSE COPIES OF A CONSTANT (iter170, check #12)
+#
+# `check_calibration` guards BYTES_PER_TOKEN_* where they are DEFINED - it fails when one drifts
+# optimistic against the MEASURED table. Nothing guarded the copies of them written into PROSE
+# somewhere else, and iter170 found one that had been wrong since iter138 lowered the constant:
+# method-notes.md's preamble said "Measured: markdown 2.604 B/tok, state.json's JSON 2.368" with no
+# date and no supersession marker, in the file every iteration is ordered to read BEFORE writing a
+# probe. 2.604 is iter129's blend-of-seven-files AVERAGE - the methodology this script's own
+# docstring names as the one that was replaced ("pin each constant at or below the DENSEST file ever
+# measured of that kind, never at the average"). The live pair is 2.4/2.3.
+#
+# THE COST WAS PAID, NOT HYPOTHESISED: iter170 read that bullet, used 2.604 in its first measurement
+# script, and computed 4,674 B of method-notes.md headroom where this checker computes 594 B - an 8x
+# over-statement of the one number that decides whether the file can take another note. The preamble
+# bullet four rows above it warns "two copies of one rule is how the iter127 wording went stale".
+#
+# THE INVARIANT: a bytes-per-token ratio in prose is either (a) one of the live constants, or (b)
+# attributed to the iteration that measured it, which is what makes it readable as dated history
+# instead of as the value to compute with. An unattributed ratio that is not the live constant is a
+# trap, and it is invisible from the definition site by construction.
+#
+# The population is swept, NOT declared per-file: the exemption direction is the dangerous one here
+# (a new orientation file could opt out by not being listed), and inferring broadly can only ADD
+# coverage. Only the exclusions are declared, with reasons.
+PROSE_CONSTANT_RE = re.compile(r"(\d+\.\d+)\s*B/tok")
+PROSE_CONSTANT_ATTRIBUTION = re.compile(r"iter\d+")
+# Prose wraps, so a ratio's attribution routinely sits a line or two above it. Two lines of lead-in
+# is the wrapped-paragraph scale; a larger window starts absorbing a NEIGHBOURING paragraph's
+# `iterNNN` and calling an unattributed number attributed, which is the false-negative direction.
+PROSE_CONSTANT_CONTEXT_LINES = 2
+PROSE_CONSTANT_EXTS = (".md", ".py", ".json", ".jsonl")
+PROSE_CONSTANT_EXCLUDED = {
+    "logs": "per-iteration transcripts; they QUOTE the orientation layer, so a stale constant there"
+            " is a historical record of the defect, not a live instruction.",
+}
+# A MUTATION HARNESS MUST CARRY THE DEFECT IT PLANTS. mutate-prose-constants.py replants the exact
+# undated ratio this check exists to catch, so sweeping it fails the harness on its own payload -
+# measured on the harness's first run. The payload cannot be attributed without neutering the cell.
+#
+# EXEMPTED VIA AN EXISTING DECLARED LIST, NOT A NAME SHAPE (iter161's rule, and the reason this is
+# not `mutate-*`): a `mutate-*` glob would let a future orientation file opt out by being named
+# well. HARNESSES is already declared here AND paired both ways with the runner by
+# check_harness_tracking, so a new harness earns this exemption only by being declared as one.
+# The authority is subtracted back in - it is in HARNESSES as the live-tree control, and fact (2)
+# needs it in the population.
+PROSE_CONSTANT_FIXTURES = "declared in HARNESSES: a harness's payload is a fixture, not prose"
+# The file that DEFINES the constants must stay in the population. If the regex ever stops matching
+# it, the sweep has gone blind and every other file passes for the wrong reason.
+PROSE_CONSTANT_AUTHORITY = "check-state-size.py"
 
 _SEG = r"[A-Za-z0-9_.@+-]+"
 _CITE_RE = re.compile(rf"(?<![A-Za-z0-9_/:.-])((?:{_SEG})?(?:/{_SEG})+/?)")
@@ -1833,6 +1891,122 @@ def check_method_notes_stubs():
     return problems
 
 
+def check_prose_constants():
+    """Does every bytes-per-token ratio written in prose agree with the constant it copies?
+
+    ADDED ITER170, and it is the constant-side twin of every pairing check iters 159-168 built.
+    Those paired a stub with its archived body, a gate with its mirror, a citation with the file it
+    names, a harness with the runner. This one pairs a NUMBER in prose with the number in code, and
+    it is the first of the family whose defect had already been live for 32 iterations: iter138
+    lowered BYTES_PER_TOKEN_MARKDOWN from 2.5 to 2.4 and nothing looked for the prose copies of the
+    old figure. method-notes.md's preamble still presented iter129's superseded blend average as the
+    measured pair, undated, in the file every iteration reads before writing a probe.
+
+    WHY THIS IS NOT check_calibration's JOB. That check asks whether the constants are conservative
+    against the MEASURED table - it guards the definition. A prose copy is invisible to it: the
+    number is not a constant, it is a sentence, and the sentence is what an agent reads and uses.
+    iter170 used it, and got 4,674 B of headroom where this file computes 594 B.
+
+    THREE FACTS, AND A VACUITY REFUSAL:
+      (1) every ratio in prose is a live constant, or is attributed to the iteration that measured
+          it. Attribution is what separates dated history (legitimate, and the archives are full of
+          it) from a figure presented as the one to compute with.
+      (2) the file that DEFINES the constants is still in the population. If the regex stops matching
+          the canonical `N.NNN B/tok` spelling, the sweep goes blind and every file passes for the
+          wrong reason - the same silent-reclassification trap that cost iter166 two wrong regexes.
+      (3) every live constant is quoted SOMEWHERE in the orientation layer, so lowering one cannot
+          leave the read path with no correct copy at all.
+
+    THE REFUSAL APPENDS RATHER THAN RETURNS (iter165). The population is derived by regex over a
+    swept tree, so it empties on a reworded spelling - and fact (2) has to be able to say so in the
+    same run rather than being skipped by an early return.
+    """
+    problems = []
+    live = {
+        f"{BYTES_PER_TOKEN_MARKDOWN:g}": "BYTES_PER_TOKEN_MARKDOWN",
+        f"{BYTES_PER_TOKEN_JSON:g}": "BYTES_PER_TOKEN_JSON",
+    }
+
+    fixtures = set(HARNESSES) - {PROSE_CONSTANT_AUTHORITY}
+    targets = []
+    for root, dirs, files in os.walk(LOOP_DIR):
+        dirs[:] = [d for d in dirs if d not in PROSE_CONSTANT_EXCLUDED]
+        for name in sorted(files):
+            if name.endswith(PROSE_CONSTANT_EXTS) and name not in fixtures:
+                targets.append(os.path.join(root, name))
+    for rel in ("GATES.md", "PLAN.md", "CLAUDE.md"):
+        path = os.path.join(REPO, rel)
+        if os.path.isfile(path):
+            targets.append(path)
+
+    found = []
+    for path in sorted(set(targets)):
+        try:
+            lines = open(path, encoding="utf-8").read().splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for n, line in enumerate(lines):
+            for match in PROSE_CONSTANT_RE.finditer(line):
+                start = max(0, n - PROSE_CONSTANT_CONTEXT_LINES)
+                context = "\n".join(lines[start:n + 1])
+                found.append({
+                    "rel": os.path.relpath(path, REPO),
+                    "line": n + 1,
+                    "value": match.group(1),
+                    "attributed": bool(PROSE_CONSTANT_ATTRIBUTION.search(context)),
+                })
+
+    # (1) EVERY RATIO IS AUTHORITATIVE OR ATTRIBUTED.
+    for hit in found:
+        if hit["value"] in live or hit["attributed"]:
+            continue
+        problems.append(
+            f"{hit['rel']}:{hit['line']} states {hit['value']} B/tok, which is neither a live"
+            f" constant ({', '.join(sorted(live))}) nor attributed to the iteration that measured"
+            " it. Either name that iteration so it reads as dated history, or replace the figure"
+            " with a pointer to check-state-size.py - never leave a superseded constant in prose an"
+            " iteration is told to read before it measures anything"
+        )
+
+    # (2) THE AUTHORITY IS STILL IN THE POPULATION - otherwise the regex has rotted.
+    if not any(hit["rel"].endswith(PROSE_CONSTANT_AUTHORITY) for hit in found):
+        problems.append(
+            f"the sweep found no ratio in {PROSE_CONSTANT_AUTHORITY}, which defines both constants."
+            " PROSE_CONSTANT_RE no longer matches the canonical `N.NNN B/tok` spelling, so this"
+            " check is blind and its green verdict means nothing"
+        )
+
+    # (3) EVERY LIVE CONSTANT IS QUOTED SOMEWHERE, so the read path keeps a correct copy.
+    quoted = {hit["value"] for hit in found}
+    for value, name in sorted(live.items()):
+        if value not in quoted:
+            problems.append(
+                f"{name} is {value}, and no file in the orientation layer quotes it. Lowering a"
+                " constant without updating the prose that explains it is exactly how iter138's"
+                " change left 2.604 standing for 32 iterations"
+            )
+
+    # THE VACUITY REFUSAL, and it APPENDS.
+    if not found:
+        problems.append(
+            f"nothing to check - 0 ratios matched across {len(targets)} swept files. A vacuous pass"
+            " is not a pass"
+        )
+
+    print("\nprose copies of a bytes-per-token constant <-> the constant (iter170):")
+    print(f"  {len(found)} ratios across {len(targets)} swept files;"
+          f" live constants {', '.join(sorted(live))}")
+    print(f"  {sum(1 for h in found if h['value'] in live)} are a live constant,"
+          f" {sum(1 for h in found if h['value'] not in live and h['attributed'])} are dated history")
+    for problem in problems:
+        print(f"  BROKEN: {problem}")
+    if not problems:
+        print("  OK: every ratio in prose is a live constant or is attributed to the iteration that")
+        print("      measured it, the defining file is still in the population, and every live")
+        print("      constant is quoted somewhere an iteration reads.")
+    return problems
+
+
 def find_iteration(wanted):
     """`grep -n 'iterNNN'` is WRONG for 27 of 135 iterations. This is the lookup that works.
 
@@ -1918,6 +2092,7 @@ def main():
     method_notes_problems = check_method_notes_stubs()
     citation_problems = check_citation_resolution()
     harness_problems = check_harness_tracking()
+    prose_constant_problems = check_prose_constants()
 
     if calibration_problems:
         print("\nFAIL: a bytes-per-token constant is optimistic, so every estimate and headroom")
@@ -1993,14 +2168,23 @@ def main():
         print("the file, or declare it in HARNESSES and STEPS together; never drop a declaration to")
         print("make this pass, because the declaration is the only thing that knows the guard exists.")
         return 1
+    if prose_constant_problems:
+        print("\nFAIL: a bytes-per-token ratio in prose disagrees with the constant it copies, or the")
+        print("sweep that finds them has gone blind. check_calibration guards the DEFINITION; this")
+        print("guards the copies, which are what an agent actually reads and computes with. Fix the")
+        print("prose - attribute the figure to the iteration that measured it, or replace it with a")
+        print("pointer to this file's constants. Do NOT raise a constant to match a sentence, and do")
+        print("not delete a MEASURED row: the measurements are the evidence, the prose is the copy.")
+        return 1
     print("\nOK: all three step-1 Reads return their whole file, every read-whole file under")
     print("tools/loop/ fits in one too, the done archive is intact, every GATES.md checkbox is")
     print("mirrored, no open gate points at work that is finished, every blocker/decision stub")
     print("resolves to its archived body, every settled tombstone still has the body it was archived")
     print("from, `gates`'s long-mirror archive pairs both ways, every method-notes.md stub")
     print("resolves to the archived body it claims, every path the orientation layer cites")
-    print("either exists or is declared absent on purpose, and every harness that guards this")
-    print("tooling is tracked by git rather than living in scratch.")
+    print("either exists or is declared absent on purpose, every harness that guards this")
+    print("tooling is tracked by git rather than living in scratch, and every bytes-per-token")
+    print("ratio written in prose is a live constant or dated history rather than a stale copy.")
     return 0
 
 

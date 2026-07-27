@@ -24,15 +24,13 @@
 > `METHOD_NOTES_GENERATIONS` in the same change that creates it — that is now a failing check, not
 > advice.**
 >
-> **THE OTHER REMEDY THIS HEADER USED TO NAME IS MEASURED AND WITHDRAWN (iter166).** It told you the
-> next budget lever was condensing the stub layer, since 24 pointers averaging 1,173 B are summaries
-> rather than pointers. Counted (`python3 .mtk/paths-166/measure-stub-boilerplate.py`): of 26,556 B
-> of stub bodies, **only 1,829 B is repeated phrasing** — the destination path, "verbatim and
-> round-trip asserted", "Nothing was discarded.", "**The headlines:**". Stripping every one of them
-> nets about 1.1 KB, less than the section documenting the work would cost, and the other ~24.7 KB is
-> per-stub headline CONTENT that cannot go without discarding lessons. **So condensing is not a
-> budget lever; rotating into the current generation is.** The stub layer is the read path — it is
-> what makes this file worth reading whole — and it is not the fat.
+> **EVERY BUDGET LEVER ON THIS FILE IS NOW SPENT, MEASURED TWICE — SO THE REMEDY IS TO WRITE LESS.**
+> iter166 withdrew "condense the stub layer" (only 1,829 B of 26,556 B was repeated phrasing; the rest
+> is headline CONTENT) and named rotation as the live lever. iter170 measured rotation too: **ONE
+> candidate worth +28 B**, and its two real rotations netted **-285 B** and **-37 B**, because a stub
+> costs what its headlines cost. Rotation frees space for a NARRATIVE section, never for a terse list.
+> **Full account, and the 8x headroom error that came with it: the iter170 section at the end of this
+> file.** A stub is an INDEX that says "open the archive", not a summary that reproduces it.
 
 **METHOD NOTES — carried forward, plus one new.**
   * **iter127: EVERY FILE THIS LOOP APPENDS TO EVERY ITERATION WILL EVENTUALLY OUTGROW THE READ TOOL.**
@@ -49,17 +47,6 @@
   * **NEW, iter125: A CONTROL CASE EARNS ITS PLACE IN A MUTATION HARNESS.** One case renumbers §10's
     nested steps 4/5/6 and must NOT fail — it is the only proof that the claims key on phrases rather than
     ordinals. Report it as OK-IGNORED, distinct from CAUGHT.
-  * iter124: SA1515 FIRES ON A COMMENT THAT IS THE FIRST LINE INSIDE A COLLECTION-EXPRESSION `[`. A blank
-    line between the `[` and the comment is accepted.
-  * iter124: SA1118 ALSO FIRES ON `ShouldBe(6, customMessage: "..." + "...")`. Hoist the message into a
-    local first.
-  * iter124: A MUTATION THAT DOES NOT COMPILE IS NOT EVIDENCE. Pick one that is the REAL defect and still
-    compiles — iter125's src case adds `BaselineSha = sha` to `RecordLastPublishedSha`, which is precisely
-    what §10's closing paragraph forbids and which the compiler is happy with.
-  * iter123: `ShouldContain` ON A WHOLE SECTION'S TEXT PROVES ALMOST NOTHING. Parse the structure.
-  * iter123: S127 forbids advancing the loop variable inside a `for`.
-  * iter123: A `<see cref="...">` TO A PRIVATE MEMBER OF ANOTHER TYPE, OR TO A TEST TYPE FROM src/, IS
-    CS1574 AND THEREFORE AN ERROR HERE. Name it in `<c>` instead.
   * A HEREDOC (`cat > f <<'PY'`) IS REFUSED IN THIS HARNESS — write probe scripts with the Write tool. A
     COMPOUND COMMAND CONTAINING A SUBSHELL is refused too, **and so is a BASH `for` LOOP over a list with
     `$f`-style expansion ("Contains simple_expansion") — put the loop in python instead.**
@@ -69,7 +56,6 @@
   * **NEW, iter128: THE READ TOOL AND `count('\n')` DISAGREE BY ONE.** A claim like "99 lines" written
     against `text.count('\n')` will fail its own assertion — the tool (and `check-state-size.py`) count
     `text.count('\n') + 1`. Use the same convention as the thing you are quoting.
-  * `[GeneratedRegex(pattern, matchTimeoutMilliseconds: N)]` DOES NOT COMPILE — pass options too.
   * A NEW CLI FLAG COSTS THREE MORE EDITS (cli.md's option table, CHANGELOG.md's flag inventory, and
     PLAN.md if it declares it). **A NEW CONFIG FIELD COSTS FOUR:** §5.1's block, the schema, the record,
     and configuration.md's example. **A NEW §8/§9 SEMANTIC COSTS A CLAIM IN PlanSemanticsTraceTests, AND A
@@ -82,36 +68,34 @@
     the lead is now exhausted.
   * `dotnet test --nologo` RUNS ZERO TESTS AND EXITS 1. Plain `dotnet test` is correct. A single class:
     `dotnet test --filter-query '/*/*/<Class>/*'`.
-  * THE ANALYZERS ARE STRICT AND WILL FIGHT EACH OTHER: RCS1215 + S3981 on a `Count >= 0` assertion,
-    MA0001 vs CA1865, S3220 vs S3878, RCS1118, MA0006, CA1861, and Shouldly's `ShouldContain(string,
-    string)` binding to the IEnumerable<char> overload — spell it `customMessage:`.
-  * A FIXTURE FOR A GENERATIVE-SKILL PROBE MUST LIVE OUTSIDE THE REPO with its own .git.
-  * `dotnet tool install --add-source <local feed> --version 0.1.0` SILENTLY INSTALLS THE CACHED PACKAGE.
-    Pack under a unique prerelease suffix.
   * WHEN A HARNESS CRASHES, CASES AFTER THE CRASH DID NOT RUN. Read the tail and check the N/N line.
-  * THE READ TOOL IS THE ONLY TOKENIZER ON THIS MACHINE (no tiktoken, no anthropic, no transformers).
-    Its truncation notice reports the file's EXACT total: "PARTIAL view - showing lines 1-462 of 1500
-    total (68900 tokens, cap 25000)". To measure bytes-per-token: build a file OVER the 25,000-token cap
-    but UNDER the 256 KB byte ceiling (past that the Read fails and reports nothing), Read it whole,
-    divide. A BOUNDED Read (`limit=2`) reports no totals, so the measuring Read must be unbounded and you
-    pay for its content. Measured: markdown 2.604 B/tok, state.json's JSON 2.368.
-  * SIZE A MUTATION FROM A TARGET TOKEN COUNT, NOT FROM A CONVENIENT FILLER CHUNK. iter129's first run of
-    mutate-size-check.py scored 3/5 because it grew files in 45 KB PLAN.md-sized chunks and overshot a
-    5,000-token budget band straight into the over-cap band. Compute `target_bytes = target_tokens *
-    <the same constant the checker uses>` and append exactly that much. The failures were the harness's
-    arithmetic, not the checker's — which is the value of asserting the EXPECTED MESSAGE, not just a
-    non-zero exit.
-  * A CHECKER THAT GUARDS N FILES NEEDS N RED BRANCHES PROVEN, and each case must assert the UNMUTATED
-    copy is green first — otherwise a checker that fails on everything passes the harness. Copy the
-    guarded files to a scratch tree (`tempfile.TemporaryDirectory`) so the live repo is never touched.
-  * done-archive.jsonl ENTRIES ARE A MIX OF STRINGS AND DICTS (iter127 preserved both types), so
-    `{json.loads(line)["entry"] for ...}` raises `TypeError: unhashable type: 'dict'`. Compare canonical
-    JSON (`json.dumps(..., sort_keys=True)`) instead. And make an append script IDEMPOTENT: iter129's
-    crashed after appending n=130 and before rewriting state.json, so the re-run had to tolerate a tail
-    already at n rather than n-1.
-  * A BUDGET CHECK THAT THE CURRENT ITERATION TRIPS IS THE CHECK WORKING. Pay it back in the same
-    iteration (condense, or rotate a field to an archive) rather than raising the budget to suit the prose
-    that just broke it. iter128 and iter129 both did this.
+
+## C# analyzer and toolchain trivia (rotated from the preamble at iter170)
+
+  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter170**, round trip asserted first. **An
+    INDEX, not a restatement — open the archive when one of these bites**, which is the whole point of
+    a stub and is why the first draft of this one saved 37 B: SA1515 (comment first inside `[`),
+    SA1118 (concatenated `customMessage:`), S127 (`for` variable), CS1574 (`<see cref>` to a private
+    member or to a test type from `src/` — use `<c>`), `[GeneratedRegex]` needs options, the
+    analyzers fight each other (RCS1215+S3981, MA0001/CA1865, S3220/S3878, RCS1118, MA0006, CA1861,
+    Shouldly's `IEnumerable<char>` overload), `ShouldContain` over a whole section proves nothing,
+    a generative-skill fixture lives outside the repo, and `dotnet tool install --add-source`
+    installs the CACHED package. Also there: a mutation that does not compile is not evidence — which
+    has its own `## ` section at iter158.
+
+## The carried-forward preamble bullets: calibration, harness sizing, archive bookkeeping (rotated from the preamble at iter170)
+
+  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter170**, round trip asserted first — five
+    bullets that lived in the PREAMBLE, which is why nothing had ever paired them: it is not a `## `
+    section, so neither the rotation engine nor `check_method_notes_stubs` could reach it. **The one
+    thing worth keeping inline, because a wrong copy of it cost iter170 an 8x error: the live
+    constants are 2.4 B/tok markdown and 2.3 B/tok JSON, defined in `check-state-size.py`**, whose
+    `MEASURED` table dates every measurement behind them — **never restate either undated**
+    (`check_prose_constants` now fails on that). **Index of the rest:** the Read tool is the only
+    tokenizer here and a bounded Read reports no totals; size a mutation from a target TOKEN count
+    and assert the expected MESSAGE; N guarded files need N red branches, unmutated-green first;
+    done-archive.jsonl mixes strings and dicts; a budget check the current iteration trips is the
+    check working.
 
 ## Permissions and the loop's own settings (iter130)
 
@@ -541,16 +525,39 @@ was written down and never mechanised.*
 
 ## A harness that has to mutate the live tree, and a guard that checks itself (iter169)
 
-  * **WHEN NO FIXTURE IS AVAILABLE, EARN THE RIGHT TO TOUCH THE WORKING TREE.** A compiled test cannot
-    be pointed at a temp tree - its RepoRoot walks up from its own assembly to `DocuMe.slnx` - so its
-    harness mutates the real repo. Four cheap rules: **refuse to start when git says a target is
-    dirty**; **restore in a `finally`**, not at the end of main; **verify the restore TWO ways**
-    (bytes against a snapshot, then `git status`); and **declare the target list once**, so the
-    restore check reads the same list the cells write to and a cell touching an undeclared file is
-    caught. Worked example: `tools/loop/mutate-toolchain-pinning.py`.
-  * **8/8 ON A FIRST RUN IS A REASON TO CHECK THE HARNESS** - a `cell()` that could not report FAIL
-    would print exactly that. Three claims it must reject: a green run declared red, a substring the
-    message does not contain, an `also_absent` that is present. Permanent self-check, not a scratch
-    probe. **A test may also assert a known hazard is STILL THERE**: a tripwire goes red the moment
-    the decision is settled and carries its own instruction, which is how a decision stops being
-    settleable in silence.
+  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter170**, verbatim, round trip asserted
+    first. **An INDEX — open the archive before writing a live-tree harness.** When no fixture is
+    possible (a compiled test's `RepoRoot` walks up to `DocuMe.slnx`): refuse to start on a dirty
+    target, restore in a `finally`, verify the restore TWO ways, declare the target list once. And
+    **N/N on a first run is a reason to check the harness** — prove a cell can report FAIL. Worked
+    example: `tools/loop/mutate-toolchain-pinning.py`. **A test may also assert a hazard is STILL
+    THERE**: a tripwire reddens the moment the decision is settled and carries its own instruction.
+## A number copied into prose is a mirror nobody diffs (iter170)
+
+  * **A HAND-DERIVED COUNT IN AN ORIENTATION DOCUMENT OUTRANKS NOTHING; RUN THE TOOL.** `nextAction`
+    sent iter170 at "condensing the stub layer, the largest ungated work left" on 22 stubs; the
+    checker says 29, and this file's header had **measured that job and withdrawn it** at iter166. The
+    stub layer has **three** spellings and iter169 matched `MOVED to` case-sensitively, so seven
+    italic `*Moved to ...*` stubs read as live bodies. **When two orientation documents disagree, the
+    one with a re-runnable script wins — and neither beats running it.**
+  * **A CONSTANT COPIED INTO PROSE IS A MIRROR, AND MIRROR DRIFT NEEDS A CHECK.** iter138 lowered the
+    markdown constant to 2.4; the preamble kept iter129's blend **average** as undated fact for 32
+    iterations, in the file you must read before writing a probe. iter170 used it and computed
+    **4,674 B of headroom against a true 594** — 8x, on the number deciding whether the file can take
+    another note. `check_calibration` guards the DEFINITION; a prose copy is a sentence. **Ask of any
+    constant: who else states it, and what fails when it moves?** Guard: `check_prose_constants`.
+  * **THE UNGUARDED BLOCK IS THE ONE OUTSIDE THE STRUCTURE THE CHECKS PARSE** — every guard splits
+    this file on `## `, so the 7,101 B preamble was invisible to both the rotation engine and the stub
+    pairing. Moving 15 bullets into two `## ` stubs brought them under `check_method_notes_stubs`
+    **with no checker change**: coverage extended by reshaping content, not the guard.
+  * **BUT IT WAS NOT FAT, AND THE PREDICTION WAS WRONG TWICE BEFORE BEING MEASURED.** Both rotations
+    netted almost nothing — **-285 B**, then **-37 B** — because a stub costs what its headlines cost
+    and these were already headline-dense one-liners. **iter166 was right, iter169 wrong: rotation
+    frees space for NARRATIVE sections, never for a terse list.** All three levers here are spent, so
+    the only remedy left is **write less** — a stub is an INDEX saying "open the archive", not a
+    summary reproducing it.
+  * **A HARNESS CARRIES THE DEFECT IT PLANTS, SO IT CANNOT BE SWEPT AS PROSE.** Exempt it via an
+    **existing declared list** (`HARNESSES`, already paired with the runner), never a `mutate-*` glob
+    a future document could hide behind. And **a partial mutation grades the CHECK broken**: two
+    hand-listed anchors both `count == 1`, a third ratio in the check's own comment, tree healthy,
+    MISSED. Sweep, and assert none survives.

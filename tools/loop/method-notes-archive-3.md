@@ -211,3 +211,81 @@
     kind of temp tree; `.git` present and unreadable is a failure. Collapse the two and those fixtures
     quietly stop asserting the git fact. Worked out in full in `tools/loop/mutate-harness-tracking.py`,
     which has a cell per half.
+
+## The carried-forward preamble bullets: calibration, harness sizing, archive bookkeeping (rotated from the preamble at iter170)
+
+Rotated out of method-notes.md's PREAMBLE at iter170 - the first time anything from that block has
+been archived, because the preamble is not a `## ` section and so neither `rotate-method-notes.py`
+nor `check_method_notes_stubs` could reach it. Nothing was discarded; the stub left behind carries
+each bullet's headline, and the one figure that was wrong is dated in place below rather than
+removed.
+
+  * THE READ TOOL IS THE ONLY TOKENIZER ON THIS MACHINE (no tiktoken, no anthropic, no transformers).
+    Its truncation notice reports the file's EXACT total: "PARTIAL view - showing lines 1-462 of 1500
+    total (68900 tokens, cap 25000)". To measure bytes-per-token: build a file OVER the 25,000-token cap
+    but UNDER the 256 KB byte ceiling (past that the Read fails and reports nothing), Read it whole,
+    divide. A BOUNDED Read (`limit=2`) reports no totals, so the measuring Read must be unbounded and you
+    pay for its content. Measured: markdown 2.604 B/tok, state.json's JSON 2.368. (iter129's blend-of-seven-files
+    average, and iter138 SUPERSEDED it by lowering the markdown constant to 2.4 - see check-state-size.py's
+    docstring on pinning at the densest file, never the average. Recorded here as iter129 history; the
+    live pair is in that file, and `check_prose_constants` fails on an undated copy of either.)
+  * SIZE A MUTATION FROM A TARGET TOKEN COUNT, NOT FROM A CONVENIENT FILLER CHUNK. iter129's first run of
+    mutate-size-check.py scored 3/5 because it grew files in 45 KB PLAN.md-sized chunks and overshot a
+    5,000-token budget band straight into the over-cap band. Compute `target_bytes = target_tokens *
+    <the same constant the checker uses>` and append exactly that much. The failures were the harness's
+    arithmetic, not the checker's — which is the value of asserting the EXPECTED MESSAGE, not just a
+    non-zero exit.
+  * A CHECKER THAT GUARDS N FILES NEEDS N RED BRANCHES PROVEN, and each case must assert the UNMUTATED
+    copy is green first — otherwise a checker that fails on everything passes the harness. Copy the
+    guarded files to a scratch tree (`tempfile.TemporaryDirectory`) so the live repo is never touched.
+  * done-archive.jsonl ENTRIES ARE A MIX OF STRINGS AND DICTS (iter127 preserved both types), so
+    `{json.loads(line)["entry"] for ...}` raises `TypeError: unhashable type: 'dict'`. Compare canonical
+    JSON (`json.dumps(..., sort_keys=True)`) instead. And make an append script IDEMPOTENT: iter129's
+    crashed after appending n=130 and before rewriting state.json, so the re-run had to tolerate a tail
+    already at n rather than n-1.
+  * A BUDGET CHECK THAT THE CURRENT ITERATION TRIPS IS THE CHECK WORKING. Pay it back in the same
+    iteration (condense, or rotate a field to an archive) rather than raising the budget to suit the prose
+    that just broke it. iter128 and iter129 both did this.
+
+## C# analyzer and toolchain trivia (rotated from the preamble at iter170)
+
+Rotated out of method-notes.md's PREAMBLE at iter170, in the same iteration as the batch above and
+for the same reason: the preamble is not a `## ` section, so nothing could pair it with an archive.
+These are the analyzer and toolchain specifics - consulted when a build or a mutation fails, not read
+before every increment. Nothing was discarded; the stub left behind names every rule.
+
+  * iter124: SA1515 FIRES ON A COMMENT THAT IS THE FIRST LINE INSIDE A COLLECTION-EXPRESSION `[`. A blank
+    line between the `[` and the comment is accepted.
+  * iter124: SA1118 ALSO FIRES ON `ShouldBe(6, customMessage: "..." + "...")`. Hoist the message into a
+    local first.
+  * iter124: A MUTATION THAT DOES NOT COMPILE IS NOT EVIDENCE. Pick one that is the REAL defect and still
+    compiles — iter125's src case adds `BaselineSha = sha` to `RecordLastPublishedSha`, which is precisely
+    what §10's closing paragraph forbids and which the compiler is happy with.
+  * iter123: `ShouldContain` ON A WHOLE SECTION'S TEXT PROVES ALMOST NOTHING. Parse the structure.
+  * iter123: S127 forbids advancing the loop variable inside a `for`.
+  * iter123: A `<see cref="...">` TO A PRIVATE MEMBER OF ANOTHER TYPE, OR TO A TEST TYPE FROM src/, IS
+    CS1574 AND THEREFORE AN ERROR HERE. Name it in `<c>` instead.
+  * `[GeneratedRegex(pattern, matchTimeoutMilliseconds: N)]` DOES NOT COMPILE — pass options too.
+  * THE ANALYZERS ARE STRICT AND WILL FIGHT EACH OTHER: RCS1215 + S3981 on a `Count >= 0` assertion,
+    MA0001 vs CA1865, S3220 vs S3878, RCS1118, MA0006, CA1861, and Shouldly's `ShouldContain(string,
+    string)` binding to the IEnumerable<char> overload — spell it `customMessage:`.
+  * A FIXTURE FOR A GENERATIVE-SKILL PROBE MUST LIVE OUTSIDE THE REPO with its own .git.
+  * `dotnet tool install --add-source <local feed> --version 0.1.0` SILENTLY INSTALLS THE CACHED PACKAGE.
+    Pack under a unique prerelease suffix.
+
+## A harness that has to mutate the live tree, and a guard that checks itself (iter169)
+
+
+  * **WHEN NO FIXTURE IS AVAILABLE, EARN THE RIGHT TO TOUCH THE WORKING TREE.** A compiled test cannot
+    be pointed at a temp tree - its RepoRoot walks up from its own assembly to `DocuMe.slnx` - so its
+    harness mutates the real repo. Four cheap rules: **refuse to start when git says a target is
+    dirty**; **restore in a `finally`**, not at the end of main; **verify the restore TWO ways**
+    (bytes against a snapshot, then `git status`); and **declare the target list once**, so the
+    restore check reads the same list the cells write to and a cell touching an undeclared file is
+    caught. Worked example: `tools/loop/mutate-toolchain-pinning.py`.
+  * **8/8 ON A FIRST RUN IS A REASON TO CHECK THE HARNESS** - a `cell()` that could not report FAIL
+    would print exactly that. Three claims it must reject: a green run declared red, a substring the
+    message does not contain, an `also_absent` that is present. Permanent self-check, not a scratch
+    probe. **A test may also assert a known hazard is STILL THERE**: a tripwire goes red the moment
+    the decision is settled and carries its own instruction, which is how a decision stops being
+    settleable in silence.

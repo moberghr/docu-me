@@ -43,6 +43,10 @@ STEPS = [
     # It drives `dotnet test` on a filtered class, so it is the slow step (~1 min) and the only one
     # that writes to the working tree - it refuses to start unless git says its targets are clean.
     ("iter169 toolchain pinning", "tools/loop/mutate-toolchain-pinning.py", "8/8 + self-check 3/3"),
+    # iter170: prose copies of a constant - the first check here written against a defect that was
+    # already live in the tree rather than one the iteration went looking for pre-emptively.
+    ("iter170 prose copies of a bytes-per-token constant",
+     "tools/loop/mutate-prose-constants.py", "6/6"),
     ("the checker itself, live tree", "tools/loop/check-state-size.py", "exit 0"),
 ]
 
