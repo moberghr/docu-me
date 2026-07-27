@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using DocuMe.Core.Config;
@@ -50,17 +51,58 @@ public sealed class ProjectScaffolderTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// Rule §9.4's "never overwrite" half, over every target instead of a sample of them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The "report skips" half is the <c>ShouldAllBe</c> below, derived from the actual results
+    /// list, so a fourteenth target is covered by it for free. The other half is what needs the
+    /// consumer edits: a scaffolder generates the same bytes from the same inputs, so an untouched
+    /// second run is byte-identical to an untouched first one <em>whether or not</em> it rewrote
+    /// what it found. Only an edit that was not there when the templates were written can tell the
+    /// two apart.
+    /// </para>
+    /// <para>
+    /// Measured, which is why this is no longer a spot check: with only <c>docume.json</c> compared
+    /// and one workflow edited, a <c>StateTarget</c> that re-saved an empty state on every run
+    /// passed the whole suite. <c>_meta/state.json</c> is the one target <c>init</c> writes
+    /// <em>empty</em> and that carries every page id, hash and approval from the first publish
+    /// onward — simultaneously the least visible to a byte comparison and the most costly to lose.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void Scaffold_SecondRun_SkipsExistingFilesWithoutModifying()
     {
-        ProjectScaffolder.Scaffold(_dir);
-        var configPath = System.IO.Path.Combine(_dir, "docume.json");
-        var firstBytes = File.ReadAllText(configPath);
+        var first = ProjectScaffolder.Scaffold(_dir);
+        var pristine = Snapshot();
+        pristine.Count.ShouldBe(first.Count);
+
+        foreach (var result in first)
+        {
+            EditAsAConsumer(result.RelativePath);
+        }
+
+        var edited = Snapshot();
+        edited.Keys.ShouldBe(pristine.Keys);
+
+        // Vacuous-pass guard: a target EditAsAConsumer left alone would be compared against bytes
+        // the scaffolder itself produced, which is exactly the weakness this test used to have.
+        foreach (var path in pristine.Keys)
+        {
+            var unedited = $"{path} was not changed, so comparing it after a second run proves nothing.";
+            edited[path].ShouldNotBe(pristine[path], unedited);
+        }
 
         var second = ProjectScaffolder.Scaffold(_dir);
 
+        second.Select(r => r.RelativePath).ShouldBe(first.Select(r => r.RelativePath));
         second.ShouldAllBe(r => r.Action == ScaffoldAction.Skipped);
-        File.ReadAllText(configPath).ShouldBe(firstBytes); // untouched
+
+        const string because = "A second scaffold changed a file the consumer had edited. Rule §9.4: "
+            + "init never overwrites what is already there, it reports the skip.";
+
+        Snapshot().ShouldBe(edited, because);
     }
 
     [Fact]
@@ -559,6 +601,103 @@ public sealed class ProjectScaffolderTests : IDisposable
             ?? throw new InvalidOperationException($"No single <Version> element in {props}.");
 
         return element.Value;
+    }
+
+    /// <summary>
+    /// A consumer's own edit to one scaffolded file — realistic in the sense that decides this test:
+    /// it must not change what the next run <em>decides</em>. Three targets constrain it. The tool
+    /// manifest and <c>.gitignore</c> are shared ground whose skip turns on their content, so each
+    /// keeps the thing DocuMe put there (the <c>docume</c> pin, a <c>node_modules</c> line);
+    /// <c>docume.json</c> has to stay loadable because three targets' paths are read back out of it.
+    /// Everything else is a file DocuMe owns outright and nothing reads, so the default is an
+    /// appended line — which is also what a fourteenth target gets, and if its skip turns out to
+    /// depend on its content the <c>ShouldAllBe</c> fails loudly rather than quietly passing.
+    /// </summary>
+    private void EditAsAConsumer(string relativePath)
+    {
+        var fullPath = Full(relativePath);
+
+        if (string.Equals(relativePath, ".gitignore", StringComparison.Ordinal))
+        {
+            File.AppendAllText(fullPath, $"*.user{Environment.NewLine}");
+            return;
+        }
+
+        if (string.Equals(relativePath, ".config/dotnet-tools.json", StringComparison.Ordinal))
+        {
+            AddAToolOfTheirOwn(fullPath);
+            return;
+        }
+
+        if (string.Equals(relativePath, ConfigLoader.DefaultFileName, StringComparison.Ordinal))
+        {
+            // The first edit any consumer makes: replacing the placeholder with their space.
+            var filledIn = File.ReadAllText(fullPath)
+                .Replace("\"SPACE\"", "\"CONSUMER\"", StringComparison.Ordinal);
+
+            File.WriteAllText(fullPath, filledIn);
+            return;
+        }
+
+        if (relativePath.EndsWith(ProjectScaffolder.StateFile, StringComparison.Ordinal))
+        {
+            StateStore.Save(fullPath, PublishedState());
+            return;
+        }
+
+        File.AppendAllText(fullPath, $"{Environment.NewLine}edited by the consumer{Environment.NewLine}");
+    }
+
+    /// <summary>
+    /// The manifest as a consumer keeps it: DocuMe's pin plus one of theirs. Left in place by
+    /// <see cref="ProjectScaffolder"/>'s merge, which is the branch this exercises.
+    /// </summary>
+    private static void AddAToolOfTheirOwn(string fullPath)
+    {
+        var manifest = JsonNode.Parse(File.ReadAllText(fullPath))!.AsObject();
+        var tools = manifest["tools"]!.AsObject();
+
+        tools["dotnet-reportgenerator-globaltool"] = new JsonObject
+        {
+            ["version"] = "5.3.11",
+            ["commands"] = new JsonArray("reportgenerator"),
+        };
+
+        File.WriteAllText(fullPath, manifest.ToJsonString());
+    }
+
+    /// <summary>
+    /// What <c>_meta/state.json</c> holds from the first publish onward (PLAN.md §5.3) — the record
+    /// that a re-run of <c>init</c> must not touch, since nothing else knows which Confluence page
+    /// a markdown file already owns.
+    /// </summary>
+    private static DocumeState PublishedState() => new()
+    {
+        LastPublishedSha = "0f1e2d3c4b5a6978",
+        Pages = new Dictionary<string, PageState>(StringComparer.Ordinal)
+        {
+            ["README.md"] = new PageState
+            {
+                PageId = "451871005",
+                Title = "Documentation",
+                ContentHash = "e3b0c44298fc1c14",
+                PublishedVersion = 3,
+            },
+        },
+    };
+
+    /// <summary>Every file in the scaffolded tree, as relative-path to content hash.</summary>
+    private SortedDictionary<string, string> Snapshot()
+    {
+        var snapshot = new SortedDictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var file in Directory.EnumerateFiles(_dir, "*", SearchOption.AllDirectories))
+        {
+            var hash = SHA256.HashData(File.ReadAllBytes(file));
+            snapshot[System.IO.Path.GetRelativePath(_dir, file)] = Convert.ToHexString(hash);
+        }
+
+        return snapshot;
     }
 
     private void WriteConfig(string json)
