@@ -326,6 +326,52 @@ public sealed class FeedbackReplyPassTests : IDisposable
     }
 
     /// <summary>
+    /// The same rule one call later, where the reply has already landed: a token rejected while
+    /// <em>closing</em> a comment stops the run too, and the report says the reply was posted.
+    /// </summary>
+    /// <remarks>
+    /// The close has its own <c>catch (ConfluenceAuthenticationException)</c> because its base catch is
+    /// deliberately tolerant — a 409 there means somebody touched the comment between the read and the
+    /// close, which is one comment's business
+    /// (<see cref="Keeps_the_stamp_when_the_reply_landed_but_the_close_failed"/>). An expired token is not:
+    /// without the auth clause it would be filed as that comment's 409 and the run would post the next
+    /// reply with the same dead credential. <c>Replied: true</c> is what keeps the two apart in the report:
+    /// this comment is answered and stamped, so no later run will plan it again, and only this failure says
+    /// its close never happened.
+    /// </remarks>
+    [Fact]
+    public async Task Stops_the_whole_run_when_the_token_is_rejected_while_closing_a_comment()
+    {
+        WriteItem(Inbox, "a-6001.json", Item("6001", LoansPath, FeedbackStatus.Fixed));
+        WriteItem(Inbox, "b-5002.json", Item("5002", LoansPath, FeedbackStatus.Fixed));
+
+        using var server = WireMockServer.Start();
+        StubComments(server, LoansPageId, FooterBody("5002"), InlineBody("6001", version: 3));
+        StubReply(server);
+        server
+            .Given(Request.Create().WithPath("/wiki/api/v2/inline-comments/6001").UsingPut())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Unauthorized).WithBody("{}"));
+
+        var result = await RunAsync(server);
+
+        result.Posted.ShouldBe(1);
+        result.Resolved.ShouldBe(0);
+        result.StoppedBecause.ShouldNotBeNull();
+        result.StoppedBecause.ShouldContain("6001");
+
+        var failure = result.Failures.ShouldHaveSingleItem();
+        failure.CommentId.ShouldBe("6001");
+        failure.Replied.ShouldBeTrue();
+
+        // The reply landed, so the stamp stands; re-running must not say it twice.
+        Stamp(Inbox, "a-6001.json").ShouldBe("2026-08-03T09:00:00.000Z");
+
+        // And the point of stopping: 5002 was never answered, so it is still answerable next run.
+        Writes(server).ShouldBe(["/wiki/api/v2/inline-comments", "/wiki/api/v2/inline-comments/6001"]);
+        Stamp(Inbox, "b-5002.json").ShouldBeNull();
+    }
+
+    /// <summary>
     /// An item whose comment somebody deleted is reported and left alone: unstamped, because nothing was
     /// said to anybody, and unanswered, because there is nobody left to answer.
     /// </summary>

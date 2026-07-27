@@ -1232,6 +1232,77 @@ public sealed class PublishExecutorTests : IDisposable
     }
 
     /// <summary>
+    /// Rule §1.2 inside the post-pass: an expired token stops it at the parent that hit it, rather than
+    /// being spent once per parent on a pass whose own troubles are warnings.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the distinction the <c>catch (ConfluenceAuthenticationException)</c> above the base catch
+    /// makes, and the only one it makes: a children read that answers 404 is one parent's problem and the
+    /// rest of the wiki still gets ordered (<see cref="Reports_a_child_order_it_could_not_read_without_failing_the_publish"/>),
+    /// while a 401 refuses every remaining parent identically. Delete that clause and this run walks the
+    /// whole list with a dead credential, warning per parent — which compiles, and reads as a tidier
+    /// report of the same failure.
+    /// </para>
+    /// <para>
+    /// The first run is the denominator, not a fixture step: it asserts this tree really does have two
+    /// parents worth a read, so the single read below is a pass that stopped rather than a pass that had
+    /// nothing to do.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Stops_the_child_order_pass_at_the_first_parent_when_the_token_is_rejected()
+    {
+        Siblings();
+        Write("guides/README.md", "# Guides\n\nAn index, so guides/ is a parent with children of its own.\n");
+        Write("guides/tour.md", "# Tour\n\nA second child under guides/, so its order is worth reading.\n");
+
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        StubNoChildren(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+
+        const string denominator = "the fixture must give the post-pass two parents to walk, or one read "
+            + "below proves nothing about stopping.";
+
+        first.Failures.ShouldBeEmpty();
+        ChildReads(server).Count.ShouldBe(2, denominator);
+
+        Write("README.md", "# Home\n\nRewritten, so this run writes something and the post-pass runs.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 1);
+        StubUpdate(server);
+        StubNoInlineComments(server);
+
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/children"))
+                .UsingGet())
+            .AtPriority(-2)
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Unauthorized).WithBody("{}"));
+
+        var second = await ExecuteAsync(server, first.State);
+
+        // The pages published before the pass began, so the run is still a success and the ids are state's.
+        second.Succeeded.ShouldBeTrue();
+        second.UpdatedCount.ShouldBe(1);
+        second.Reorders.ShouldBeEmpty();
+        second.StateChanged.ShouldBeTrue();
+
+        var warning = second.Warnings.ShouldHaveSingleItem();
+        warning.ShouldContain("child order was left alone from");
+        warning.ShouldContain("onwards");
+        warning.ShouldContain("The pages themselves are published.");
+
+        // The whole assertion: one read where two parents were waiting, so the second was never asked.
+        ChildReads(server).Count.ShouldBe(1);
+        Moves(server).ShouldBeEmpty();
+    }
+
+    /// <summary>
     /// Cancelling during the child-order post-pass is the worst moment to lose state and the easiest to
     /// overlook: every page is published by then, so an exception escaping here would throw away the
     /// whole run's ids over a pass that only reorders a menu.
@@ -1395,6 +1466,39 @@ public sealed class PublishExecutorTests : IDisposable
         second.Succeeded.ShouldBeFalse();
         second.Failures.ShouldHaveSingleItem().Message.ShouldContain("cannot be honored without them");
         Requests(_server!, "PUT", "/wiki/api/v2/pages/").ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// The one refusal the guard does not absorb: a 401 on the comments read is the credential failing,
+    /// not the read, so it propagates and the run stops (rule §1.2).
+    /// </summary>
+    /// <remarks>
+    /// The guard's catch carries <c>when (ex is not ConfluenceAuthenticationException)</c> for exactly this,
+    /// and the filter is the whole of the difference. Without it the expired token lands in the advisory
+    /// branch above: the page publishes with "its inline comments could not be read" — a warning about a
+    /// check, on a run that should have stopped, followed by every remaining page spending the same dead
+    /// credential.
+    /// </remarks>
+    [Fact]
+    public async Task Stops_the_run_when_the_comments_read_is_refused_for_the_credentials()
+    {
+        var second = await RepublishWithCommentsAsync(comments: null, refusal: HttpStatusCode.Unauthorized);
+
+        second.Succeeded.ShouldBeFalse();
+        second.StoppedBecause.ShouldNotBeNull();
+        second.StoppedBecause.ShouldContain("rejected the credentials");
+        second.StoppedBecause.ShouldContain("README.md");
+
+        second.Failures.ShouldHaveSingleItem().Path.ShouldBe("README.md");
+
+        // The advisory branch's words, and the assertion that the token did not reach it.
+        second.Warnings.ShouldBeEmpty();
+
+        // Nothing was written and nothing recorded, so the page is still there to publish once the token is
+        // replaced — and the run did not spend the dead credential on a second page.
+        Requests(_server!, "PUT", PagesPath).ShouldBeEmpty();
+        second.StateChanged.ShouldBeFalse();
+        CommentReads(_server!).Count.ShouldBe(1);
     }
 
     /// <summary>
@@ -1644,14 +1748,17 @@ public sealed class PublishExecutorTests : IDisposable
     /// </summary>
     private static void StubNoInlineComments(WireMockServer server) => StubInlineComments(server);
 
-    /// <summary>A comments endpoint that answers 404 — the read the guard cannot do without, failing.</summary>
-    private static void StubMissingInlineComments(WireMockServer server) =>
+    /// <summary>
+    /// A comments endpoint that refuses the read the guard cannot do without: 404 for one page's own
+    /// problem, 401 for the credential that refuses every page (rule §1.2).
+    /// </summary>
+    private static void StubRefusedInlineComments(WireMockServer server, HttpStatusCode status) =>
         server
             .Given(Request.Create()
                 .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/inline-comments"))
                 .UsingGet())
             .AtPriority(-1)
-            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NotFound).WithBody("{}"));
+            .RespondWith(Response.Create().WithStatusCode(status).WithBody("{}"));
 
     private static string InlineCommentsBody(IReadOnlyList<string> comments)
     {
@@ -1813,14 +1920,19 @@ public sealed class PublishExecutorTests : IDisposable
     /// </summary>
     /// <param name="comments">
     /// The comments, as <c>id:resolutionStatus</c> pairs (<see cref="StubInlineComments"/>), or
-    /// <c>null</c> to have the endpoint answer 404 — a comments read that fails.
+    /// <c>null</c> to have the endpoint refuse the read with <paramref name="refusal"/>.
     /// </param>
     /// <param name="block">Whether the run passes <c>--block-on-open-comments</c>.</param>
     /// <param name="check">Whether the check runs at all; false is <c>--no-comment-check</c>.</param>
+    /// <param name="refusal">
+    /// How the endpoint refuses when <paramref name="comments"/> is <c>null</c>: 404, the read failing on
+    /// its own terms, or 401, which the guard's catch must not take for one.
+    /// </param>
     private async Task<PublishOutcome> RepublishWithCommentsAsync(
         string[]? comments,
         bool block = false,
-        bool check = true)
+        bool check = true,
+        HttpStatusCode refusal = HttpStatusCode.NotFound)
     {
         _server = WireMockServer.Start();
         StubSpace(_server);
@@ -1838,7 +1950,7 @@ public sealed class PublishExecutorTests : IDisposable
 
         if (comments is null)
         {
-            StubMissingInlineComments(_server);
+            StubRefusedInlineComments(_server, refusal);
         }
         else
         {

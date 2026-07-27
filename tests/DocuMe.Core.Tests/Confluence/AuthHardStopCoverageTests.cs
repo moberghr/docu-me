@@ -26,12 +26,23 @@ namespace DocuMe.Core.Tests.Confluence;
 /// </para>
 /// <para>
 /// What this class does <em>not</em> claim: that a protected site behaves correctly when it fires. Seven
-/// mechanisms are pinned below, six auth catches and one filter, and four of them are executed by a test
-/// that answers 401 or 403 for real — the page loop, the prune delete, the reply post and the space probe.
-/// The other three are pinned here and run by nothing: the open-comment read's filter, the child-order
-/// pass, and the <em>resolve</em> half of the reply loop. Measured, not assumed: deleting each of those
-/// three failed exactly one test in the suite, this class's second fact. The residual is recorded rather
-/// than papered over.
+/// mechanisms are pinned below, six auth catches and one filter. Four were executed by a test that
+/// answers 401 or 403 for real when this class shipped — the page loop, the prune delete, the reply post
+/// and the space probe — and the other three were pinned here and run by nothing, with deleting each
+/// failing exactly one test in the whole suite: this class's second fact. Those three have their own
+/// runs now, one per mechanism:
+/// <see cref="Publishing.PublishExecutorTests.Stops_the_run_when_the_comments_read_is_refused_for_the_credentials"/>,
+/// <see cref="Publishing.PublishExecutorTests.Stops_the_child_order_pass_at_the_first_parent_when_the_token_is_rejected"/>
+/// and
+/// <see cref="Feedback.FeedbackReplyPassTests.Stops_the_whole_run_when_the_token_is_rejected_while_closing_a_comment"/>.
+/// </para>
+/// <para>
+/// Those are not this check twice over, and the difference is worth stating because it is what a reader
+/// deciding whether one of them is redundant needs. A grep reads an auth catch that no longer
+/// <em>stops</em> — one whose <c>return</c> has been deleted, so it warns and then takes the next item
+/// with the same dead credential — as fully compliant, and fact 3 cannot object either, because these
+/// are the sites that walk on by design. Measured rather than argued: that mutation on either loop fails
+/// the behavioural test alone and no fact of this class.
 /// </para>
 /// </remarks>
 public sealed class AuthHardStopCoverageTests
