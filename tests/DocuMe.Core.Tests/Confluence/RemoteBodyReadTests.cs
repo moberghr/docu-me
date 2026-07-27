@@ -29,7 +29,17 @@ namespace DocuMe.Core.Tests.Confluence;
 /// §1.3 treats as untrusted. <c>init --adopt</c> takes no client at all.
 /// </para>
 /// <para>
-/// Three of the four checks here read source text, which the suite otherwise avoids — the house habit is
+/// <strong>What bounds the population these checks sweep.</strong> Two literals used to, and neither was
+/// asserted: <see cref="PageReads"/>, which <c>nameof</c> protects against a rename but not against an
+/// omission, and one spelling of the client's body request. Both were measured open — a page read named
+/// outside the <c>FindPageBy</c> family, and a body request spelled positionally, each passed the whole
+/// suite. <see cref="Every_public_method_that_answers_with_a_page_is_named_by_this_class"/> and the
+/// by-value scan behind
+/// <see cref="Every_body_the_client_asks_for_by_default_is_a_comment_collection"/> close them, so a new
+/// page read now has to be declared here before anything in this class can be green about it.
+/// </para>
+/// <para>
+/// Three of the checks here read source text, which the suite otherwise avoids — the house habit is
 /// to execute the boundary and assert the verdict beside the wording. It does not transfer: the property
 /// is <em>an absence</em>, and no run of a program that does not read bodies can demonstrate that no
 /// other program reads them. What is executable is the other half, and it is executed — see
@@ -45,8 +55,12 @@ public sealed class RemoteBodyReadTests
     /// <summary>The parameter every page read carries, and the token the call-site scan counts.</summary>
     private const string Parameter = "includeBody";
 
-    /// <summary>The client's own body-requesting spelling: hardcoded, and only for comments.</summary>
-    private const string Hardcoded = "BodyFormat(includeBody: true";
+    /// <summary>
+    /// The helper every body request in the client goes through. Counted by the VALUE of its first
+    /// argument rather than by one spelling of it — see
+    /// <see cref="Every_body_the_client_asks_for_by_default_is_a_comment_collection"/>.
+    /// </summary>
+    private const string Helper = "BodyFormat(";
 
     /// <summary>
     /// The client file itself, excluded from the call-site scan because it <em>declares</em> the parameter.
@@ -58,6 +72,15 @@ public sealed class RemoteBodyReadTests
     /// <summary>The two page reads, whose default decides what a caller that says nothing gets.</summary>
     private static readonly string[] PageReads =
         [nameof(ConfluenceClient.FindPageByTitleAsync), nameof(ConfluenceClient.FindPageByIdAsync)];
+
+    /// <summary>
+    /// The two methods that answer with a page without reading one: the upsert's create and update
+    /// halves, which echo back what they just wrote. Declared so that
+    /// <see cref="Every_public_method_that_answers_with_a_page_is_named_by_this_class"/> can tell a
+    /// new read from a new write instead of guessing from a name.
+    /// </summary>
+    private static readonly string[] PageWrites =
+        [nameof(ConfluenceClient.CreatePageAsync), nameof(ConfluenceClient.UpdatePageAsync)];
 
     [Fact]
     public void Only_the_dashboard_asks_Confluence_for_a_page_body()
@@ -140,30 +163,86 @@ public sealed class RemoteBodyReadTests
         optIns.ShouldAllBe(call => string.Equals(call.File, DashboardFile, StringComparison.Ordinal), opted);
     }
 
+    /// <summary>
+    /// The two bodies the client fetches without asking anyone are both comment collections, and no
+    /// third one exists under any spelling.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Counted by value, not by spelling, and that is the whole point of this check.</strong>
+    /// It used to match the literal <c>BodyFormat(includeBody: true</c>. Measured: a client method that
+    /// fetches a page body and <em>returns it to its caller</em> — rule §9.1's forbidden feature, stated
+    /// plainly — passed all 1,435 tests when its request was spelled <c>BodyFormat(true</c>, and was
+    /// caught the moment the same method spelled it <c>BodyFormat(includeBody: true</c>. One optional
+    /// argument name apart, and <c>dotnet_diagnostic.MA0003.severity = none</c> leaves the choice free,
+    /// exactly as it does for the call-site scan above.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void Every_body_the_client_asks_for_by_default_is_a_comment_collection()
     {
         var lines = File.ReadAllLines(ClientPath());
-        var hardcoded = new List<string>();
+        var hardcoded = HardcodedBodyReads(lines);
 
-        for (var index = 0; index < lines.Length; index++)
-        {
-            if (!lines[index].Contains(Hardcoded, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            // The endpoint is built one line above the format suffix that completes it, so that line
-            // names the collection being read: a comments segment, or a page id.
-            hardcoded.Add(index > 0 ? lines[index - 1] : lines[index]);
-        }
+        const string nested = "A BodyFormat call now passes a call as an argument. This scan reads an "
+            + "argument list up to its first ')', so a nested one truncates it and the check silently "
+            + "weakens. Teach it to balance parentheses before trusting it again.";
 
         const string page = "The client asks for a body on an endpoint that is not a comment collection. "
             + "Comment text is ingested by design (§6.3) and quoted as untrusted (rule §1.3); a page body "
             + "fetched unconditionally is rule §9.1's forbidden feature with no call site to review.";
 
-        hardcoded.Count.ShouldBe(2, page);
-        hardcoded.ShouldAllBe(endpoint => endpoint.Contains("CommentsSegment}", StringComparison.Ordinal), page);
+        const string vacuous = "The client's two hardcoded body reads are no longer two. Both are comment "
+            + "collections and both are meant to stay; a scan that finds neither is measuring nothing, "
+            + "and one that finds a third has been told about it by the check above.";
+
+        hardcoded.ShouldAllBe(read => !read.Arguments.Contains('(', StringComparison.Ordinal), nested);
+        hardcoded.ShouldAllBe(read => Collection(lines, read.Index), page);
+
+        // Asserted second on purpose: a real third body read trips the endpoint check above, whose
+        // message names the cause. Reaching this line means the scan itself stopped seeing the code.
+        hardcoded.Count.ShouldBe(2, vacuous);
+    }
+
+    /// <summary>
+    /// Rule §9.1 is about what comes <em>back</em> from Confluence, so the population this class scans
+    /// has to be every method that can answer with a page — not the two it happens to name.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="PageReads"/> is bound by <c>nameof</c>, so a rename cannot slip past it, and
+    /// <see cref="The_scans_these_checks_rest_on_found_the_code_they_read"/> pins its length. Neither
+    /// says the array is <em>complete</em>. Measured: a third page read named outside the
+    /// <c>FindPageBy</c> family, opted into a body positionally at the publish call site, left every
+    /// check in this class green — the call-site scans match two names and nothing else, and the
+    /// default check reflects over the same two. What caught it was
+    /// <see cref="Publishing.PublishExecutorTests.The_version_read_does_not_ask_confluence_for_the_page_body"/>,
+    /// a per-surface test on the one call site that happens to have one. This fact removes the luck:
+    /// a new page-returning method has to be declared before the scans can be green about it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_public_method_that_answers_with_a_page_is_named_by_this_class()
+    {
+        var answering = typeof(ConfluenceClient)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Where(method => AnswersWithAPage(method.ReturnType))
+            .Select(method => method.Name)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        const string added = "ConfluenceClient answers with a page from a method that neither PageReads "
+            + "nor PageWrites names, so nothing in this class can see it: both call-site scans match the "
+            + "two names in PageReads, and the default check reflects over the same two. Decide which it "
+            + "is and declare it. A read goes in PageReads, which subjects it to the body-default check "
+            + "and both scans; a write goes in PageWrites. Rule §9.1 is about what comes back from "
+            + "Confluence, not about which verb the request used.";
+
+        var declared = PageReads.Concat(PageWrites).Order(StringComparer.Ordinal);
+
+        // Joined rather than compared as sequences: Shouldly resolves a two-list ShouldBe over strings
+        // to its Case-sensitivity overload, and the joined form reads better in the failure anyway.
+        string.Join(", ", answering).ShouldBe(string.Join(", ", declared), added);
     }
 
     [Fact]
@@ -208,7 +287,7 @@ public sealed class RemoteBodyReadTests
 
         readers.Count.ShouldBe(5, moved);
 
-        File.ReadAllText(ClientPath()).ShouldContain(Hardcoded);
+        File.ReadAllText(ClientPath()).ShouldContain(Helper);
         PageReads.Length.ShouldBe(2);
     }
 
@@ -252,6 +331,58 @@ public sealed class RemoteBodyReadTests
 
         return calls;
     }
+
+    /// <summary>
+    /// Every <c>BodyFormat</c> call in the client whose body decision is hardcoded rather than
+    /// forwarded, by either spelling of it, with the argument list it was read from.
+    /// </summary>
+    private static List<(int Index, string Arguments)> HardcodedBodyReads(string[] lines)
+    {
+        var hardcoded = new List<(int Index, string Arguments)>();
+
+        for (var index = 0; index < lines.Length; index++)
+        {
+            var at = lines[index].IndexOf(Helper, StringComparison.Ordinal);
+
+            if (at < 0)
+            {
+                continue;
+            }
+
+            var open = at + Helper.Length;
+            var close = lines[index].IndexOf(')', open);
+
+            if (close <= open)
+            {
+                continue;
+            }
+
+            // The first argument is the body decision; `bool includeBody` on the declaration and a
+            // forwarded `includeBody` at a call site are both something other than an opt-in.
+            var arguments = lines[index][open..close];
+
+            if (Arguments(arguments).Take(1).Any(IsBodyOptIn))
+            {
+                hardcoded.Add((index, arguments));
+            }
+        }
+
+        return hardcoded;
+    }
+
+    /// <summary>
+    /// Whether the endpoint a body request completes is a comment collection. The suffix is usually
+    /// built one line below the endpoint it is concatenated onto, and sometimes on the same line.
+    /// </summary>
+    private static bool Collection(string[] lines, int index) =>
+        lines[index].Contains("CommentsSegment}", StringComparison.Ordinal)
+        || (index > 0 && lines[index - 1].Contains("CommentsSegment}", StringComparison.Ordinal));
+
+    /// <summary>Whether a method hands its caller a page, whatever it had to do to get one.</summary>
+    private static bool AnswersWithAPage(Type returnType) =>
+        returnType.IsGenericType
+        && returnType.GetGenericTypeDefinition() == typeof(Task<>)
+        && returnType.GetGenericArguments()[0] == typeof(ConfluencePage);
 
     /// <summary>An argument list split into its arguments, whitespace removed so spelling cannot hide.</summary>
     private static IEnumerable<string> Arguments(string arguments) => arguments
