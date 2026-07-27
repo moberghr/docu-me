@@ -663,3 +663,40 @@ shape** and closed with a standing instruction "to capture the name in the same 
     The harness still asserts the digest per case; it prints the clean `git status` of the three files
     first, because that precondition is what makes the restore exact. **Not usable for an increment that
     has already edited those files** — check `git status` before reaching for it.
+
+
+## Calibrating the size checker (moved verbatim from `state.json -> readMe` at iter160)
+
+The paragraph below stood at the top of state.json from iter129 to iter160. It was moved here under
+the rule `methodNotes.appendHere` states - durable method advice belongs in this file, not in
+state.json - when iter160's increment put state.json over its Read budget and had to pay it back.
+Its one operative sentence (truncation is not silent) stayed behind in `readMe`.
+
+> CORRECTED AT ITER129, because a later method depends on it: TRUNCATION IS NOT SILENT. The tool
+> prints "[Truncated: PARTIAL view - showing lines 1-462 of 1500 total (68900 tokens, cap 25000)]".
+> iter128 called truncation "the worse failure because it looks like success"; the real risk is an
+> agent SKIMMING PAST an explicit notice, not the tool hiding anything. That notice is also the ONLY
+> tokenizer on this machine (no tiktoken, no anthropic, no transformers), and it is how iter129
+> calibrated the size checker: build a file over the cap but under 256 KB, Read it whole, divide
+> bytes by the reported total. Markdown measured 2.604 B/tok, this file's JSON 2.368.
+
+## Mutation harnesses, iter160
+
+* **WHEN AN EARLIER ITERATION ENUMERATED A FAMILY AND CLOSED IT, CHECK WHETHER THE ENUMERATION
+  SKIPPED A LIFECYCLE HALF.** iter159 swept state.json's stub-plus-archived-body splits, counted
+  three (`gates`, `blockers`, `decisions`), checked all three and declared the seam spent. Its sweep
+  was correct and complete *for the half it looked at* - stub to **OPEN** body. The fourth pair is
+  on the **settled** side (`blockersArchive.settled` -> blockers-archive.jsonl, twinned by
+  `spikesArchive.settled` -> spikes-archive.json), and it was already broken: five tombstones, four
+  bodies. The generalisation to carry forward is open vs settled, added vs removed, live vs
+  archived - a closed enumeration is only closed for the lifecycle stage it enumerated.
+* **ASSERT BEFORE YOU MUTATE, NOT AFTER - AND THE GUARD WILL CATCH YOU, NOT JUST A FUTURE READER.**
+  iter160's migration refused its own first run: it expected the recovered blocker body to be 1806
+  characters, which was the JSON-**escaped** length printed during the investigation; the raw string
+  is 1771. Because the length check ran before the write, blockers-archive.jsonl was untouched and
+  the fix was a one-line constant. Had the assertion run after the rewrite, the archive would have
+  been in an unknown state at the moment the script reported failure.
+* **`git checkout --` IS UNUSABLE ONCE YOUR OWN INCREMENT HAS DIRTIED THE MUTATED FILES** (the
+  iter159 note, hit for real at iter160). `.mtk/paths-160/mutate-settled-bodies.py` snapshots each
+  touched file as BYTES before the first mutation, restores from that snapshot after every case, and
+  digests the whole touched set before and after to prove nothing leaked.

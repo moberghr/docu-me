@@ -599,6 +599,110 @@ def check_stub_bodies(doc):
     return problems
 
 
+def check_settled_bodies(doc):
+    """Does every SETTLED tombstone still have the body it was archived from?
+
+    ADDED ITER160, and it exists because iter159's enumeration was one short. That iteration asked
+    "which siblings of an already-proven defect were never checked", found state.json's
+    stub-plus-archived-body splits, counted THREE (`gates`, `blockers`, `decisions`) and checked all
+    three - but it enumerated stub -> OPEN body pairs. There is a FOURTH pair of the same family on
+    the settled side: a one-line verdict in `blockersArchive.settled` whose body belongs in
+    blockers-archive.jsonl, and a name in `spikesArchive.settled` whose body belongs in
+    spikes-archive.json.
+
+    AND THE FOURTH PAIR WAS ALREADY BROKEN WHEN THE CHECK FOR THE OTHER THREE SHIPPED. iter155
+    settled `format-on-edit-hook` in three places - the state.json stub, blockers-open.json, and a
+    verdict in `blockersArchive.settled` - and appended nothing to blockers-archive.jsonl, so its
+    1806-byte body existed only in commit 20c043a's parent. Five settled tombstones, four bodies.
+    iter160 recovered it verbatim (.mtk/paths-160/migrate-settled-bodies.py, entry round-trip
+    asserted) and this check is what stops the next settle from doing the same thing.
+
+    SETTLING A BLOCKER IS THEREFORE A FOUR-PLACE EDIT, not the three `blockers._archive` used to
+    prescribe: delete the key from `blockers` AND blockers-open.json, append a verdict to
+    `blockersArchive.settled`, AND append the body here. check_stub_bodies covers the first three;
+    this covers the fourth, which is the only one whose omission DESTROYS something.
+
+    ANTI-VACUITY, which is method note (b) and cost iter159 an iteration to learn: both sides are
+    keyed lookups, so a broken filter or a renamed field would report OK over an empty set forever.
+    Both settled sets are asserted non-empty before anything is compared.
+    """
+    problems = []
+    with open(os.path.join(LOOP_DIR, "blockers-archive.jsonl"), encoding="utf-8") as handle:
+        records = [json.loads(line) for line in handle if line.strip()]
+    with open(os.path.join(LOOP_DIR, "spikes-archive.json"), encoding="utf-8") as handle:
+        spike_bodies = json.loads(handle.read())
+
+    settled = doc.get("blockersArchive", {}).get("settled", {})
+    spikes = doc.get("spikesArchive", {}).get("settled", [])
+
+    # (0) NOT VACUOUS. Every comparison below is "key in <collection>"; an empty left-hand side
+    # passes all of them silently, which is the exact failure mode this guard exists to refuse.
+    if not settled or not spikes or not records:
+        problems.append(
+            f"nothing to check - {len(settled)} blocker tombstones, {len(spikes)} spike names,"
+            f" {len(records)} archived blocker bodies. A vacuous pass is not a pass"
+        )
+        print("\nsettled tombstones <-> their archived bodies (iter160):")
+        for problem in problems:
+            print(f"  BROKEN: {problem}")
+        return problems
+
+    # (1) EVERY ARCHIVED BODY IS KEYED. Without this the pairing below cannot be made at all - the
+    # four pre-iter160 lines carried only `n` and `archivedAt`, which is why nothing had checked it.
+    keyed = {}
+    for record in records:
+        key = record.get("key")
+        if not key:
+            problems.append(
+                f"blockers-archive.jsonl line n={record.get('n')!r} has no `key`"
+                " - an unkeyed body cannot be paired with the tombstone it belongs to"
+            )
+            continue
+        keyed[key] = record
+
+    # (2) EVERY TOMBSTONE HAS ITS BODY. The one that destroys content: the verdict is one line, and
+    # once blockers-open.json drops the key the full text is nowhere but git history.
+    for key in settled:
+        if key not in keyed:
+            problems.append(
+                f"{key!r} is recorded settled in blockersArchive.settled but has no body in"
+                " blockers-archive.jsonl - settling a blocker archives the body, it does not"
+                " discard it (see the iter155/format-on-edit-hook precedent)"
+            )
+
+    # (3) THE REVERSE. A body with no tombstone is a settled blocker nothing prevents re-adding.
+    for key in keyed:
+        if key not in settled:
+            problems.append(
+                f"blockers-archive.jsonl has a body {key!r} with no verdict in"
+                " blockersArchive.settled - the tombstone is what stops it being re-opened"
+            )
+
+    # (4) THE SPIKE SIBLING, both directions. Same shape, and green today - this is a standing
+    # guard, not a repair. PLAN.md §13 owns the spike CONTRACT; this only holds the archive to the
+    # names state.json claims are in it.
+    for name in spikes:
+        if name not in spike_bodies:
+            problems.append(
+                f"spikesArchive.settled names {name!r} with no body in spikes-archive.json"
+            )
+    for name in spike_bodies:
+        if name not in spikes:
+            problems.append(
+                f"spikes-archive.json has a body {name!r} that spikesArchive.settled does not name"
+            )
+
+    print("\nsettled tombstones <-> their archived bodies (iter160):")
+    print(f"  {len(settled)} blocker verdicts / {len(records)} bodies in blockers-archive.jsonl"
+          f" ({len(keyed)} keyed)")
+    print(f"  {len(spikes)} spike names / {len(spike_bodies)} bodies in spikes-archive.json")
+    for problem in problems:
+        print(f"  BROKEN: {problem}")
+    if not problems:
+        print("  OK: every settled blocker and spike resolves to an archived body, no orphans.")
+    return problems
+
+
 def transcript_for(wanted):
     """Which `logs/iter-*.log` holds iteration `wanted`'s transcript. NOT `iter-<wanted>-*` before 137.
 
@@ -745,6 +849,7 @@ def main():
     mirror_problems = check_gate_mirror(doc)
     pointer_problems = check_gate_pointers()
     stub_problems = check_stub_bodies(doc)
+    settled_problems = check_settled_bodies(doc)
 
     if calibration_problems:
         print("\nFAIL: a bytes-per-token constant is optimistic, so every estimate and headroom")
@@ -775,9 +880,17 @@ def main():
         print("exists. Adding one writes BOTH places; settling a blocker deletes the key from BOTH and")
         print("appends a verdict to blockersArchive.settled. Never drop a body to make this pass.")
         return 1
+    if settled_problems:
+        print("\nFAIL: a settled tombstone and its archived body disagree. SETTLING A BLOCKER IS A")
+        print("FOUR-PLACE EDIT: delete the key from `blockers` AND blockers-open.json, append the")
+        print("verdict to blockersArchive.settled, AND append the body to blockers-archive.jsonl.")
+        print("The fourth is the only one whose omission destroys content - recover it from git")
+        print("(`git log -S <key> -- tools/loop/blockers-open.json`), never delete a verdict to pass.")
+        return 1
     print("\nOK: all three step-1 Reads return their whole file, the done archive is intact, every")
-    print("GATES.md checkbox is mirrored, no open gate points at work that is finished, and every")
-    print("blocker/decision stub resolves to its archived body.")
+    print("GATES.md checkbox is mirrored, no open gate points at work that is finished, every")
+    print("blocker/decision stub resolves to its archived body, and every settled tombstone still")
+    print("has the body it was archived from.")
     return 0
 
 
