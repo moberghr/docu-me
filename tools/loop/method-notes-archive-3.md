@@ -177,3 +177,37 @@
     regression harness with no error message. **The check cannot enforce this without failing today**, and
     iter162's rule forbids a printed defect that exits 0 - so it is recorded here and in `nextAction`
     rather than added as a flag that trains its reader to skim.
+## Existing is not the same as being available to anyone else (iter168)
+
+  * **A CITATION THAT RESOLVES CAN STILL RESOLVE ON ONE MACHINE ONLY.** iter167's check #10 asked
+    whether the orientation layer's ~85 cited paths exist and called all of them green - while the
+    seven harnesses guarding this loop's own tooling lived in gitignored `.mtk/`, including the one
+    `nextAction` calls the single command that re-checks everything. **Existence and availability are
+    different properties and only the second survives a clone.** The fix was not another resolution
+    rule: the files moved into `tools/loop/` and check #11 asserts each is TRACKED - a fact about
+    someone else's machine, not this one.
+  * **THE CHECK'S FIRST LIVE RUN FOUND THE HOLE IN ITSELF: THE CONTAINER IS IN THE POPULATION TOO.**
+    Facts (1) and (2) pair every declared harness with `tools/loop/run-harnesses.py`, and both are
+    satisfied by a runner that is merely READABLE - so an untracked runner passed them while taking
+    every harness it calls out of a clone's reach with it. **When a check enumerates a declared set, ask
+    what CARRIES the set and put that in the same population** (iter161's container-vs-body lesson, one
+    level up again). The live tree showed it because `git add` had not happened yet, so the cell guarding
+    it records a real miss. (That pairing reads STEPS by IMPORTING the runner rather than
+    pattern-matching it: iter167's two-extractions rule is for when importing is unavailable.)
+  * **A RATCHET IS THE THIRD OPTION WHEN A DEFECT CLASS CANNOT BE FIXED TODAY.** 23 orientation
+    citations still point into scratch, every one provenance for a measurement already taken, so
+    demanding zero fails today for no gain - and iter162's rule forbids the alternative iter167 was left
+    with, a defect printed at exit 0. **A ceiling at today's count is neither**: it asserts nothing about
+    the 23 and everything about the 24th, so writing a new re-runnable thing into scratch fails until it
+    is tracked or argued for out loud.
+  * **A MOVE THAT PRESERVES DEPTH EDITS NO PATH ARITHMETIC**: a scratch probe directory and
+    `tools/loop/` are both two directories below the repo root, so every REPO computation stayed
+    byte-identical and the one real edit was a harness importing another's fixture recipe by path.
+    **Wrong path math crashes rather than lying** - the new harness computed its REPO one level short
+    and died at once. **This bullet first named that directory with a wildcard and check #10 red on
+    it**: second iteration running that the specimen-path rule broke inside the section teaching it.
+  * **A CHECK THAT NEEDS GIT MUST SEPARATE "FIXTURE" FROM "BROKEN"**: no `.git` at all means
+    tracked-ness is UNKNOWABLE, not false, and every sibling harness runs the checker in exactly that
+    kind of temp tree; `.git` present and unreadable is a failure. Collapse the two and those fixtures
+    quietly stop asserting the git fact. Worked out in full in `tools/loop/mutate-harness-tracking.py`,
+    which has a cell per half.

@@ -321,7 +321,9 @@ def main():
 
     after = os.path.getsize(LIVE)
     print(f"method-notes.md   {before:,} B -> {after:,} B  (~{int(after / 2.4):,} tok, budget 20,000)")
-    print(f"method-notes-archive-2.md  {os.path.getsize(ARCHIVE_2):,} B "
+    # The NAME, not the literal: the one-section form points ARCHIVE_2 at whichever generation is
+    # current, and iter169 watched this line report gen 3's new size under gen 2's name.
+    print(f"{os.path.basename(ARCHIVE_2)}  {os.path.getsize(ARCHIVE_2):,} B "
           f"(~{int(os.path.getsize(ARCHIVE_2) / 2.4):,} tok)")
     print(f"headroom before the live file is over budget again: {48_000 - after:,} B")
     return 0

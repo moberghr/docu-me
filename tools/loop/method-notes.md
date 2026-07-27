@@ -526,35 +526,31 @@ was written down and never mechanised.*
 
 ## Existing is not the same as being available to anyone else (iter168)
 
-  * **A CITATION THAT RESOLVES CAN STILL RESOLVE ON ONE MACHINE ONLY.** iter167's check #10 asked
-    whether the orientation layer's ~85 cited paths exist and called all of them green - while the
-    seven harnesses guarding this loop's own tooling lived in gitignored `.mtk/`, including the one
-    `nextAction` calls the single command that re-checks everything. **Existence and availability are
-    different properties and only the second survives a clone.** The fix was not another resolution
-    rule: the files moved into `tools/loop/` and check #11 asserts each is TRACKED - a fact about
-    someone else's machine, not this one.
-  * **THE CHECK'S FIRST LIVE RUN FOUND THE HOLE IN ITSELF: THE CONTAINER IS IN THE POPULATION TOO.**
-    Facts (1) and (2) pair every declared harness with `tools/loop/run-harnesses.py`, and both are
-    satisfied by a runner that is merely READABLE - so an untracked runner passed them while taking
-    every harness it calls out of a clone's reach with it. **When a check enumerates a declared set, ask
-    what CARRIES the set and put that in the same population** (iter161's container-vs-body lesson, one
-    level up again). The live tree showed it because `git add` had not happened yet, so the cell guarding
-    it records a real miss. (That pairing reads STEPS by IMPORTING the runner rather than
-    pattern-matching it: iter167's two-extractions rule is for when importing is unavailable.)
-  * **A RATCHET IS THE THIRD OPTION WHEN A DEFECT CLASS CANNOT BE FIXED TODAY.** 23 orientation
-    citations still point into scratch, every one provenance for a measurement already taken, so
-    demanding zero fails today for no gain - and iter162's rule forbids the alternative iter167 was left
-    with, a defect printed at exit 0. **A ceiling at today's count is neither**: it asserts nothing about
-    the 23 and everything about the 24th, so writing a new re-runnable thing into scratch fails until it
-    is tracked or argued for out loud.
-  * **A MOVE THAT PRESERVES DEPTH EDITS NO PATH ARITHMETIC**: a scratch probe directory and
-    `tools/loop/` are both two directories below the repo root, so every REPO computation stayed
-    byte-identical and the one real edit was a harness importing another's fixture recipe by path.
-    **Wrong path math crashes rather than lying** - the new harness computed its REPO one level short
-    and died at once. **This bullet first named that directory with a wildcard and check #10 red on
-    it**: second iteration running that the specimen-path rule broke inside the section teaching it.
-  * **A CHECK THAT NEEDS GIT MUST SEPARATE "FIXTURE" FROM "BROKEN"**: no `.git` at all means
-    tracked-ness is UNKNOWABLE, not false, and every sibling harness runs the checker in exactly that
-    kind of temp tree; `.git` present and unreadable is a failure. Collapse the two and those fixtures
-    quietly stop asserting the git fact. Worked out in full in `tools/loop/mutate-harness-tracking.py`,
-    which has a cell per half.
+  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter169**, verbatim and round-trip asserted,
+    to pay back the four tokens of budget this file had left. Nothing was discarded. **The
+    headlines:** **a citation that resolves can still resolve on ONE MACHINE ONLY** - existence and
+    availability are different properties and only the second survives a clone, which is why check
+    #11 asserts TRACKED rather than present; **when a check enumerates a declared set, ask what
+    CARRIES the set and put that in the same population**, because facts satisfied by a file merely
+    being READABLE cannot notice that nobody else can get it; **a ratchet is the third option when a
+    defect class cannot be fixed today**, asserting nothing about today's count and everything about
+    the next one; **a move that preserves DEPTH edits no path arithmetic**, and wrong path math
+    crashes rather than lying; and **a check that needs git must separate "fixture" (no `.git`, so
+    tracked-ness is UNKNOWABLE) from "broken" (`.git` present and unreadable)**, or every sibling's
+    temp-tree fixture silently stops asserting the git fact.
+
+## A harness that has to mutate the live tree, and a guard that checks itself (iter169)
+
+  * **WHEN NO FIXTURE IS AVAILABLE, EARN THE RIGHT TO TOUCH THE WORKING TREE.** A compiled test cannot
+    be pointed at a temp tree - its RepoRoot walks up from its own assembly to `DocuMe.slnx` - so its
+    harness mutates the real repo. Four cheap rules: **refuse to start when git says a target is
+    dirty**; **restore in a `finally`**, not at the end of main; **verify the restore TWO ways**
+    (bytes against a snapshot, then `git status`); and **declare the target list once**, so the
+    restore check reads the same list the cells write to and a cell touching an undeclared file is
+    caught. Worked example: `tools/loop/mutate-toolchain-pinning.py`.
+  * **8/8 ON A FIRST RUN IS A REASON TO CHECK THE HARNESS** - a `cell()` that could not report FAIL
+    would print exactly that. Three claims it must reject: a green run declared red, a substring the
+    message does not contain, an `also_absent` that is present. Permanent self-check, not a scratch
+    probe. **A test may also assert a known hazard is STILL THERE**: a tripwire goes red the moment
+    the decision is settled and carries its own instruction, which is how a decision stops being
+    settleable in silence.

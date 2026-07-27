@@ -252,6 +252,13 @@ HARNESSES = {
     "mutate-citation-check.py": "check #10's four directions and its refusal (12/12)",
     "mutate-harness-tracking.py": "this check's own red branches, fixture-vs-broken-git included"
                                   " (12/12)",
+    # iter169, and the one harness here that mutates the LIVE tree rather than a fixture - the class
+    # it guards reads the real repo by construction (its RepoRoot walks up to DocuMe.slnx). It
+    # refuses to start on a dirty tree and verifies the restore two ways before exiting.
+    "mutate-toolchain-pinning.py": "ToolchainPinningTests' red branches: the SDK-band tripwire, the"
+                                   " floating-install declaration both ways, and its vacuity"
+                                   " refusal (8/8, plus a 3/3 self-check that its own cells can"
+                                   " report FAIL)",
     # NOT a guard - the guarded thing. The runner calls it last as the live-tree control, and it is
     # held to the same tracked-ness as the rest, so listing it here keeps the pairing exact instead
     # of needing a second declaration for the one exception.
