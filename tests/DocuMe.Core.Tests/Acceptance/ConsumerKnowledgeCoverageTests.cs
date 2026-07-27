@@ -48,11 +48,13 @@ public sealed partial class ConsumerKnowledgeCoverageTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Two neighbouring sections are deliberately absent. <c>Verification</c> is the tool's own marker
-    /// convention (<c>⚠️ UNVERIFIED</c> and its sibling are pinned by <see cref="StyleGuidePageTests"/> and
-    /// converted by the golden corpus), so it is shared between the guide and the tool on purpose.
-    /// <c>Scope</c> carries "the repo is the source of truth", which is PLAN.md §1's product principle and
-    /// appears in four <c>src/</c> files because stating it is their job.
+    /// The guide's other sections are deliberately absent, and they are declared in
+    /// <see cref="SharedWithTheProduct"/> rather than merely left out — a literal that bounds a sweep and
+    /// is pinned to nothing lets the tree grow past it in silence. <c>Verification</c> is the tool's own
+    /// marker convention (<c>⚠️ UNVERIFIED</c> and its sibling are pinned by
+    /// <see cref="StyleGuidePageTests"/> and converted by the golden corpus), so it is shared between the
+    /// guide and the tool on purpose. <c>Scope</c> carries "the repo is the source of truth", which is
+    /// PLAN.md §1's product principle and appears in four <c>src/</c> files because stating it is their job.
     /// </para>
     /// <para>
     /// Including either turned the scan against the product for describing itself, which is not what §9.5
@@ -61,6 +63,32 @@ public sealed partial class ConsumerKnowledgeCoverageTests
     /// </para>
     /// </remarks>
     private static readonly string[] ConsumerTopics = ["Audience", "Tone", "Structure"];
+
+    /// <summary>
+    /// The guide's remaining sections: the product describing itself, which §9.5 does not forbid the tool
+    /// from repeating.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Constraints that are checked</c> names this suite's own <c>[Fact]</c> methods and
+    /// <c>Constructs to avoid</c> names the converter's degradation codes; both are derived from the code
+    /// by <see cref="StyleGuidePageTests"/>, so a scan that treated them as this repo's taste would indict
+    /// the product for documenting its own behaviour.
+    /// </para>
+    /// <para>
+    /// <strong>Measured iter185.</strong> This list exists because the one above bounded the whole scan and
+    /// nothing paired it with the file. A <c>## Domains</c> section — §9.5's <em>first</em>-named category
+    /// of consumer knowledge — added to the guide and lifted verbatim into the shipped scaffolder's own
+    /// prose passed all 1,436 tests. The same lift into the scaffolded bullet list was caught, but by
+    /// <c>ReadmeCliContractTests</c> holding README and scaffolder to the same topic list, which says
+    /// nothing about §9.5 and does not see a doc comment three lines above it.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] SharedWithTheProduct =
+        ["Scope", "Verification", "Constraints that are checked", "Constructs to avoid"];
+
+    /// <summary>The file types the scan reads, asserted against what the shipped roots actually hold.</summary>
+    private static readonly string[] Extensions = [".cs", ".md", ".json", ".yml", ".yaml", ".mjs", ".csproj"];
 
     /// <summary>
     /// Words per phrase compared between this repo's answers and the shipped tree.
@@ -241,6 +269,70 @@ public sealed partial class ConsumerKnowledgeCoverageTests
         uncovered.ShouldBeEmpty(dropped);
     }
 
+    /// <summary>
+    /// Every <c>##</c> section of this repo's style guide is one the scan reads or one declared shared
+    /// with the product.
+    /// </summary>
+    /// <remarks>
+    /// The needle side of the sweep's population. Non-vacuous by construction rather than by a floor:
+    /// <see cref="ConsumerTopics"/> is a non-empty literal, so a guide that parsed to nothing fails the
+    /// comparison instead of passing it. The partition is what carries the meaning — a section that is
+    /// neither this repo's answer nor the product's own vocabulary is a third thing nobody has decided
+    /// about, and it is the one shape §9.5 has no reading for.
+    /// </remarks>
+    [Fact]
+    public void Every_section_of_this_repos_style_guide_is_scanned_or_declared_shared()
+    {
+        var declared = ConsumerTopics.Concat(SharedWithTheProduct).ToList();
+
+        const string drifted = "docs/wiki/_meta/STYLE.md and the sections this scan classifies have "
+            + "diverged. Rule §9.5 names four kinds of consumer knowledge — domain list, tone, audience, "
+            + "structure — and this class derives its needles from the ones in ConsumerTopics, so a "
+            + "section in neither list is one the tool may reproduce verbatim with nothing objecting. Add "
+            + "a new heading to ConsumerTopics if it holds this repo's own answer, or to "
+            + "SharedWithTheProduct if it describes the product; a heading here that the guide no longer "
+            + "carries leaves StyleSection comparing against an empty string.";
+
+        Headings().ShouldBe(declared, ignoreOrder: true, drifted);
+    }
+
+    /// <summary>
+    /// The sweep reaches every root it declares shipped, and reads every kind of file it finds there.
+    /// </summary>
+    /// <remarks>
+    /// The haystack side, and per root rather than over the union for the reason
+    /// <see cref="LeastPhrasesPerTopic"/> gives: <c>src/</c> holds most of the tree, so a total large
+    /// enough to look healthy survives the loss of <c>plugin/</c> — the three <c>SKILL.md</c> files, which
+    /// are the likeliest place for one repo's knowledge to reach every other. <c>ShippedFiles</c> skips a
+    /// root that is not on disk silently, which is the same failure arriving by a rename.
+    /// </remarks>
+    [Fact]
+    public void The_shipped_sweep_reads_every_root_and_every_file_type_it_ships()
+    {
+        var unread = new List<string>();
+
+        foreach (var root in DogfoodWikiTests.ShippedRoots)
+        {
+            var files = FilesUnder(root);
+
+            var absent = $"'{root}' is declared shipped and holds no file the scan can walk. A root that "
+                + "moved leaves this sweep reporting §9.5 upheld over a tree it never opened, because "
+                + "ShippedFiles passes over a directory that is not there without a word.";
+
+            files.ShouldNotBeEmpty(absent);
+
+            unread.AddRange(files
+                .Where(file => !Extensions.Contains(Path.GetExtension(file), StringComparer.Ordinal))
+                .Select(Relative));
+        }
+
+        const string invisible = "A shipped file's type is outside the set this scan reads, so nothing "
+            + "DocuMe hands over in that file is checked against rule §9.5. Add the extension to "
+            + "Extensions, or state here why that kind of file carries no prose. Unread:";
+
+        unread.ShouldBeEmpty(invisible);
+    }
+
     /// <summary>The <c>_meta/STYLE.md</c> body <c>docume init</c> writes into a fresh consumer repo.</summary>
     private static string ScaffoldedStyleGuide()
     {
@@ -259,8 +351,7 @@ public sealed partial class ConsumerKnowledgeCoverageTests
     /// </summary>
     private static string StyleSection(string heading)
     {
-        var path = Path.Combine(DocumeCli.RepoRoot, "docs", "wiki", "_meta", "STYLE.md");
-        var lines = File.ReadAllLines(path);
+        var lines = StyleGuideLines();
 
         var start = Array.FindIndex(
             lines,
@@ -274,6 +365,34 @@ public sealed partial class ConsumerKnowledgeCoverageTests
         var end = Array.FindIndex(lines, start + 1, line => line.StartsWith("## ", StringComparison.Ordinal));
 
         return string.Join('\n', lines[(start + 1)..(end < 0 ? lines.Length : end)]);
+    }
+
+    /// <summary>This repo's own style guide, line by line.</summary>
+    private static string[] StyleGuideLines() =>
+        File.ReadAllLines(Path.Combine(DocumeCli.RepoRoot, "docs", "wiki", "_meta", "STYLE.md"));
+
+    /// <summary>Its <c>##</c> headings, in the order they appear.</summary>
+    private static List<string> Headings() =>
+        StyleGuideLines()
+            .Where(line => line.StartsWith("## ", StringComparison.Ordinal))
+            .Select(line => line[3..].Trim())
+            .ToList();
+
+    /// <summary>Every file under one shipped root, whatever its type, minus build output.</summary>
+    private static List<string> FilesUnder(string root)
+    {
+        var directory = Path.Combine(DocumeCli.RepoRoot, root.TrimEnd('/'));
+
+        if (!System.IO.Directory.Exists(directory))
+        {
+            return [];
+        }
+
+        return System.IO.Directory
+            .EnumerateFiles(directory, "*", SearchOption.AllDirectories)
+            .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .ToList();
     }
 
     /// <summary>Every distinct <see cref="PhraseWords"/>-word phrase in <paramref name="text"/>.</summary>
@@ -305,31 +424,10 @@ public sealed partial class ConsumerKnowledgeCoverageTests
     /// is already this repo's definition of what it hands over, and two lists of the same thing is how one
     /// of them goes stale.
     /// </remarks>
-    private static IEnumerable<string> ShippedFiles()
-    {
-        string[] extensions = [".cs", ".md", ".json", ".yml", ".yaml", ".mjs"];
-
-        foreach (var root in DogfoodWikiTests.ShippedRoots)
-        {
-            var directory = Path.Combine(DocumeCli.RepoRoot, root.TrimEnd('/'));
-
-            if (!System.IO.Directory.Exists(directory))
-            {
-                continue;
-            }
-
-            var files = System.IO.Directory
-                .EnumerateFiles(directory, "*", SearchOption.AllDirectories)
-                .Where(file => extensions.Contains(Path.GetExtension(file), StringComparer.Ordinal))
-                .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-                .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
-
-            foreach (var file in files)
-            {
-                yield return file;
-            }
-        }
-    }
+    private static IEnumerable<string> ShippedFiles() =>
+        DogfoodWikiTests.ShippedRoots
+            .SelectMany(FilesUnder)
+            .Where(file => Extensions.Contains(Path.GetExtension(file), StringComparer.Ordinal));
 
     private static string Relative(string file) =>
         Path.GetRelativePath(DocumeCli.RepoRoot, file).Replace(Path.DirectorySeparatorChar, '/');
