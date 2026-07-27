@@ -266,58 +266,16 @@
 
 ## CI fidelity: the host the suite is verified on (iter134)
 
-  * **`GITHUB_ACTIONS=true` CHANGES WHAT THE CLI PRINTS, AND `CI=true` DOES NOT.** Spectre.Console
-    colourises when it detects a CI host, so on a runner `docume` emits
-    `\x1b[38;5;2m4\x1b[0m comment(s) on …` and any assertion reading the text across a colour boundary
-    fails. This is why 133 iterations of green local runs said nothing about ci.yml: no developer
-    machine sets `GITHUB_ACTIONS`. **To verify a claim about CI, set the variable the runner sets** —
-    `CI=true` alone is not a runner, and it was the marker that did nothing here.
-  * **NEUTRALISE IT WITH `NO_COLOR`, MEASURED: `TERM=dumb` DOES NOT WORK,** and an **EMPTY `NO_COLOR`
-    STILL COUNTS AS SET** (Spectre keys on presence, not on the NO_COLOR spec's non-empty rule) — so
-    `NO_COLOR=""` cannot serve as the "colour back on" control cell. `ProcessStartInfo.Environment`
-    can only set a variable, never unset one, so a harness that pins `NO_COLOR` for its children has
-    no way to hand one of them colour again.
-  * **WHEN THE ASSERTION'S "EXPECTED" IS VISIBLY PRESENT IN THE "ACTUAL", STOP STRIPPING ANSI AND
-    PRINT `repr()`.** iter134's probe scrubbed escapes before printing, so Shouldly's
-    "should contain … but did not" sat directly above stdout that plainly contained the string, and
-    the cause stayed invisible for an hour. The same rule as `modelUsage` and `--include-hook-events`:
-    ask the layer for raw bytes rather than a rendering.
-  * **A "CLEAN CLONE" CHECK HAS TWO SHAPES AND ONLY ONE IS WHAT GITHUB DOES.** `git clone` gives
-    tracked files with full history; `actions/checkout@v4` gives `--depth 1`. Run both
-    (`.mtk/paths-134/probe-ci-clean-clone.py`): the full cell catches a dependency on a gitignored
-    file, the shallow cell catches a test that walks history. Clone from `file://<repo>` so the clone
-    is of LOCAL HEAD — cloning from `origin` would test iter74, since the loop has never pushed.
-  * **PIN THE ENVIRONMENT A CHILD PROCESS INHERITS, NOT JUST THE ONE YOU PASS IT.**
-    `tests/…/Cli/DocumeCli.cs` already pinned the credential placeholders on the reasoning that "a
-    suite whose output depends on whether the developer exported a token is a suite that passes
-    locally only"; `GITHUB_ACTIONS` was the same hazard one layer out, and the fix belonged in the
-    same three lines. When a test must be immune to the host, set the hostile variable on the CHILD
-    inside the test — then it fails on a laptop too, instead of only on the runner.
-  * **NEW, iter135: A SKIP IS A COVERAGE HOLE THAT REPORTS ITSELF AS SUCCESS, AND `Assert.SkipUnless`
-    IS HOW ONE GETS INSTALLED ON PURPOSE.** The seven renderer tests skip when
-    `node_modules/beautiful-mermaid` is absent, which is the right bargain for a first clone and the
-    wrong one for CI — a runner without it ran 1368 of 1375 tests and reported green. **When a test
-    decides for itself whether it can run, something has to assert that the environment it needs
-    exists where it matters.** Read the summary line's `skipped:` count, not just `failed:`.
-  * **NEW, iter135: WHEN THE INVARIANT IS ABOUT THE RUNNER, ASSERT THE WORKFLOW, NOT THE RUNNER.** A
-    guard written as "if `GITHUB_ACTIONS` then require the dependency" only fires where nobody runs it
-    before pushing — iter134's own lesson, one turn later. `CiMermaidToolchainTests` parses ci.yml and
-    fails on a laptop instead: every job that runs `dotnet test` must run `npm ci` first, with a pinned
-    `setup-node`, and the package must be the one the skip check probes for (`BundledRenderScript.Package`,
-    a const precisely so the two ends cannot drift). Proven 7/7 by `.mtk/paths-135/mutate-ci-mermaid.py`,
-    including a relabel control and an anti-vacuity case.
-  * **NEW, iter135: PARSE THE WORKFLOW IN THE PROBE TOO, DO NOT RETYPE ITS STEPS.**
-    `.mtk/paths-134/probe-ci-clean-clone.py` hardcoded ci.yml's six steps, so it could not have seen a
-    seventh; `.mtk/paths-135/probe-ci-renderer-coverage.py` reads them out of the clone's own ci.yml
-    with `yaml.safe_load` (PyYAML 6.0.3 is on this machine) and withholds ONE step to build its control
-    cell. A probe that retypes the artefact it is checking measures the retyping.
-  * **`state.json` HAS ~30 TOKENS OF HEADROOM AGAINST `check-state-size.py`'s 20,000-token BUDGET
-    (iter134), and these `done` records are lengthening: iter133 3.4 KB, iter134 5.6 KB.** When the
-    check trips, condense the `doneRecent` entry in BOTH state.json and the archive so the
-    duplication stays verbatim (`doneArchive.howToAppend` permits exactly that). Do not raise the
-    budget to suit the prose that broke it. And note where this paragraph lives: iter134 first wrote
-    it into `nextAction`, which pushed state.json over the budget it was warning about — durable
-    method advice goes HERE, which is the rule this file exists to enforce.
+  * **MOVED to `tools/loop/method-notes-archive.md` at iter143**, verbatim and round-trip asserted,
+    to pay back the budget iter143's own section spent (the rule this file's header states). Nothing
+    was discarded, and both defects it records are fixed and committed (`f04e367`, `9efa2c4`).
+    **The headlines, kept here because they are the parts you need at a glance:**
+    `GITHUB_ACTIONS=true` changes what the CLI prints and `CI=true` does not, so to verify a claim
+    about CI you must set the variable the runner sets; a clean-clone check has two shapes and only
+    `--depth 1` is what `actions/checkout@v4` gives you; **a skip is a coverage hole that reports
+    itself as success** — read the summary line's `skipped:` count, not just `failed:`; and when the
+    invariant is about the runner, assert the workflow rather than the runner, so it fails on a
+    laptop. Open the archive for the method behind each.
 
 ## Reading the loop's own history back (iter136)
 
@@ -519,3 +477,37 @@
     auth-specific `catch` above the base `ConfluenceException` (or filter it out explicitly with
     `when (ex is not ConfluenceAuthenticationException)`), and `DriftCommand.LabelAsync`'s per-page loop
     returns on the first failure rather than continuing — so no loop replays an expired token.
+
+## Making a placement-enforced rule structural (iter143)
+
+  * **A REGEX OVER C# SOURCE WILL EVENTUALLY MEET A NESTED GENERIC, AND ITS FAILURE MODE IS
+    MISATTRIBUTION, NOT A MISS.** `Task(?:<[^>]*>)?\s+(\w+)\s*\(` matches `Task<ConfluencePage>` and
+    fails `Task<IReadOnlyList<ConfluenceLabel>>` — the character class stops at the inner `>`. The
+    first run of `.mtk/paths-143/measure-write-surface.py` therefore reported **9** write methods
+    instead of 10: `AddLabelsAsync` did not match, so the backward walk kept going and filed its
+    `Post` under `UploadAttachmentAsync`, which already had a verb and looked entirely normal. Use a
+    greedy `<.*>`, or skip the return type altogether and take the token before `(`. Same family as
+    iter132's `owner/docu-me` meeting a filesystem path: a classifier over real text, wrong in a way
+    that reads as a result.
+  * **WALK BACK TO THE NEAREST MEMBER DECLARATION, NOT THE NEAREST `public` ONE.** Stopping at the
+    first `public` steps straight over a private helper and files its verbs under whichever public
+    method happens to sit above it. Stop at the first line that declares *any* member and report a
+    non-public one as an orphan — a write issued from a private helper is invisible to a caller scan
+    that keys on public names, which is worth failing on rather than silently reattributing.
+  * **THE MTP `--filter-query` TAKES EXACTLY ONE PATTERN.** `'/*/*/A/*|/*/*/B/*'` runs **zero tests
+    and exits 1**; `'/*/*/(A|B)/*'` runs zero and exits **8**. Neither says "no such syntax". One run
+    per class, and a harness that needs five control checks pays for five `dotnet test` invocations
+    (the rebuild is shared, so the cost is per mutation, not per run). Note also that
+    `--treenode-filter` — recorded above from iter132 — now runs zero tests and exits 1; the live
+    spelling is `--filter-query`.
+  * **THE CONTROL CELL SCALES: FIVE GREEN CHECKS SAY MORE THAN ONE RED ONE.** iter142's lesson applied
+    to a rule enforced by placement rather than by a list. `.mtk/paths-143/mutate-write-lock-coverage.py`
+    (17/17) puts an eleventh write method on the client (cell B) and a fifth caller file in `src/`
+    (cell D), and against **both** runs `PublishGuardTests` (8/8) and all four per-surface tests —
+    **ten green results across two real holes.** That, not the new class going red, is what
+    establishes the gap was open. Cell F adds an eleventh *read* method and everything stays green,
+    which is what stops the class from keying on "the client changed".
+  * **A MUTATION THAT ADDS A FILE UNDER `src/` HAS A SECOND AUDIENCE.** `DogfoodWikiTests` fails any
+    shipped file no wiki page's `sources` glob covers, so a fixture dropped into `src/` goes red there
+    too — for documentation coverage, not for the write lock. Scope the control runs to the checks
+    whose silence is the claim, or the finding drowns in an unrelated failure.

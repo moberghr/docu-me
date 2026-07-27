@@ -89,3 +89,57 @@
     Focus assertions file are both **TCC-blocked** to this process, so "exit 0" is the strongest
     claim available and it is NOT "Mirko saw it". Do not upgrade one to the other.
 
+## CI fidelity: the host the suite is verified on (iter134)
+
+  * **`GITHUB_ACTIONS=true` CHANGES WHAT THE CLI PRINTS, AND `CI=true` DOES NOT.** Spectre.Console
+    colourises when it detects a CI host, so on a runner `docume` emits
+    `\x1b[38;5;2m4\x1b[0m comment(s) on …` and any assertion reading the text across a colour boundary
+    fails. This is why 133 iterations of green local runs said nothing about ci.yml: no developer
+    machine sets `GITHUB_ACTIONS`. **To verify a claim about CI, set the variable the runner sets** —
+    `CI=true` alone is not a runner, and it was the marker that did nothing here.
+  * **NEUTRALISE IT WITH `NO_COLOR`, MEASURED: `TERM=dumb` DOES NOT WORK,** and an **EMPTY `NO_COLOR`
+    STILL COUNTS AS SET** (Spectre keys on presence, not on the NO_COLOR spec's non-empty rule) — so
+    `NO_COLOR=""` cannot serve as the "colour back on" control cell. `ProcessStartInfo.Environment`
+    can only set a variable, never unset one, so a harness that pins `NO_COLOR` for its children has
+    no way to hand one of them colour again.
+  * **WHEN THE ASSERTION'S "EXPECTED" IS VISIBLY PRESENT IN THE "ACTUAL", STOP STRIPPING ANSI AND
+    PRINT `repr()`.** iter134's probe scrubbed escapes before printing, so Shouldly's
+    "should contain … but did not" sat directly above stdout that plainly contained the string, and
+    the cause stayed invisible for an hour. The same rule as `modelUsage` and `--include-hook-events`:
+    ask the layer for raw bytes rather than a rendering.
+  * **A "CLEAN CLONE" CHECK HAS TWO SHAPES AND ONLY ONE IS WHAT GITHUB DOES.** `git clone` gives
+    tracked files with full history; `actions/checkout@v4` gives `--depth 1`. Run both
+    (`.mtk/paths-134/probe-ci-clean-clone.py`): the full cell catches a dependency on a gitignored
+    file, the shallow cell catches a test that walks history. Clone from `file://<repo>` so the clone
+    is of LOCAL HEAD — cloning from `origin` would test iter74, since the loop has never pushed.
+  * **PIN THE ENVIRONMENT A CHILD PROCESS INHERITS, NOT JUST THE ONE YOU PASS IT.**
+    `tests/…/Cli/DocumeCli.cs` already pinned the credential placeholders on the reasoning that "a
+    suite whose output depends on whether the developer exported a token is a suite that passes
+    locally only"; `GITHUB_ACTIONS` was the same hazard one layer out, and the fix belonged in the
+    same three lines. When a test must be immune to the host, set the hostile variable on the CHILD
+    inside the test — then it fails on a laptop too, instead of only on the runner.
+  * **NEW, iter135: A SKIP IS A COVERAGE HOLE THAT REPORTS ITSELF AS SUCCESS, AND `Assert.SkipUnless`
+    IS HOW ONE GETS INSTALLED ON PURPOSE.** The seven renderer tests skip when
+    `node_modules/beautiful-mermaid` is absent, which is the right bargain for a first clone and the
+    wrong one for CI — a runner without it ran 1368 of 1375 tests and reported green. **When a test
+    decides for itself whether it can run, something has to assert that the environment it needs
+    exists where it matters.** Read the summary line's `skipped:` count, not just `failed:`.
+  * **NEW, iter135: WHEN THE INVARIANT IS ABOUT THE RUNNER, ASSERT THE WORKFLOW, NOT THE RUNNER.** A
+    guard written as "if `GITHUB_ACTIONS` then require the dependency" only fires where nobody runs it
+    before pushing — iter134's own lesson, one turn later. `CiMermaidToolchainTests` parses ci.yml and
+    fails on a laptop instead: every job that runs `dotnet test` must run `npm ci` first, with a pinned
+    `setup-node`, and the package must be the one the skip check probes for (`BundledRenderScript.Package`,
+    a const precisely so the two ends cannot drift). Proven 7/7 by `.mtk/paths-135/mutate-ci-mermaid.py`,
+    including a relabel control and an anti-vacuity case.
+  * **NEW, iter135: PARSE THE WORKFLOW IN THE PROBE TOO, DO NOT RETYPE ITS STEPS.**
+    `.mtk/paths-134/probe-ci-clean-clone.py` hardcoded ci.yml's six steps, so it could not have seen a
+    seventh; `.mtk/paths-135/probe-ci-renderer-coverage.py` reads them out of the clone's own ci.yml
+    with `yaml.safe_load` (PyYAML 6.0.3 is on this machine) and withholds ONE step to build its control
+    cell. A probe that retypes the artefact it is checking measures the retyping.
+  * **`state.json` HAS ~30 TOKENS OF HEADROOM AGAINST `check-state-size.py`'s 20,000-token BUDGET
+    (iter134), and these `done` records are lengthening: iter133 3.4 KB, iter134 5.6 KB.** When the
+    check trips, condense the `doneRecent` entry in BOTH state.json and the archive so the
+    duplication stays verbatim (`doneArchive.howToAppend` permits exactly that). Do not raise the
+    budget to suit the prose that broke it. And note where this paragraph lives: iter134 first wrote
+    it into `nextAction`, which pushed state.json over the budget it was warning about — durable
+    method advice goes HERE, which is the rule this file exists to enforce.
