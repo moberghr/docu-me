@@ -138,30 +138,23 @@
 ## CI fidelity: the host the suite is verified on (iter134)
 
   * **MOVED to `tools/loop/method-notes-archive.md` at iter143**, verbatim and round-trip asserted,
-    to pay back the budget iter143's own section spent (the rule this file's header states). Nothing
-    was discarded, and both defects it records are fixed and committed (`f04e367`, `9efa2c4`).
-    **The headlines, kept here because they are the parts you need at a glance:**
-    `GITHUB_ACTIONS=true` changes what the CLI prints and `CI=true` does not, so to verify a claim
-    about CI you must set the variable the runner sets; a clean-clone check has two shapes and only
-    `--depth 1` is what `actions/checkout@v4` gives you; **a skip is a coverage hole that reports
-    itself as success** — read the summary line's `skipped:` count, not just `failed:`; and when the
-    invariant is about the runner, assert the workflow rather than the runner, so it fails on a
-    laptop. Open the archive for the method behind each.
+    and both defects it records are fixed and committed (`f04e367`, `9efa2c4`). **INDEXED at
+    iter177.** Open the archive for: `GITHUB_ACTIONS=true` changing what the CLI prints where
+    `CI=true` does not; a clean-clone check having two shapes, only `--depth 1` matching
+    `actions/checkout@v4`; **a skip being a coverage hole that reports itself as success** (read
+    `skipped:`, not just `failed:`); and asserting the workflow rather than the runner so the fact
+    fails on a laptop.
 
 ## Reading the loop's own history back (iter136)
 
 *Moved to `tools/loop/method-notes-archive.md` at iter154 (verbatim, round trip asserted) — settled:
 `check-state-size.py --find` is committed and is what `doneArchive.howToRead` now prescribes.
-**Headlines:** **`n` in done-archive.jsonl is a LINE INDEX, not an iteration number** and has not
-matched one since line 50 (iter48 logged twice) — never read an iteration off `n` and never renumber
-to "fix" it; **the archive has two entry shapes and any reader must handle both** (strings with a
-leading `iterNNN`, objects with `{"iteration": NNN}`); **the documented `grep` lookup was wrong for
-27 of 135 iterations and its failure mode looks like a hit**, because entries cite each other in
-prose — use `python3 tools/loop/check-state-size.py --find <n>`; **a check over a file is not a check
-over the thing the file records** (valid JSON + contiguous `n` + matching count are all satisfiable
-by a file missing an iteration — ATTRIBUTION, COVERAGE and HEAD are the checks in the archive's own
-domain); and **when a mutation harness scores less than N/N, suspect the prediction first** — assert
-the expected SET of messages, since one mutation can legitimately fire two checks.*
+**INDEXED at iter177.** Open the archive for: **`n` being a LINE INDEX, not an iteration number**
+(unmatched since line 50 — never renumber to "fix" it); the archive's two entry shapes, which any
+reader must handle; **the documented `grep` lookup being wrong for 27 of 135 iterations, its failure
+mode looking exactly like a hit**; a check over a file not being a check over what the file records
+(ATTRIBUTION, COVERAGE, HEAD); and **suspecting the PREDICTION first when a mutation harness scores
+under N/N**, asserting the expected SET rather than a count.*
 
 ## Two counters, and patching a script that is running (iter137)
 
@@ -264,28 +257,22 @@ was written down and never mechanised.*
 ## When the rule is "do not carry knowledge", and the knowledge is in the tree (iter146)
 
   * **MOVED to `tools/loop/method-notes-archive-2.md` at iter162**, verbatim and round-trip
-    asserted. Nothing was discarded. **The headlines:** **when a rule forbids carrying somebody's
-    knowledge, find a copy of it already in the tree and diff against that**, because a hardcoded
-    needle list ages into yesterday's mistakes while a derived one tracks what it protects, and the
-    proof it is really derived is a GREEN cell that rewords the source; **a phrase scan needs a
-    measured n and the band has two edges** (4 indicted ordinary prose, 7 let the defect through);
-    **the illustrative register is not the assertive one**, so a style guide quoting the product back
-    is not a leak; **a mechanism that removes nothing once another lands must not ship**, because
-    nobody can tell which of two mechanisms is load-bearing; **a per-part floor beats a floor over
-    the union**; **two nets over one rule must be proven independent, or one is decoration**; and
-    **reuse the repo's own definition instead of restating it**.
+    asserted. **INDEXED at iter177.** Open the archive for: diffing against a copy of the
+    knowledge already in the tree rather than a hardcoded needle list, the proof being a GREEN cell
+    that rewords the source; a phrase scan's band having two edges (4 indicted ordinary prose, 7 let
+    the defect through); the illustrative register not being the assertive one; **a mechanism that
+    removes nothing once another lands must not ship**; a per-part floor beating one over the union;
+    two nets needing proof of independence or one is decoration; and reusing the repo's own
+    definition.
 ## When a test compares two machine-generated copies (iter147)
 
   * **MOVED to `tools/loop/method-notes-archive-2.md` at iter162**, verbatim and round-trip
-    asserted. Nothing was discarded. **The headlines:** **a generator produces the same bytes from
-    the same inputs, so an untouched second run is byte-identical whether or not it rewrote
-    anything**, and only content that was NOT machine-generated distinguishes "skipped" from
-    "overwrote with an identical copy", so a sampled byte check asserts nothing at all on the
-    unsampled rows; **the target that escapes is the one that is empty at creation and load-bearing
-    later**, so ask of any idempotence test which target's content is CONSTANT across the two runs;
-    **edit every target, and make the edit decision-preserving**; **a perturbation harness needs a
-    guard that it perturbed**; and **judge a cell per-test, not per-suite, when it changes a
-    deliberate inventory**.
+    asserted. **INDEXED at iter177.** Open the archive for: **an untouched second run of a
+    generator being byte-identical whether or not it rewrote anything**, so only NON-generated
+    content distinguishes "skipped" from "overwrote identically"; **the target that escapes being
+    the one empty at creation and load-bearing later**, so ask which target's content is CONSTANT
+    across the two runs; editing every target decision-preservingly; a perturbation harness needing
+    a guard that it perturbed; and judging a cell per-test when it changes a deliberate inventory.
 ## When the verification command destroys its own evidence (iter154)
 
   * **MOVED to `tools/loop/method-notes-archive-2.md` at iter162**, verbatim and round-trip asserted.
@@ -300,31 +287,23 @@ was written down and never mechanised.*
 ## When a check is named after one file but guards the whole tree (iter157)
 
   * **MOVED to `tools/loop/method-notes-archive-2.md` at iter164**, verbatim and round-trip asserted,
-    to pay back the budget iter164's own section spent (the rule this file's header states). Nothing
-    was discarded, and both tests it produced are committed. **The headlines:** **grep for the
-    ASSERTION, not for the test class you expect to hold it** - `CliReferencePageTests` sweeps ~132
-    documented invocations across README, `docs/wiki/`, every `SKILL.md` and the workflow templates,
-    so a class named after `cli.md` owns a tree-wide sweep and the "gap" was nearly a duplicate test;
-    **the corollary is what found the real gap - ask what DIMENSION the existing sweep covers**, since
-    the tree was swept for CLI *options* a doc names and not for *config fields* a doc promises;
-    **a decision's settle instructions are a claim about the tree and rot like any other** (three
-    places named, six real, two of them skills - write the surface into a `Places` array pinned both
-    ways and "remember to edit all six" becomes a failing test); and **an exclusion is better made
-    structural than filtered**, so walk `docs/wiki` rather than `docs` with a `.Where` a later edit
-    can drop.
+    and both tests it produced are committed. **INDEXED at iter177.** Open the archive for:
+    **grepping for the ASSERTION, not the test class you expect to hold it** - `CliReferencePageTests`
+    sweeps ~132 documented invocations across README, `docs/wiki/`, every `SKILL.md` and the workflow
+    templates, so a class named after `cli.md` owns a tree-wide sweep; **asking what DIMENSION an
+    existing sweep covers**, which is what found the real gap (CLI *options* were swept, config
+    *fields* were not); a decision's settle instructions rotting like any other claim about the tree
+    (three places named, six real - pin the surface in a `Places` array both ways); and an exclusion
+    being better made structural than filtered.
 ## A mutation that does not compile is not evidence (iter158)
 
   * **MOVED to `tools/loop/method-notes-archive-2.md` at iter164**, verbatim and round-trip asserted.
-    Nothing was discarded. **The headlines:** **BUILD-FAILED IS NOT CAUGHT, AND IT READS LIKE IT** -
-    a harness that folds the two together will tell you a test works when it was never invoked, so
-    report it as its own verdict beside CAUGHT and MISSED; in C# a rename inside `src/` is
-    compiler-enforced across every reader, so **to mutate a rename realistically, patch the record AND
-    every reader** and leave only the prose stale, because the docs are the interesting half;
-    **assert the RESTORE, not just the run** (hash every touched file before the first mutation and
-    after the last, print IDENTICAL or DIRTY, then rebuild at restored HEAD); and **the dimension
-    question is re-askable and most answers come back clean** - four probed, one gap, and **probing
-    four dimensions to ship one test is the expected ratio**, because a probe costs a script while a
-    test guarding a dimension that was never at risk costs forever.
+    **INDEXED at iter177.** Open the archive for: **BUILD-FAILED not being CAUGHT though it reads
+    like it**, so it needs its own verdict; **patching the record AND every reader** to mutate a
+    C# rename realistically, leaving only the prose stale; **asserting the RESTORE, not just the run**
+    (hash every touched file before and after, print IDENTICAL or DIRTY); and **probing four
+    dimensions to ship one test being the expected ratio**, since a probe costs a script and a test
+    guarding a dimension never at risk costs forever.
 ## The bookkeeping file's own invariants were the last unguarded seam (iter159)
 
   * **MOVED to `tools/loop/method-notes-archive-2.md` at iter164**, verbatim and round-trip asserted.
@@ -571,3 +550,28 @@ was written down and never mechanised.*
   * **RUN THE FULL SUITE PER CELL** (7 cells, ~4 min): the copy-instead-of-rename cell was also caught
     by `ProjectScaffolderTests.Scaffold_SecondRun_...` noticing the leaked temp file, a second
     independent net a single-class run hides.
+## The same mechanism, two failure policies, and what the consumer's staging decides (iter177)
+
+  * **A FIX THAT MATCHES AN EARLIER ONE MECHANICALLY CAN NEED THE OPPOSITE FAILURE POLICY, DECIDED
+    DOWNSTREAM.** iter176 KEPT `StateStore.Save`'s temp as evidence; the same choice in the inbox
+    commits junk, because the sync workflows stage the state file by PATH and the inbox as a whole
+    DIRECTORY. **A matching mechanism is not a reason to extract a shared helper** - ask what THIS
+    caller's leftover costs.
+  * **A CREATE AND A REWRITE FAIL DIFFERENTLY, SO ONE ATOMICITY BUG HAS TWO SEVERITIES.** A rewrite
+    DESTROYS content. A create destroys nothing and leaves a POISON PILL: `ExistingItemFiles` counts a
+    NAME, not a parse, so the half file reads as already-ingested and the comment is skipped with the
+    message a healthy triaged item earns. **Ask: does a partial file destroy something, or get
+    MISTAKEN for something?**
+  * **"THE FAILURE MODE IS X RATHER THAN Y" IS A CLAIM ABOUT A PRIMITIVE ONE LAYER DOWN.**
+    `FeedbackInboxPlanner.cs` promised items-first/state-last made a crash "a re-ingest rather than a
+    silent loss": right about the ORDERING, false in fact, because the re-ingest was swallowed by the
+    half file. The ordering was guarded, what it rested on was not.
+  * **AN INJECTION THAT CANNOT LEAVE A DELETABLE TEMP CANNOT TEST THE CLEANUP.** A directory at the
+    TEMP path tests "never started"; only one at the FINAL path tests "started, then failed". I nearly
+    shipped the cleanup asserted by nothing, its justification sitting in prose.
+  * **PREDICT A FAILURE SET PER CELL, NEVER A COUNT** - both my misses were short counts, and both
+    taught something. A revert-EVERYTHING cell is not a superset of the per-half cells (HEAD writes no
+    temp, so the cleanup test passes against it for the wrong reason), and a cell can fire a test by
+    CASCADE rather than as evidence: a broken write left the temp as a FILE where a later test's
+    `Directory.CreateDirectory` injection needed that name, killing it at its own setup line. **A
+    cascade and a second net look identical in a list of names** - read the message.

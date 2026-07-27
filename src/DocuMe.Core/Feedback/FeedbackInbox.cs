@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using DocuMe.Core.Json;
@@ -31,6 +32,13 @@ public static class FeedbackInbox
 
     /// <summary>The last segment of <see cref="RelativeArchiveDirectory"/> — see <see cref="ArchiveBeside"/>.</summary>
     private const string ArchiveDirectoryName = "archive";
+
+    /// <summary>
+    /// The suffix of the sibling file every item write lands in first — see <see cref="WriteAtomically"/>.
+    /// It is not <see cref="FeedbackItemFile.Extension"/>, so neither
+    /// <see cref="ExistingItemFiles"/> nor <see cref="Read"/> can mistake one for an item.
+    /// </summary>
+    private const string TemporarySuffix = ".tmp";
 
     /// <summary>
     /// <see cref="DocumeJson.Options"/> without the HTML escaping, because an inbox item is read by
@@ -129,6 +137,14 @@ public static class FeedbackInbox
     /// time rather than skipping past comments it never filed.
     /// </para>
     /// <para>
+    /// <strong>Each item lands all-or-nothing</strong> (<see cref="WriteAtomically"/>), which is what makes
+    /// the ordering above a re-ingest rather than a silent loss. <see cref="ExistingItemFiles"/> counts a
+    /// name, not a parse, so a file left half-written by a killed run would read as an item that had
+    /// already been ingested: the comment would be skipped as
+    /// <see cref="FeedbackSkipReason.AlreadyOnDisk"/> — the same skip a triaged item earns, so indistinguishable
+    /// from the healthy case — and lost for good once a later run advanced that page's cursor past it.
+    /// </para>
+    /// <para>
     /// Each file ends with a newline: these are committed text files, and a diff whose every hunk carries
     /// "\ No newline at end of file" is noise in the PR a human reviews.
     /// </para>
@@ -151,7 +167,7 @@ public static class FeedbackInbox
         foreach (var item in plan.Items)
         {
             var json = JsonSerializer.Serialize(item.Item, ItemOptions);
-            File.WriteAllText(Path.Combine(directory, item.FileName), json + Environment.NewLine);
+            WriteAtomically(Path.Combine(directory, item.FileName), json + Environment.NewLine);
             written.Add(item.FileName);
         }
 
@@ -219,6 +235,13 @@ public static class FeedbackInbox
     /// there is nothing to lose; the note is here because a future channel adding a member would find out
     /// the hard way otherwise.
     /// </para>
+    /// <para>
+    /// <strong>This is the one item write with content to destroy</strong> — a reviewer's comment, its
+    /// author, its anchor and the triage's own resolution — so it goes through
+    /// <see cref="WriteAtomically"/> too. A stamp killed partway through would leave the item
+    /// unparseable, and nothing repairs it: the reply it was recording has already been posted, so the
+    /// next pass reads the file back as <see cref="FeedbackReplySkipReason.Unreadable"/> and skips it.
+    /// </para>
     /// </remarks>
     /// <param name="stored">The item as it was read, with its path. Must have parsed.</param>
     /// <param name="repliedAt">When the reply was posted.</param>
@@ -239,7 +262,81 @@ public static class FeedbackInbox
         var item = parsed with { RepliedAt = FeedbackTimestamp.Write(repliedAt) };
         var json = JsonSerializer.Serialize(item, ItemOptions);
 
-        File.WriteAllText(stored.FilePath, json + Environment.NewLine);
+        WriteAtomically(stored.FilePath, json + Environment.NewLine);
+    }
+
+    /// <summary>
+    /// Writes <paramref name="contents"/> to <paramref name="path"/> all-or-nothing: a sibling temp file,
+    /// flushed to disk, then one rename.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same mechanism <c>StateStore.Save</c> uses, and for the same reason: <c>File.WriteAllText</c>
+    /// opens the live path with <see cref="FileMode.Create"/>, which truncates it before the first byte of
+    /// the new content lands, so a run killed inside that window leaves a file present and half-written.
+    /// The temp is a sibling rather than something under the system temp directory because a rename is
+    /// atomic within one volume only.
+    /// </para>
+    /// <para>
+    /// <strong>It differs from the state file's save in one deliberate way: a failed write cleans its temp
+    /// up instead of leaving it behind as evidence.</strong> The sync workflows stage
+    /// <c>_meta/state.json</c> by path but the inbox and archive as whole directories
+    /// (<c>templates/workflows/docs-sync.yml</c>, <c>templates/workflows/docs-publish.yml</c>), so a
+    /// leftover here would be committed into the consumer's repo as a junk file. A run killed hard enough
+    /// that nothing runs on the way out still leaves one, which is why the name is deterministic: the next
+    /// write of that item overwrites it rather than failing on it.
+    /// </para>
+    /// </remarks>
+    private static void WriteAtomically(string path, string contents)
+    {
+        var temporary = path + TemporarySuffix;
+        var moved = false;
+
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(Encoding.UTF8.GetBytes(contents));
+
+                // Flushed before the rename: a rename that outlives its own content in the page cache is
+                // the one crash that leaves an item file present and empty, which reads as ingested.
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(temporary, path, overwrite: true);
+            moved = true;
+        }
+        finally
+        {
+            if (!moved)
+            {
+                TryDeleteTemporary(temporary);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes a temp file a failed <see cref="WriteAtomically"/> left behind, swallowing the failure to
+    /// remove it.
+    /// </summary>
+    /// <remarks>
+    /// The only caller is on its way to rethrowing the exception that brought it here, and that exception
+    /// is the one worth surfacing: a cleanup that threw over it would replace "the disk is full" with "the
+    /// temp file could not be deleted". The cost of the swallow is bounded to one stale file with a
+    /// deterministic name, which the next write overwrites.
+    /// </remarks>
+    private static void TryDeleteTemporary(string temporary)
+    {
+        try
+        {
+            File.Delete(temporary);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     private static StoredFeedbackItem ReadItem(string file)

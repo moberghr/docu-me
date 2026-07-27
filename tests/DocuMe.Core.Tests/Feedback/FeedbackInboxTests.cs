@@ -66,6 +66,23 @@ public sealed class FeedbackInboxTests : IDisposable
     }
 
     /// <summary>
+    /// The encoding an item file has always had, pinned now that the bytes go through a
+    /// <see cref="FileStream"/> rather than <c>File.WriteAllText</c>: UTF-8 with no byte-order mark. A BOM
+    /// would show up as a whitespace-only diff on every item in every consumer repo, and it is exactly the
+    /// kind of change a rewritten write mechanism makes silently.
+    /// </summary>
+    [Fact]
+    public void Writes_utf8_with_no_byte_order_mark()
+    {
+        FeedbackInbox.Write(_dir, Plan(Item("conf-comment-1", FeedbackKind.Footer)));
+
+        var bytes = File.ReadAllBytes(Path.Combine(_dir, "page-1.json"));
+
+        bytes[0].ShouldBe((byte)'{');
+        bytes.Length.ShouldBe(File.ReadAllText(Path.Combine(_dir, "page-1.json")).Length + 1, "one Jónas");
+    }
+
+    /// <summary>
     /// A storage-format body and a non-ASCII name are written as themselves. The default JSON encoder
     /// escapes both — <c>&lt;p&gt;</c>, <c>Jónas</c> — which is valid JSON and unreadable in the
     /// PR diff §5.4 commits these files for.
@@ -126,6 +143,99 @@ public sealed class FeedbackInboxTests : IDisposable
     [Fact]
     public void Reads_a_missing_inbox_as_empty()
         => FeedbackInbox.ExistingItemFiles(Path.Combine(_dir, "nope")).ShouldBeEmpty();
+
+    /// <summary>
+    /// The reason an item write has to be all-or-nothing, pinned as the fact it is: presence counts, not
+    /// parseability, so a file left half-written by a killed run reads as an item that was already
+    /// ingested. The planner then skips that comment as
+    /// <see cref="FeedbackSkipReason.AlreadyOnDisk"/> — the same skip a triaged item earns — and once a
+    /// later run advances the page's cursor past it, nothing re-derives it.
+    /// </summary>
+    /// <remarks>
+    /// Parsing each file here instead would be the wrong fix: these are hand-editable committed files
+    /// (§5.4), and a human who restructured one must not have it overwritten by the next sync.
+    /// </remarks>
+    [Fact]
+    public void Counts_a_half_written_item_as_already_ingested()
+    {
+        File.WriteAllText(Path.Combine(_dir, "page-1.json"), """{ "id": "conf-comm""");
+
+        FeedbackInbox.ExistingItemFiles(_dir).ShouldContain("page-1.json");
+    }
+
+    /// <summary>
+    /// The invariant the one above makes load-bearing: a write that cannot finish leaves no file at the
+    /// item's name at all, so the comment is re-ingested rather than skipped forever.
+    /// </summary>
+    /// <remarks>
+    /// The failure is injected by putting a directory where the write lands its sibling temp file — a write
+    /// that cannot start, standing in for the disk filling up or the process being killed. The
+    /// <c>.tmp</c> suffix is named literally here and in <c>FeedbackInbox.TemporarySuffix</c>; changing it
+    /// there turns this test red rather than leaving it vacuous, which is the point of naming it.
+    /// </remarks>
+    [Fact]
+    public void Leaves_no_item_behind_when_the_write_cannot_finish()
+    {
+        Directory.CreateDirectory(Path.Combine(_dir, "page-1.json.tmp"));
+
+        Should.Throw<SystemException>(
+            () => FeedbackInbox.Write(_dir, Plan(Item("conf-comment-1", FeedbackKind.Footer))));
+
+        File.Exists(Path.Combine(_dir, "page-1.json")).ShouldBeFalse();
+        FeedbackInbox.ExistingItemFiles(_dir).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A successful ingest leaves the item files and nothing else. The inbox is staged as a whole
+    /// directory rather than by path (<c>templates/workflows/docs-sync.yml</c>), so a leftover here is a
+    /// junk file committed into the consumer's repo — which is why the write deletes its temp on the way
+    /// out instead of keeping it as evidence the way the state file does.
+    /// </summary>
+    [Fact]
+    public void Leaves_no_temporary_file_behind()
+    {
+        FeedbackInbox.Write(_dir, Plan(Item("conf-comment-1", FeedbackKind.Footer)));
+
+        Directory.GetFileSystemEntries(_dir)
+            .ShouldHaveSingleItem()
+            .ShouldBe(Path.Combine(_dir, "page-1.json"));
+    }
+
+    /// <summary>
+    /// A write that got as far as its temp file and then failed cleans the temp up. The inbox is staged as
+    /// a directory, so the alternative — keeping it as evidence, which is what the state file's save
+    /// does — would commit it.
+    /// </summary>
+    /// <remarks>
+    /// The failure is injected at the rename rather than at the temp write, by putting a directory where
+    /// the item itself belongs: the only shape that leaves a real, deletable temp file behind to be
+    /// cleaned up.
+    /// </remarks>
+    [Fact]
+    public void Removes_its_temporary_file_when_the_write_fails_partway()
+    {
+        Directory.CreateDirectory(Path.Combine(_dir, "page-1.json"));
+
+        Should.Throw<SystemException>(
+            () => FeedbackInbox.Write(_dir, Plan(Item("conf-comment-1", FeedbackKind.Footer))));
+
+        File.Exists(Path.Combine(_dir, "page-1.json.tmp")).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A temp file a killed run did leave behind — a run killed hard enough that nothing ran on the way
+    /// out — must not fail the next ingest, and must not survive it either.
+    /// </summary>
+    [Fact]
+    public void Overwrites_a_temporary_file_left_by_a_killed_run()
+    {
+        File.WriteAllText(Path.Combine(_dir, "page-1.json.tmp"), """{ half an item""");
+
+        FeedbackInbox.Write(_dir, Plan(Item("conf-comment-1", FeedbackKind.Footer)));
+
+        FeedbackInbox.Read([_dir]).ShouldHaveSingleItem().Item!.Id.ShouldBe("conf-comment-1");
+        Directory.GetFileSystemEntries(_dir).ShouldHaveSingleItem();
+    }
 
     /// <summary>
     /// Case-insensitively, because macOS and Windows would treat two casings as one file: an inbox that
@@ -222,6 +332,30 @@ public sealed class FeedbackInboxTests : IDisposable
         root.GetProperty("status").GetString().ShouldBe("fixed");
         root.GetProperty("resolution").GetString().ShouldBe("Corrected on the loans page.");
         root.GetProperty("body").GetString().ShouldBe("<p>A claim to verify.</p>");
+    }
+
+    /// <summary>
+    /// The stamp rewrites a file that already holds something, so it is the one item write with content to
+    /// destroy: a reviewer's comment, its author, its anchor and the triage's own resolution. A stamp that
+    /// cannot finish must leave all of it exactly as it was, because nothing re-derives it — the reply it
+    /// was recording has already been posted, so the next run reads the file back as unreadable and skips
+    /// it rather than repairing it.
+    /// </summary>
+    [Fact]
+    public void Leaves_an_item_byte_identical_when_the_stamp_cannot_finish()
+    {
+        FeedbackInbox.Write(_dir, Plan(Item("conf-comment-1", FeedbackKind.Footer)));
+        var path = Path.Combine(_dir, "page-1.json");
+        var stored = FeedbackInbox.Read([_dir])[0];
+        var before = File.ReadAllBytes(path);
+
+        Directory.CreateDirectory(path + ".tmp");
+
+        Should.Throw<SystemException>(
+            () => FeedbackInbox.MarkReplied(stored, DateTimeOffset.UnixEpoch));
+
+        File.ReadAllBytes(path).ShouldBe(before);
+        FeedbackInbox.Read([_dir])[0].Item!.Body.ShouldBe("<p>A claim to verify.</p>");
     }
 
     /// <summary>An item that never parsed has nothing to stamp, and stamping a blank over it would erase it.</summary>
