@@ -116,6 +116,13 @@ STEP1_PATHS = [
 
 # Auto-loaded by Claude Code on every iteration rather than Read by step 1. They spend the same
 # context window, so they are reported, but they are not the thing that truncates.
+#
+# DELIBERATELY REPORTED WITHOUT A STATUS COLUMN, and reviewed at iter163 when the sweep for
+# report-without-failing branches reached this block. Neither file goes through the Read tool at all
+# - CLAUDE.md is injected by the CLI and ITERATION-PROMPT.md is `cat`'d into the prompt by
+# docume-loop.sh:117 - so the 25,000-token cap does not apply to either, and printing `status_for`
+# beside them would invent a defect rather than report one. Bytes and tokens with no verdict is the
+# honest shape here: it is a context-cost readout, not a check.
 ALWAYS_LOADED = [
     "CLAUDE.md",
     "tools/loop/ITERATION-PROMPT.md",
@@ -480,12 +487,36 @@ def check_gate_pointers():
     drained section, and a pointer whose title matches no heading at all. It does NOT read a
     paraphrase ("see the setup section below"), and it cannot know whether a step spelled out inline
     is already done. A backstop for the shape that broke, not a proof that the prose is true.
+
+    ITER163: THIS CHECK HAS RESOLVED NOTHING SINCE THE DAY IT SHIPPED, AND SAID "OK" EVERY TIME.
+    Found by the soft-flag sweep, and it is the mirror image of iter162's finding rather than a
+    repeat: that one printed a defect and exited 0, this one printed a VERDICT IT HAD NOT REACHED.
+    iter151 repaired the three stale pointers by rewriting the gates that carried them, which
+    removed the last `under "<Title>"` in the file - so the population has been EMPTY from the first
+    run, and `OK: every pointer resolves to a section that still has outstanding work` was true only
+    in the way "every unicorn in this room is blue" is true. An empty population is NOT a failure
+    here (a green that demands somebody write more pointer prose would be absurd), so the fix is
+    twofold and only the first half has teeth: the WALK is asserted to have parsed something, which
+    is what tells "vacuous because nobody writes that form" apart from "vacuous because the parser
+    broke"; and the conclusion now says which of the two happened instead of claiming a resolution.
     """
     problems = []
     with open(GATES_MD, encoding="utf-8") as handle:
         text = handle.read()
     sections = gates_sections(text)
     bodies = gate_bodies(text)
+
+    # (0) THE WALK PARSED SOMETHING. Every resolution below iterates `bodies` and looks up
+    # `sections`, so a scan that returned neither reports OK over an empty tree - and both come from
+    # regexes over a hand-edited markdown file, which is exactly the input that changes shape.
+    # GATES.md always has `## ` sections and always has open gates, so zero of either is this scan
+    # breaking, not the file emptying. This is the one vacuity in this check that IS a failure.
+    if not sections or not bodies:
+        problems.append(
+            f"parsed {len(sections)} `## ` sections and {len(bodies)} gate bodies out of GATES.md -"
+            " with either at zero every resolution below is vacuous, so this is the scan that is"
+            " broken (GATE_CHECKBOX / SECTION_HEADING), not the file"
+        )
 
     pointers = 0
     for gate, (is_ticked, lines) in sorted(bodies.items()):
@@ -514,8 +545,19 @@ def check_gate_pointers():
     print(f"  {len(sections)} sections, {open_gates} open gates, {pointers} section pointers")
     for problem in problems:
         print(f"  BROKEN: {problem}")
-    if not problems:
+    if not problems and pointers:
         print("  OK: every pointer resolves to a section that still has outstanding work.")
+    if not problems and not pointers:
+        # NOT "OK". Nothing was resolved, so a conclusion about resolutions would be a claim this
+        # run did not earn - and the walk assertion above is what licenses calling this harmless.
+        print(f"  VACUOUS, and not a failure: no gate uses the `under \"<Title>\"` form, so nothing"
+              " was resolved this run.")
+        print(f"      The walk is sound ({len(sections)} sections, {len(bodies)} gate bodies), so the"
+              " population is genuinely empty - iter151")
+        print("      emptied it by rewriting the three gates that carried the defect. Demanding a"
+              " pointer exist would be absurd,")
+        print("      so this stays exit 0; what changed at iter163 is that it no longer reports a"
+              " verdict it never reached.")
     return problems
 
 
@@ -730,6 +772,9 @@ GATES_ARCHIVE_NON_GATE_KEYS = {
         "a settled GATES.md section's body, not a gate: no checkbox was ever keyed for it.",
     "settled-setup-before-m2":
         "same shape - the pre-M2 sandbox setup section, settled at iter152 and archived whole.",
+    "settled-notification-correction-iter139":
+        "GATES.md's header parenthetical, not a gate: iter139's measurement that no notification"
+        " fires when a gate opens. Archived at iter163 to buy back GATES.md budget, verbatim.",
 }
 
 
@@ -845,6 +890,13 @@ def transcript_for(wanted):
 
     Counting rule for the old shape: iteration i is the i-th pass that exited 0. A non-zero exit
     finished no iteration (it died and got resumed), which is exactly why the two numbers parted.
+
+    EVERY FAILURE HERE IS ADVISORY, ON PURPOSE (reviewed iter163's sweep). This returns a REASON
+    string rather than raising, and `find_iteration` exits 0 on a missing transcript as long as the
+    archive entry was found - because `tools/loop/logs/` is gitignored (.gitignore:1), so on a fresh
+    clone or another machine there are no transcripts at all and the archive entry is the deliverable.
+    The reason is spelled out in the returned string ("no such file is on disk") instead of a bare
+    status word, which is what keeps this from being the kind of flag a reader learns to skim past.
     """
     if not os.path.exists(LOOP_LOG):
         return None, "no logs/loop.log on this machine"

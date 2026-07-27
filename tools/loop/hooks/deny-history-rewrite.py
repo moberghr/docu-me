@@ -22,8 +22,16 @@ refspec of any name may sit in front of it -- so no list of deny entries closes 
 because it sees the whole command string.
 
 The rule this enforces is unconditional ("NEVER force-push or rewrite history"), so this hook is
-FAIL-CLOSED: when a command cannot be parsed it is blocked rather than allowed. A false block costs
-one rephrased command; a false allow costs history that §8.2 says cannot be recovered.
+FAIL-CLOSED: when a command cannot be parsed -- or when the PAYLOAD cannot be parsed, corrected at
+iter163 -- it is blocked rather than allowed. A false block costs one rephrased command; a false
+allow costs history that §8.2 says cannot be recovered.
+
+AND THERE IS NO THIRD OPTION, MEASURED AT ITER163: a hook cannot allow a command and still be
+heard. In the driver's invocation (`claude -p ... 2>&1`, no --include-hook-events) exit 0 and exit 1
+are equally silent -- the command ran and the hook's stderr reached neither the merged log nor the
+agent's turn -- while exit 2 was quoted back by the agent verbatim. So every branch here is either
+a block or a silence, and one that knows it inspected nothing must be the former.
+(.mtk/paths-163/probe-hook-audibility-as-the-loop-runs-it.py, three children, one per exit code.)
 
 Matching is on shlex TOKENS, which is more precise than it first looks and the harness pins both
 sides of it: `grep -rn "git push --force" docs/` is ALLOWED, because the quoted mention is a single
@@ -103,14 +111,34 @@ def main():
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        # A payload this hook cannot read is not evidence that the command is safe, but blocking
-        # every Bash call on a malformed payload would wedge the loop. Say so loudly and allow;
-        # the deny list still covers the flag-first spellings underneath.
+        # FAIL CLOSED, CORRECTED ITER163. This branch used to `return 0` with the comment "blocking
+        # every Bash call on a malformed payload would wedge the loop. Say so loudly and allow" --
+        # which contradicted the docstring's fail-closed stance two paragraphs up, and, measured,
+        # could not be loud at all. In the invocation the driver actually uses
+        # (docume-loop.sh:117: `claude -p ... 2>&1`, no --include-hook-events) a hook's stderr
+        # reaches NOBODY unless it exits 2: for exit 0 AND exit 1 alike the command ran and the
+        # message appeared neither in the merged log nor in the agent's turn, while exit 2 was
+        # quoted back by the agent verbatim. Three children, one per exit code:
+        # .mtk/paths-163/probe-hook-audibility-as-the-loop-runs-it.py.
+        #
+        # So "advisory but audible" is not on the menu here, and the choice is silence or a block.
+        # An unparseable payload means this hook inspected NOTHING, so every force-push spelling the
+        # deny list misses is unguarded -- exactly the hole rule §8.2's [ENFORCED] label denies
+        # exists. Blocking is loud, recoverable in one edit, and scoped: the settings matcher is
+        # `Bash`, so Read/Write/Edit still work and an iteration can still write its state and end
+        # BLOCKED. Silence would leave the guard off with nobody able to find out.
+        # The diagnostic phrase stays on ONE line: it is what a reader greps for, and the harness
+        # anchors on it. iter163's first draft wrapped it across two lines, and the cell that
+        # expected it reported WRONG-CHECK against a hook that was behaving correctly.
         print(
-            "deny-history-rewrite: could not parse the hook payload; not inspecting this command",
+            "BLOCKED by tools/loop/hooks/deny-history-rewrite.py:\n"
+            "the PreToolUse payload could not be parsed as JSON, so this hook inspected nothing.\n"
+            "It fails closed: rule §8.2 is unconditional, and a force-push allowed by accident\n"
+            "cannot be undone. If the hook contract has changed, fix the hook or remove it from\n"
+            "tools/loop/loop-settings.json -- do not rephrase the command to get past this.",
             file=sys.stderr,
         )
-        return 0
+        return 2
 
     if payload.get("tool_name") != "Bash":
         return 0

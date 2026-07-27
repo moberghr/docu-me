@@ -63,6 +63,10 @@ if [ -z "${DOCUME_LOOP_CAFFEINATED:-}" ] && command -v caffeinate >/dev/null 2>&
 fi
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" | tee -a "$MAIN_LOG"; }
+# The `|| true` swallows an osascript failure ON PURPOSE (reviewed iter163): a notification that
+# cannot be delivered must never take the loop down, and nothing downstream reads its result. It is
+# also unverifiable from in here — GATES.md records that the call exits 0 while Notification
+# Center's DB is TCC-blocked to the loop, so nobody can prove from this process that it arrived.
 notify() { osascript -e "display notification \"$1\" with title \"DocuMe Loop\"" >/dev/null 2>&1 || true; }
 
 if [ -z "${DOCUME_CONFLUENCE_EMAIL:-}" ] || [ -z "${DOCUME_CONFLUENCE_TOKEN:-}" ]; then
@@ -124,6 +128,15 @@ while true; do
   printf '%s\n' "$out" > "$iter_log"
   status=$(printf '%s\n' "$out" | grep -Eo 'LOOP-STATUS:[[:space:]]*[A-Z-]+[^"]*' | tail -1)
   log "Iteration $next_iter (pass $pass_n) finished (exit $code) — ${status:-no status line}"
+
+  # "no status line" IS A PROTOCOL VIOLATION REPORTED WITHOUT CONSEQUENCE, AND THAT IS DELIBERATE
+  # (reviewed iter163, whose increment was a sweep for exactly this shape elsewhere in tools/loop).
+  # The protocol requires exactly one LOOP-STATUS line as the last line; an iteration that exits 0
+  # without one falls through the `case` below to `*)` and is treated as CONTINUE. Kept advisory on
+  # purpose: this is a supervisor whose job is to still be running tomorrow, the full transcript is
+  # already on disk above (so no evidence is lost, unlike the cases that sweep did fix), and the
+  # alternative — treating it as a failure — would resume a session that had in fact finished. The
+  # honest cost is that a malformed ending is indistinguishable from CONTINUE in the log line.
 
   if [ $code -ne 0 ]; then
     if printf '%s' "$out" | grep -qiE 'usage limit|rate limit|limit reached|overloaded|too many requests'; then
