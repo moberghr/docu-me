@@ -584,3 +584,31 @@ shape** and closed with a standing instruction "to capture the name in the same 
     done-archive line 157 before the suite refuted it. Both were rewritten before the commit. An
     archive entry is the only account a cold session gets, and a done entry that describes work that
     was reverted is worse than no entry: the next iteration reads it as HEAD's state.
+
+## When a check is named after one file but guards the whole tree (iter157)
+
+  * **BEFORE WRITING A TEST FOR A GAP YOU INFERRED, GREP FOR THE ASSERTION, NOT FOR THE TEST CLASS
+    YOU EXPECT TO HOLD IT.** iter157 found `ReadmeCliContractTests.Every_option_the_README_hangs_on_a_
+    command_exists_on_that_command`, checked `SkillContractTests` for the same check over the three
+    shipped `SKILL.md` files, found nothing, and concluded the skills were unguarded. They are not:
+    **`CliReferencePageTests.Every_documented_invocation_names_a_real_command_with_real_options`
+    sweeps ~132 invocations across the whole consumer-facing tree** — README, `docs/wiki/`, every
+    `SKILL.md`, `templates/workflows/*.yml` — and validates each `--option` against the real declared
+    set, with a companion anti-vacuity test naming four of those files so the regex cannot go blind.
+    A class named after `cli.md` owns a tree-wide sweep. The near-miss was a duplicate test.
+  * **THE COROLLARY THAT FOUND THE REAL GAP: ASK WHAT DIMENSION THE EXISTING SWEEP COVERS.** The tree
+    is swept for CLI *options* a doc names. It was NOT swept for *config fields* a doc promises:
+    `PlanDataContractTests` held the two dead knobs against `configuration.md` alone, so
+    `plugin/skills/docs-refresh/SKILL.md:44` could list both dead knobs as inputs an agent reads and
+    nothing noticed. Same shape of defect, one dimension over, unguarded. The gap was not "the skills
+    are unchecked" but "checked for one kind of claim, not the other".
+  * **A DECISION'S SETTLE INSTRUCTIONS ARE A CLAIM ABOUT THE TREE, AND THEY ROT LIKE ANY OTHER.**
+    `DeadFields[0].Why`, `state.json` and the archive all said to strike the promise from §6.2 "and
+    the skill", singular, for 34 iterations. Measured: six files, two skills. Writing the surface into
+    a `Places` array pinned in both directions turns "remember to edit all six" into a failing test —
+    the general move when an instruction says *everywhere* and names three of six places.
+  * **AN EXCLUSION IS BETTER MADE STRUCTURAL THAN FILTERED.** The inventory walks `docs/wiki` rather
+    than `docs`, so the dated records under `docs/plans/` are out of scope by the shape of the walk
+    instead of by a `.Where` a later edit can drop. The control case in
+    `.mtk/paths-157/mutate-dead-knob-surface.py` proves it (mention a dead knob in an m0 plan record →
+    correctly OK-IGNORED), which is iter125's control-case rule applied to a scope decision.

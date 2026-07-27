@@ -73,6 +73,13 @@ public sealed partial class PlanDataContractTests
         /// <c>null</c> for a member whose reader is a human or which is ignored deliberately.
         /// </summary>
         public string? Knob { get; init; }
+
+        /// <summary>
+        /// Every shipped artifact that names this knob, repo-relative. Empty for a member with no
+        /// <see cref="Knob"/>; pinned as a closed set by
+        /// <see cref="Every_shipped_artifact_that_names_a_dead_knob_is_recorded"/>.
+        /// </summary>
+        public string[] Places { get; init; } = [];
     }
 
     private static readonly Contract[] Contracts =
@@ -120,7 +127,17 @@ public sealed partial class PlanDataContractTests
                 + "configured\"), and plugin/skills/docs-loop/SKILL.md tells the skill that publish does "
                 + "it. No line of src/ reads the field, so a consumer who sets it gets nothing and is told "
                 + "otherwise. Build the linkification, or strike the promise from §6.2 and the skill — a "
-                + "spec decision, not this suite's to take.",
+                + "spec decision, not this suite's to take. STRIKING IT IS A SIX-FILE EDIT, NOT THREE: "
+                + "measured at iter157, and TWO skills name it, not one. See Places.",
+            Places =
+            [
+                "PLAN.md",
+                "docs/wiki/20-reference/configuration.md",
+                "docume.json",
+                "plugin/skills/docs-loop/SKILL.md",
+                "plugin/skills/docs-refresh/SKILL.md",
+                "schema/docume.schema.json",
+            ],
         },
         new()
         {
@@ -131,7 +148,17 @@ public sealed partial class PlanDataContractTests
                 + "computes a merge base from the pull request instead (deliberately, and its comment says "
                 + "the setting is \"for local runs\"), and a local `drift` with no --baseline falls back to "
                 + "state.json's baselineSha. Either the fallback should consult it, or §5.1 and §10 should "
-                + "stop implying a branch default exists.",
+                + "stop implying a branch default exists. ALSO NAMED BY docs-refresh's SKILL.md input "
+                + "table, which was recorded nowhere until iter157 measured it. See Places.",
+            Places =
+            [
+                "PLAN.md",
+                "docs/wiki/20-reference/configuration.md",
+                "docume.json",
+                "plugin/skills/docs-refresh/SKILL.md",
+                "schema/docume.schema.json",
+                "templates/workflows/docs-drift-pr.yml",
+            ],
         },
         new()
         {
@@ -309,6 +336,113 @@ public sealed partial class PlanDataContractTests
             knobs.ShouldContain(named, customMessage: unlisted);
         }
     }
+
+    /// <summary>
+    /// Where each dead knob is <em>named</em>, pinned as a closed set in both directions, so striking a
+    /// promise cannot be done in three files out of six.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="The_config_reference_names_every_field_that_is_inert"/> holds one page. A knob's promise
+    /// is spread wider than that: the plan, the schema, the config reference, this repo's own
+    /// <c>docume.json</c>, a workflow template — and the part recorded nowhere until iter157 measured it,
+    /// the <em>skills</em>. Two SKILL.md files list <c>links.repoBlobUrl</c> in an "Inputs, read in this
+    /// order" table and <c>docs-refresh</c>'s lists both dead knobs, while the settle instructions in
+    /// <c>DeadFields</c>, in <c>state.json</c> and in <c>GATES.md</c> all said "the skill", singular.
+    /// </para>
+    /// <para>
+    /// An inventory rather than a behaviour check, because the direction is an open spec decision and not
+    /// this suite's to take. Whichever way it goes, the edit lands everywhere at once: a partial strike
+    /// leaves an agent reading a table that offers a field which does nothing, and nothing else in the
+    /// suite would notice. Dated records under <c>docs/plans/</c> are excluded deliberately — they are
+    /// history, and correcting a promise must not mean rewriting what was planned on the day. <c>src/</c>
+    /// is excluded too: a mention there would make the field live, which is
+    /// <see cref="Every_field_the_plan_declares_is_read_by_something_or_listed_as_dead"/>'s business.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_shipped_artifact_that_names_a_dead_knob_is_recorded()
+    {
+        var shipped = ShippedArtifacts();
+
+        const string vacuous = "No shipped artifact was scanned at all, so this inventory is broken rather "
+            + "than clean. The roots it walks have moved.";
+
+        shipped.ShouldNotBeEmpty(vacuous);
+
+        foreach (var dead in DeadFields.Where(dead => dead.Knob is not null))
+        {
+            // The leaf, because JSON and the schema spell `repoBlobUrl` without its `links.` parent.
+            var leaf = dead.Knob!.Split('.')[^1];
+
+            var found = shipped
+                .Where(file => File.ReadAllText(file.Absolute).Contains(leaf, StringComparison.Ordinal))
+                .Select(file => file.Relative)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToList();
+
+            var unrecorded = found.Except(dead.Places, StringComparer.Ordinal).Order(StringComparer.Ordinal);
+            var stale = dead.Places.Except(found, StringComparer.Ordinal).Order(StringComparer.Ordinal);
+
+            var appeared = $"{dead.Knob} is named by [{string.Join(", ", unrecorded)}], which "
+                + $"{nameof(DeadFields)} does not record. A dead knob promised in one more place is one "
+                + "more file to edit when the decision lands — add it to Places, or delete the mention.";
+
+            var gone = $"{nameof(DeadFields)} records [{string.Join(", ", stale)}] for {dead.Knob} and "
+                + $"none of them names it any more. If the promise is being struck, strike it in all "
+                + $"{dead.Places.Length} places and empty Places in the same change: a half-struck knob "
+                + "leaves an agent reading a table that offers a field doing nothing.";
+
+            unrecorded.ShouldBeEmpty(appeared);
+            stale.ShouldBeEmpty(gone);
+        }
+    }
+
+    /// <summary>
+    /// The files a consumer or an agent reads, repo-relative with forward slashes.
+    /// </summary>
+    /// <remarks>
+    /// Rooted at <c>docs/wiki</c> rather than <c>docs</c> so the dated plan records under
+    /// <c>docs/plans/</c> are out of scope structurally, not by a filter a later edit can drop.
+    /// </remarks>
+    private static List<ShippedFile> ShippedArtifacts()
+    {
+        string[] roots = ["PLAN.md", "README.md", "CHANGELOG.md", "docume.json", "docs/wiki", "plugin", "templates", "schema"];
+        string[] extensions = [".md", ".json", ".yml", ".yaml", ".mjs"];
+
+        var collected = new List<ShippedFile>();
+
+        foreach (var root in roots)
+        {
+            var absolute = Path.Combine(DocumeCli.RepoRoot, root.Replace('/', Path.DirectorySeparatorChar));
+
+            if (File.Exists(absolute))
+            {
+                collected.Add(new ShippedFile(root, absolute));
+                continue;
+            }
+
+            var missing = $"The shipped root '{root}' does not exist, so this inventory no longer covers "
+                + "what it claims to cover.";
+
+            Directory.Exists(absolute).ShouldBeTrue(missing);
+
+            var files = Directory
+                .EnumerateFiles(absolute, "*", SearchOption.AllDirectories)
+                .Where(file => extensions.Contains(Path.GetExtension(file), StringComparer.Ordinal))
+                .Select(file => new ShippedFile(
+                    Path.GetRelativePath(DocumeCli.RepoRoot, file).Replace(Path.DirectorySeparatorChar, '/'),
+                    file));
+
+            collected.AddRange(files);
+        }
+
+        return collected;
+    }
+
+    /// <summary>A shipped artifact, keyed by the repo-relative path a message quotes.</summary>
+    private sealed record ShippedFile(string Relative, string Absolute);
 
     /// <summary>
     /// Walks a parsed §5 block against the type that binds it, collecting both directions of disagreement.
