@@ -563,6 +563,138 @@ public sealed class ProjectScaffolderTests : IDisposable
     }
 
     /// <summary>
+    /// Rule §9.4's "never overwrite" is what makes a half-written target permanent: the next run sees
+    /// a file at that name, reports <see cref="ScaffoldAction.Skipped"/> with nothing to say about it,
+    /// and by design never writes there again. Measured on the shipped CLI before this was fixed —
+    /// truncate <c>docume.json</c> to nothing and re-run <c>init</c>, and it stays at 0 bytes while the
+    /// table calls it skipped, the same word a healthy file earns.
+    /// </summary>
+    /// <remarks>
+    /// The failure is injected by putting a directory where the write lands its sibling temp — a write
+    /// that cannot start, standing in for the disk filling up or the process being killed. The
+    /// <c>.tmp</c> suffix is named literally here and in <c>ProjectScaffolder.TemporarySuffix</c>;
+    /// changing it there turns this red rather than leaving it vacuous, which is why it is spelled out.
+    /// </remarks>
+    [Fact]
+    public void Scaffold_leaves_no_file_behind_when_a_written_target_cannot_finish()
+    {
+        Directory.CreateDirectory(Full("docume.json.tmp"));
+
+        Should.Throw<SystemException>(() => ProjectScaffolder.Scaffold(_dir));
+
+        File.Exists(Full("docume.json")).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The same invariant for the templates copied byte for byte. Worth its own test because the cost
+    /// of a silent skip differs: a truncated <c>render-mermaid.mjs</c> is a syntactically broken script
+    /// that fails at publish time, milestones away from the <c>init</c> that left it there.
+    /// </summary>
+    [Fact]
+    public void Scaffold_leaves_no_file_behind_when_a_copied_template_cannot_finish()
+    {
+        Directory.CreateDirectory(Full("tools/render-mermaid.mjs.tmp"));
+
+        Should.Throw<SystemException>(() => ProjectScaffolder.Scaffold(_dir));
+
+        File.Exists(Full("tools/render-mermaid.mjs")).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The other half of the family, and the one that destroys rather than poisons: the manifest merge
+    /// rewrites a file that already holds the consumer's own pins, so a truncated write costs them
+    /// content <c>init</c> never had and cannot restore.
+    /// </summary>
+    [Fact]
+    public void Scaffold_leaves_an_existing_tool_manifest_intact_when_the_rewrite_cannot_finish()
+    {
+        WriteManifest("""
+            {
+              "version": 1,
+              "isRoot": true,
+              "tools": {
+                "csharpier": { "version": "0.28.2", "commands": [ "dotnet-csharpier" ] }
+              }
+            }
+            """);
+
+        var theirs = File.ReadAllText(Full(".config/dotnet-tools.json"));
+        Directory.CreateDirectory(Full(".config/dotnet-tools.json.tmp"));
+
+        Should.Throw<SystemException>(() => ProjectScaffolder.Scaffold(_dir));
+
+        File.ReadAllText(Full(".config/dotnet-tools.json")).ShouldBe(theirs);
+    }
+
+    /// <summary>
+    /// And the same for the append: a <c>.gitignore</c> is hand-maintained, so losing it to a truncated
+    /// rewrite loses work no regeneration brings back.
+    /// </summary>
+    [Fact]
+    public void Scaffold_leaves_an_existing_gitignore_intact_when_the_append_cannot_finish()
+    {
+        var theirs = $"bin/{Environment.NewLine}obj/{Environment.NewLine}*.user{Environment.NewLine}";
+        File.WriteAllText(Full(".gitignore"), theirs);
+        Directory.CreateDirectory(Full(".gitignore.tmp"));
+
+        Should.Throw<SystemException>(() => ProjectScaffolder.Scaffold(_dir));
+
+        File.ReadAllText(Full(".gitignore")).ShouldBe(theirs);
+    }
+
+    /// <summary>
+    /// A successful scaffold leaves the targets and nothing else. <c>init</c> is the first command a
+    /// consumer runs and its output is committed by hand, so a leftover temp is junk a person has to
+    /// notice — which is why the write deletes its own rather than keeping it as evidence the way
+    /// <c>StateStore.Save</c> does.
+    /// </summary>
+    [Fact]
+    public void Scaffold_leaves_no_temporary_file_behind()
+    {
+        ProjectScaffolder.Scaffold(_dir);
+
+        Directory
+            .EnumerateFiles(_dir, "*.tmp", SearchOption.AllDirectories)
+            .ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A write that got as far as its temp file and then failed cleans the temp up, rather than leaving
+    /// a junk sibling in a repo whose owner commits this output by hand.
+    /// </summary>
+    /// <remarks>
+    /// The failure is injected at the rename rather than at the temp write, by putting a directory where
+    /// the target itself belongs: the only shape that leaves a real, deletable temp behind to be cleaned
+    /// up. Measured, which is why it is a separate test — the four injections above all fail before a
+    /// temp exists, so with only those, deleting the cleanup branch entirely changed nothing.
+    /// </remarks>
+    [Fact]
+    public void Scaffold_removes_its_temporary_file_when_the_write_fails_partway()
+    {
+        Directory.CreateDirectory(Full("docume.json"));
+
+        Should.Throw<SystemException>(() => ProjectScaffolder.Scaffold(_dir));
+
+        File.Exists(Full("docume.json.tmp")).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// A temp file a run killed hard enough to skip its own cleanup did leave behind must not fail the
+    /// next <c>init</c>, and must not survive it either. That is what makes the name deterministic
+    /// rather than random.
+    /// </summary>
+    [Fact]
+    public void Scaffold_overwrites_a_temporary_file_left_by_a_killed_run()
+    {
+        File.WriteAllText(Full("docume.json.tmp"), "{ half a config");
+
+        ProjectScaffolder.Scaffold(_dir);
+
+        ConfigLoader.Load(Full("docume.json")).Confluence.SpaceKey.ShouldBe("SPACE");
+        File.Exists(Full("docume.json.tmp")).ShouldBeFalse();
+    }
+
+    /// <summary>
     /// The render script's result, found by extension rather than by position: which path it lands
     /// on is the point of three of these tests, so the lookup must not assume one.
     /// </summary>

@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DocuMe.Core.Config;
@@ -321,7 +322,7 @@ public static class ProjectScaffolder
         if (!File.Exists(fullPath))
         {
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath)!);
-            File.WriteAllText(fullPath, SerializeManifest(NewManifest()));
+            WriteAtomically(fullPath, SerializeManifest(NewManifest()));
             return new ScaffoldResult(ToolManifestPath, ScaffoldAction.Created);
         }
 
@@ -365,7 +366,7 @@ public static class ProjectScaffolder
         }
 
         tools[ToolManifestKey] = NewToolEntry();
-        File.WriteAllText(fullPath, SerializeManifest(manifest));
+        WriteAtomically(fullPath, SerializeManifest(manifest));
 
         var added = $"pinned {ToolManifestKey} {ToolVersion} in the existing manifest; its other tools "
             + "were left alone.";
@@ -454,7 +455,7 @@ public static class ProjectScaffolder
         if (!File.Exists(fullPath))
         {
             Directory.CreateDirectory(targetDir);
-            File.WriteAllText(
+            WriteAtomically(
                 fullPath,
                 GitignoreComment + Environment.NewLine + GitignoreEntry + Environment.NewLine);
             return new ScaffoldResult(relativePath, ScaffoldAction.Created);
@@ -472,7 +473,7 @@ public static class ProjectScaffolder
 
         var appended = existing + Separator(existing) + GitignoreComment + Environment.NewLine
             + GitignoreEntry + Environment.NewLine;
-        File.WriteAllText(fullPath, appended);
+        WriteAtomically(fullPath, appended);
 
         return new ScaffoldResult(
             relativePath,
@@ -573,7 +574,7 @@ public static class ProjectScaffolder
         }
 
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath)!);
-        File.WriteAllText(fullPath, content());
+        WriteAtomically(fullPath, content());
         return new ScaffoldResult(relativePath, ScaffoldAction.Created);
     }
 
@@ -595,8 +596,115 @@ public static class ProjectScaffolder
         }
 
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fullPath)!);
-        File.WriteAllBytes(fullPath, content());
+        WriteAtomically(fullPath, content());
         return new ScaffoldResult(relativePath, ScaffoldAction.Created, note);
+    }
+
+    /// <summary>
+    /// The suffix of the sibling file every scaffolded write lands in first — see
+    /// <see cref="WriteAtomically(string, byte[])"/>.
+    /// </summary>
+    private const string TemporarySuffix = ".tmp";
+
+    /// <inheritdoc cref="WriteAtomically(string, byte[])"/>
+    /// <remarks>
+    /// Encoded UTF-8 without a BOM, which is what <c>File.WriteAllText</c> wrote here before and what
+    /// the byte-equality assertions against <c>templates/</c> expect.
+    /// </remarks>
+    private static void WriteAtomically(string path, string contents)
+        => WriteAtomically(path, Encoding.UTF8.GetBytes(contents));
+
+    /// <summary>
+    /// Writes <paramref name="contents"/> to <paramref name="path"/> all-or-nothing: a sibling temp
+    /// file, flushed to disk, then one rename.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>File.WriteAllText</c> opens the live path with <see cref="FileMode.Create"/>, which truncates
+    /// it before the first byte of the new content lands, so a run killed inside that window leaves a
+    /// file present and half-written. The temp is a sibling rather than something under the system temp
+    /// directory because a rename is atomic within one volume only.
+    /// </para>
+    /// <para>
+    /// <strong>What that costs differs per target, and both halves were measured on the shipped CLI
+    /// before this was introduced.</strong> The two rewrites destroy: the manifest merge replaces a file
+    /// already holding the consumer's own pins, and the <c>.gitignore</c> append replaces a
+    /// hand-maintained file, so a truncated write costs content <c>init</c> never had and cannot
+    /// restore. The plain writes poison instead: rule §9.4 makes <c>init</c> never overwrite, so the next
+    /// run finds a file at that name and reports <see cref="ScaffoldAction.Skipped"/> — the same word a
+    /// healthy file earns — and never writes there again. Truncated to nothing, <c>docume.json</c> and
+    /// <c>docs-publish.yml</c> both stayed at 0 bytes across a re-run.
+    /// </para>
+    /// <para>
+    /// Two of the six sites survived on their own and neither reason generalises, which is why they are
+    /// routed through here as well rather than left alone: the manifest's <em>create</em> half is read
+    /// back through a parse, so a truncated file earns an honest "could not be read, fix it" note, and
+    /// the <c>.gitignore</c>'s create half self-repairs because an empty file does not cover
+    /// <c>node_modules/</c> and the append rewrites it whole.
+    /// </para>
+    /// <para>
+    /// <strong>A failed write cleans its temp up</strong> rather than leaving it behind as evidence the
+    /// way <c>StateStore.Save</c> does. Nothing stages <c>init</c>'s output: it is the first command a
+    /// consumer runs and they commit the result by hand, so a leftover is junk a person has to notice and
+    /// delete. A run killed hard enough that nothing runs on the way out still leaves one, which is why
+    /// the name is deterministic — the next scaffold overwrites it rather than failing on it.
+    /// </para>
+    /// <para>
+    /// Deliberately local rather than shared with <c>FeedbackInbox.WriteAtomically</c>, whose policy this
+    /// now matches, or with <c>StateStore.Save</c>, whose policy it does not: extracting one helper was
+    /// declined once already, and this slice fixes a defect rather than reopening that.
+    /// </para>
+    /// </remarks>
+    private static void WriteAtomically(string path, byte[] contents)
+    {
+        var temporary = path + TemporarySuffix;
+        var moved = false;
+
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(contents);
+
+                // Flushed before the rename: a rename that outlives its own content in the page cache
+                // is the one crash that leaves a target present and empty, which reads as scaffolded.
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(temporary, path, overwrite: true);
+            moved = true;
+        }
+        finally
+        {
+            if (!moved)
+            {
+                TryDeleteTemporary(temporary);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes a temp file a failed <see cref="WriteAtomically(string, byte[])"/> left behind, swallowing
+    /// the failure to remove it.
+    /// </summary>
+    /// <remarks>
+    /// The only caller is on its way to rethrowing the exception that brought it here, and that exception
+    /// is the one worth surfacing: a cleanup that threw over it would replace "the disk is full" with
+    /// "the temp file could not be deleted". The cost of the swallow is bounded to one stale file with a
+    /// deterministic name, which the next scaffold overwrites.
+    /// </remarks>
+    private static void TryDeleteTemporary(string temporary)
+    {
+        try
+        {
+            File.Delete(temporary);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     private static string Combine(string targetDir, string relativePath)

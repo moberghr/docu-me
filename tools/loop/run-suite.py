@@ -86,7 +86,7 @@ def failing_from_stdout(text):
 # project dropped from the solution, a filter left in place, a runner that collected nothing. Raise
 # it when the suite legitimately grows; lowering it is a deliberate act that needs a reason in the
 # commit message, exactly like check-state-size.py's MEASURED constants.
-EXPECTED_AT_LEAST = 1418  # iter177: +7, the inbox writes are atomic too (no half-written item file)
+EXPECTED_AT_LEAST = 1425  # iter178: +7, init's six writes are atomic (no half-written scaffolded file)
 
 
 def verdict(returncode, blob):
