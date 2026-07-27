@@ -700,3 +700,22 @@ Its one operative sentence (truncation is not silent) stayed behind in `readMe`.
   iter159 note, hit for real at iter160). `.mtk/paths-160/mutate-settled-bodies.py` snapshots each
   touched file as BYTES before the first mutation, restores from that snapshot after every case, and
   digests the whole touched set before and after to prove nothing leaked.
+
+## Two checks can print BROKEN for one mutation (iter161)
+
+  * **ANCHOR A HARNESS EXPECTATION ON THE CHECK'S OWN MESSAGE TEXT, NOT ON THE MUTATED KEY'S NAME.**
+    A refinement of iter158's "a non-zero exit is not a catch". check-state-size.py's main() runs
+    EVERY check and collects problems BEFORE it evaluates any FAIL banner, so one mutation
+    legitimately trips two checks and both print their BROKEN line. iter161's "remove a gate from
+    `gates` and leave its archived body orphaned" case expected the bare string
+    `'settings-corrections'` - which check_gate_mirror also prints, for its own correct reason - so it
+    reported CAUGHT while proving nothing about check_gates_archive. Tightened to
+    "gates-archive.json holds a body 'settings-corrections'". Verdicts worth keeping distinct: CAUGHT,
+    MISSED, WRONG-CHECK, CRASH, and a separate GREEN/REGRESSION pair for the must-stay-green control.
+  * **PREFER A DECLARED EXEMPTION LIST TO A KEY-SHAPE REGEX.** check_gates_archive has to tell a gate
+    mirror from a settled-section body inside one flat JSON object. A kebab-case regex would have
+    classified a MIS-KEYED gate mirror - the exact defect the check exists to catch - as "not a gate"
+    and exempted it. So the three non-gate keys are named in GATES_ARCHIVE_NON_GATE_KEYS with a reason
+    each, and the declaration is itself checked BOTH ways: a declared name absent from the archive is
+    dead weight, and a declared name that is ALSO a live gate would exempt a real mirror forever. Both
+    are mutation cases in `.mtk/paths-161/mutate-gates-archive.py`.

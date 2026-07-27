@@ -703,6 +703,116 @@ def check_settled_bodies(doc):
     return problems
 
 
+GATES_ARCHIVE_NON_GATE_KEYS = {
+    "trimmed-iter145":
+        "iter145's own migration note - names the four side-item mirrors it moved here verbatim.",
+    "settled-ci-findings-iter134-135":
+        "a settled GATES.md section's body, not a gate: no checkbox was ever keyed for it.",
+    "settled-setup-before-m2":
+        "same shape - the pre-M2 sandbox setup section, settled at iter152 and archived whole.",
+}
+
+
+def check_gates_archive(doc):
+    """Does `gates`'s SECOND body pair up? (gates-archive.json, not GATES.md.)
+
+    ADDED ITER161, by applying iter160's own transferable lesson one level further down. That lesson
+    was "when an earlier iteration closed a family, check whether its enumeration skipped a
+    lifecycle half". iter159 enumerated state.json's stub-plus-archived-body splits, counted three -
+    `gates`, `blockers`, `decisions` - and recorded all three as checked, treating `gates` as covered
+    by check_gate_mirror. THAT WAS TRUE OF ONE OF ITS BODIES. `gates` is the only split in this file
+    with TWO: GATES.md, which is authoritative and live and has been paired since iter144, and
+    tools/loop/gates-archive.json, which five stubs cite by name ("Long mirror:
+    tools/loop/gates-archive.json (trimmed iter145)") and which nothing has ever paired. The
+    enumeration did not skip a lifecycle half this time; it skipped a SECOND BODY on the same half.
+
+    NOTHING IS LOST TODAY - this is a standing guard, not a repair, and iter161 says so plainly
+    rather than dressing a green measurement up as a find. All five citations resolve, and the
+    archive's twelve gate-shaped keys are exactly the twelve live `gates` keys. The one drift found
+    was cosmetic and is recorded in the archive's own `trimmed-iter145` note: iter155 rewrote the
+    `paste-format-on-edit-hook` stub when Mirko answered "delete" and the rewrite dropped that
+    stub's pointer back here, so the note claims four trimmed mirrors while three still cite it. No
+    text was destroyed - direction (1) is what would have caught it if any had been.
+
+    WHAT THIS DELIBERATELY DOES NOT CHECK, for the same reason check_stub_bodies does not:
+    `gatesArchive.note` disclaims the whole file ("Read GATES.md instead. This archive exists so
+    nothing was discarded, not because it is the place to look"). A body that has gone stale against
+    a gate Mirko has since moved is therefore CORRECT BY DESIGN. The archived
+    `paste-format-on-edit-hook` body still describes the hook as a thing to FIX, which the answered
+    decision has since overtaken; that is history behaving like history, not a failure.
+
+    NON-GATE KEYS ARE DECLARED, NOT INFERRED. A regex over key shape would silently absorb a real
+    gate whose mirror got mis-keyed - which is the failure this exists to catch - so the three meta
+    keys are named in GATES_ARCHIVE_NON_GATE_KEYS above with a reason each, and direction (3) fails
+    on a declaration that has gone stale in either direction.
+    """
+    problems = []
+    with open(os.path.join(LOOP_DIR, "gates-archive.json"), encoding="utf-8") as handle:
+        bodies = json.loads(handle.read())
+
+    gates = {k: v for k, v in doc.get("gates", {}).items() if k != "authoritative"}
+    citing = {k: v for k, v in gates.items() if "gates-archive.json" in str(v)}
+
+    # (0) NOT VACUOUS, method note (b). Both directions are "key in <collection>" lookups, so an
+    # empty citing set or an empty archive would report OK forever over nothing at all.
+    if not citing or not bodies:
+        problems.append(
+            f"nothing to check - {len(citing)} gate stubs cite the archive, {len(bodies)} bodies"
+            " in it. A vacuous pass is not a pass"
+        )
+        print("\n`gates` <-> gates-archive.json, its second body (iter161):")
+        for problem in problems:
+            print(f"  BROKEN: {problem}")
+        return problems
+
+    # (1) NO ORPHAN BODY. A gate-shaped key here that `gates` does not list is either a gate removed
+    # without its mirror or a mis-keyed mirror - and a mis-keyed mirror is a pointer to nothing from
+    # the other end, which is iter160's exact failure shape.
+    for key in bodies:
+        if key in gates or key in GATES_ARCHIVE_NON_GATE_KEYS:
+            continue
+        problems.append(
+            f"gates-archive.json holds a body {key!r} that `gates` does not list and"
+            " GATES_ARCHIVE_NON_GATE_KEYS does not declare - either it is a mis-keyed gate mirror,"
+            " or it is deliberately not a gate and belongs in that declaration with a reason"
+        )
+
+    # (2) NO DANGLING CITATION. The stub tells the next iteration its long mirror is in this file;
+    # if the key is not there, that pointer sends them to nothing.
+    for key in citing:
+        if key not in bodies:
+            problems.append(
+                f"gate {key!r} cites gates-archive.json as its long mirror but no body is keyed for"
+                " it there - the pointer sends the next iteration to a key that is not there"
+            )
+
+    # (3) THE DECLARATION STAYS HONEST, both ways. A declared name that has vanished from the
+    # archive is dead weight; one that is ALSO a live gate would exempt that gate from (1) forever.
+    for key in GATES_ARCHIVE_NON_GATE_KEYS:
+        if key not in bodies:
+            problems.append(
+                f"GATES_ARCHIVE_NON_GATE_KEYS declares {key!r} but gates-archive.json has no such"
+                " key - drop the stale declaration, do not leave it exempting nothing"
+            )
+        if key in gates:
+            problems.append(
+                f"{key!r} is declared a non-gate key but `gates` lists it as a gate - that"
+                " declaration would exempt a real gate mirror from the orphan check above"
+            )
+
+    gate_shaped = [k for k in bodies if k not in GATES_ARCHIVE_NON_GATE_KEYS]
+    print("\n`gates` <-> gates-archive.json, its second body (iter161):")
+    print(f"  {len(gate_shaped)} gate-shaped bodies / {len(gates)} live gates,"
+          f" {len(GATES_ARCHIVE_NON_GATE_KEYS)} declared non-gate keys")
+    print(f"  {len(citing)} stubs cite the archive as their long mirror")
+    for problem in problems:
+        print(f"  BROKEN: {problem}")
+    if not problems:
+        print("  OK: every archived gate body is a live gate or a declared non-gate key, and every"
+              " citation resolves.")
+    return problems
+
+
 def transcript_for(wanted):
     """Which `logs/iter-*.log` holds iteration `wanted`'s transcript. NOT `iter-<wanted>-*` before 137.
 
@@ -850,6 +960,7 @@ def main():
     pointer_problems = check_gate_pointers()
     stub_problems = check_stub_bodies(doc)
     settled_problems = check_settled_bodies(doc)
+    archive_mirror_problems = check_gates_archive(doc)
 
     if calibration_problems:
         print("\nFAIL: a bytes-per-token constant is optimistic, so every estimate and headroom")
@@ -887,10 +998,17 @@ def main():
         print("The fourth is the only one whose omission destroys content - recover it from git")
         print("(`git log -S <key> -- tools/loop/blockers-open.json`), never delete a verdict to pass.")
         return 1
+    if archive_mirror_problems:
+        print("\nFAIL: `gates` and gates-archive.json disagree about what has a long mirror. `gates`")
+        print("is the one split with TWO bodies - GATES.md is authoritative and live, this archive is")
+        print("the trimmed verbose mirror - so fix the KEY, never delete a body: recover it with")
+        print("`git log -S <key> -- tools/loop/gates-archive.json`. If a key is deliberately not a")
+        print("gate, declare it in GATES_ARCHIVE_NON_GATE_KEYS with the reason, do not rename it away.")
+        return 1
     print("\nOK: all three step-1 Reads return their whole file, the done archive is intact, every")
     print("GATES.md checkbox is mirrored, no open gate points at work that is finished, every")
-    print("blocker/decision stub resolves to its archived body, and every settled tombstone still")
-    print("has the body it was archived from.")
+    print("blocker/decision stub resolves to its archived body, every settled tombstone still has")
+    print("the body it was archived from, and `gates`'s long-mirror archive pairs both ways.")
     return 0
 
 
