@@ -415,7 +415,7 @@ Run once in the new repo: **`/mtk:setup-bootstrap`** (tech stack: dotnet). Then 
 | **M6** | §11, §12 | Generic `docs-loop` skill (extracted from AurServices), plugin.json, marketplace entry, release workflow, README/quickstart, full `init` templates | Fresh empty repo: full install story works end-to-end from README alone | M |
 | **M7** | Aur adoption | `docume init --adopt` on AurServices: docume.json, state migration from `_meta/confluence-map.json`, frontmatter `sources` added across 79 pages (scripted + docs-loop pass), workflows installed, GAPS.md published as "Open Questions", team onboarding note | Full lifecycle live on AUR space; first real approval + first real feedback round-trip | M |
 
-Dependencies: M1→M2→M3→M4/M5 (4 and 5 parallel) →M6→M7. First externally visible win: end of M2 (the Aur wiki is finally live in Confluence).
+Dependencies: M1→M2→M3→M4/M5 (4 and 5 parallel) →M6→M7. First externally visible win: end of M2 — *(corrected iter151: this used to read "(the Aur wiki is finally live in Confluence)", which the M2 row above had already contradicted since 2026-07-25. The Aur bulk publish moved to M7, so M2's visible win is DocuMe's own docs plus the golden corpus in the sandbox space, and the Aur wiki goes live at M7 with §15's first item.)*
 
 ## 15. Definition of done (v1.0)
 

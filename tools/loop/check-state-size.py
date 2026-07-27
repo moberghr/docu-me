@@ -74,6 +74,15 @@ GATE_ANTICIPATED = re.compile(r"^- \*\*([a-z0-9-]+)\*\* +[-—]")
 # `gates` keys that are not gates: the pointer naming GATES.md as the authoritative copy.
 NOT_A_GATE = frozenset({"authoritative"})
 
+# A gate body sending the reader to another GATES.md section for work that waits there. iter151
+# found three of these outliving the work they named, and `under "<Title>"` was the exact form all
+# three used, so that is what this resolves. A correction note quoting a retired pointer writes the
+# title in BACKTICKS instead - that is deliberate, and it is what keeps history from tripping the
+# check that retired it.
+SECTION_POINTER = re.compile(r'under (?:the )?"([^"\n]+)"')
+SECTION_HEADING = re.compile(r"^## +(.+?)\s*$")
+ANY_CHECKBOX = re.compile(r"^\s*- \[([ x])\]")
+
 READ_TOKEN_CAP = 25_000
 READ_BYTE_CEILING = 256 * 1024
 
@@ -392,6 +401,104 @@ def check_gate_mirror(doc):
     return problems
 
 
+def gates_sections(text):
+    """Every `## ` section of GATES.md -> the lines beneath it, in order."""
+    sections, title = {}, None
+    for line in text.splitlines():
+        match = SECTION_HEADING.match(line)
+        if match:
+            title = match.group(1)
+            sections.setdefault(title, [])
+            continue
+        if title is not None:
+            sections[title].append(line)
+    return sections
+
+
+def gate_bodies(text):
+    """Every checkbox gate -> (is_ticked, its own lines). A body ends at the next gate or `## `.
+
+    Continuation lines in this file are indented, so the three gate-heading patterns and the section
+    heading are the only things that can close one; a nested `  - **item**` bullet cannot.
+    """
+    bodies, current = {}, None
+    for line in text.splitlines():
+        match = GATE_CHECKBOX.match(line)
+        if match:
+            current = match.group(2)
+            bodies[current] = (match.group(1) == "x", [line])
+            continue
+        if SECTION_HEADING.match(line) or GATE_STRUCK.match(line) or GATE_ANTICIPATED.match(line):
+            current = None
+            continue
+        if current is not None:
+            bodies[current][1].append(line)
+    return bodies
+
+
+def check_gate_pointers():
+    """Does every "the work is under <section>" pointer in an OPEN gate still point at open work?
+
+    ADDED ITER151, after finding three that did not. gate-m2, gate-m3 and gate-m4 each opened their
+    action list with "(1) the three sandbox items under <Setup Mirko must do before M2> below" - and
+    those three items were finished at iter112, the publish they gated ran at iter113, and the
+    section itself was later drained into gates-archive.json and relabelled "ALL FIVE DONE,
+    ARCHIVED", leaving it with no checkbox at all. So for 38 iterations the two cheapest gates in
+    the file opened by asking Mirko for setup he had already done, and gate-m3 - one label and a
+    tick - read as step 3 of 4. `state.json -> gates` had it right all along; the authoritative file
+    was the stale one.
+
+    WHY NOTHING CAUGHT IT. iter150 found this same class in gate-m6's closing line and named the
+    general gap: every rule in .claude/rules/ has a structural check, but the orientation prose that
+    POINTS AT WORK has none. `check_gate_mirror` above cannot see it - it compares gate status, and
+    all three gates really are open with mirrors that really do say PENDING. What was stale sat
+    INSIDE an open gate, in its list of steps, where no set comparison reaches.
+
+    WHAT THIS COVERS AND WHAT IT DOES NOT, said plainly because the limit is the point. It resolves
+    one prose form - `under "<Title>"`, the one all three defects used - to a `## ` heading, and asks
+    whether that section still carries an unticked box. It catches a pointer into a settled or
+    drained section, and a pointer whose title matches no heading at all. It does NOT read a
+    paraphrase ("see the setup section below"), and it cannot know whether a step spelled out inline
+    is already done. A backstop for the shape that broke, not a proof that the prose is true.
+    """
+    problems = []
+    with open(GATES_MD, encoding="utf-8") as handle:
+        text = handle.read()
+    sections = gates_sections(text)
+    bodies = gate_bodies(text)
+
+    pointers = 0
+    for gate, (is_ticked, lines) in sorted(bodies.items()):
+        if is_ticked:
+            continue  # a settled gate's steps are history; only an open one still instructs.
+        for title in SECTION_POINTER.findall("\n".join(lines)):
+            pointers += 1
+            matched = [name for name in sections if name.startswith(title)]
+            if not matched:
+                problems.append(
+                    f"{gate!r} sends the reader to a section {title!r} that GATES.md does not have"
+                )
+                continue
+            open_boxes = sum(
+                1 for name in matched for line in sections[name]
+                if (found := ANY_CHECKBOX.match(line)) and found.group(1) == " "
+            )
+            if open_boxes == 0:
+                problems.append(
+                    f"{gate!r} is open and points at {matched[0]!r} for work, but that section has"
+                    " no unticked checkbox left - the step it names is already done"
+                )
+
+    print("\nopen gates pointing at other GATES.md sections for work (iter151):")
+    open_gates = sum(1 for ticked, _ in bodies.values() if not ticked)
+    print(f"  {len(sections)} sections, {open_gates} open gates, {pointers} section pointers")
+    for problem in problems:
+        print(f"  BROKEN: {problem}")
+    if not problems:
+        print("  OK: every pointer resolves to a section that still has outstanding work.")
+    return problems
+
+
 def transcript_for(wanted):
     """Which `logs/iter-*.log` holds iteration `wanted`'s transcript. NOT `iter-<wanted>-*` before 137.
 
@@ -536,6 +643,7 @@ def main():
     calibration_problems = check_calibration()
     archive_problems = check_done_archive(doc)
     mirror_problems = check_gate_mirror(doc)
+    pointer_problems = check_gate_pointers()
 
     if calibration_problems:
         print("\nFAIL: a bytes-per-token constant is optimistic, so every estimate and headroom")
@@ -556,8 +664,13 @@ def main():
         print("missing line (one line: whose call it is, what to do, where the full text lives), drop the")
         print("orphan, or correct the status - GATES.md is authoritative, so it is the mirror that moves.")
         return 1
-    print("\nOK: all three step-1 Reads return their whole file, the done archive is intact, and")
-    print("every GATES.md checkbox is mirrored.")
+    if pointer_problems:
+        print("\nFAIL: an OPEN gate tells Mirko to do work that is already done, or points at a")
+        print("section that is not there. Rewrite that gate's steps to name only what is left - the")
+        print("cost of this one is measured in gates that look expensive and therefore stay unticked.")
+        return 1
+    print("\nOK: all three step-1 Reads return their whole file, the done archive is intact, every")
+    print("GATES.md checkbox is mirrored, and no open gate points at work that is finished.")
     return 0
 
 
