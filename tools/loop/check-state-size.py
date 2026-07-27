@@ -161,7 +161,35 @@ ARCHIVE_FILES = {
     "handoff-archive.md": "session handoffs; opened by date when one is needed.",
     "method-notes-archive.md": "method notes, generation 1 - full and frozen at iter162; opened by heading.",
     "method-notes-archive-2.md": "method notes, generation 2 - iter162 onwards; opened by heading.",
+    "method-notes-archive-3.md": "method notes, generation 3 - iter166 onwards; opened by heading.",
 }
+
+# The method-note generations, in order. DECLARED, for ARCHIVE_FILES' reason: a rule like
+# "anything matching method-notes-archive*" would let a generation 4 exempt itself by being named
+# well. check_method_notes_stubs asserts every name here is ALSO in ARCHIVE_FILES, which is how
+# `nextAction`'s standing instruction - "a generation 3 must be DECLARED in ARCHIVE_FILES in the
+# same change that creates it" - stops being prose an iteration can forget and starts being a
+# failing check.
+METHOD_NOTES_GENERATIONS = (
+    "method-notes-archive.md",
+    "method-notes-archive-2.md",
+    "method-notes-archive-3.md",
+)
+
+# The canonical provenance sentence a method-notes.md stub must carry, in the THREE spellings that
+# are actually in the tree. All three are live and a reader must handle all three - the same trap
+# done-archive.jsonl's two entry shapes set (`doneArchive.format`).
+#
+# ITER166 WROTE THIS REGEX WRONG TWICE, and both misses fabricated findings rather than missing
+# them: `[Mm]oved` does not match the all-caps "MOVED", which read 18 stubs as live bodies and
+# then reported their perfectly good archived bodies as 18 orphans; case-insensitive "moved to"
+# still missed "MOVED ON to", the one section rotated twice, whose wording differs precisely
+# because its history does. Direction (4) below exists so a FOURTH spelling fails loudly instead
+# of being silently absorbed into the live-body count.
+METHOD_NOTES_MOVED_RE = re.compile(
+    r"moved(?:\s+on)?\s+to\s+`([^`]+)`\s+at\s+(iter\d+)",
+    re.IGNORECASE,
+)
 
 
 def bytes_per_token(path):
@@ -1120,6 +1148,165 @@ def check_read_whole_files():
     return problems
 
 
+def markdown_sections(path):
+    """{heading: body} for every '## ' section. Shared by check_method_notes_stubs."""
+    out, current, buf = {}, None, []
+    with open(path, encoding="utf-8") as handle:
+        for line in handle.read().splitlines():
+            if line.startswith("## "):
+                if current is not None:
+                    out[current] = "\n".join(buf)
+                current, buf = line[3:].strip(), []
+            elif current is not None:
+                buf.append(line)
+    if current is not None:
+        out[current] = "\n".join(buf)
+    return out
+
+
+def check_method_notes_stubs():
+    """Does every method-notes.md stub resolve to the archived body it claims?
+
+    ADDED ITER166, and it is the document-side twin of the three splits iters 159/160/161 closed
+    inside state.json. Those paired `blockers`/`decisions` stubs with their archived bodies, settled
+    tombstones with theirs, and `gates` with its second body. method-notes.md has the SAME shape and
+    was the one instance nobody had paired: 24 of its 26 sections are stubs, each carrying a sentence
+    of the form "MOVED to `<archive>` at iterNNN, verbatim and round-trip asserted", and until now
+    the only thing guarding them was check_read_whole_files asserting the archive FILES exist. That a
+    file exists says nothing about whether it still holds the section a stub promises is in it.
+
+    NOTHING IS BROKEN TODAY - 24/24 resolve, both directions, and iter166 says so plainly rather
+    than dressing a green measurement up as a find. The value is standing: this file is rotated
+    every few iterations by hand, the rotation is a destructive write to the live file, and the
+    "verbatim, round-trip asserted" claim in each stub was asserted ONCE, at rotation time, by the
+    script doing the rotating. Nothing re-checked it afterwards.
+
+    Four facts, and a vacuity refusal:
+      (1) every stub resolves to a real, non-trivial section in the generation it cites
+      (2) every archived section is cited by a stub - an uncited body is a lesson that has fallen
+          out of the read path entirely, which is invisible from the live file by construction
+      (3) every declared generation is also declared in ARCHIVE_FILES, so a generation 3 cannot be
+          created without the exemption that makes it legal
+      (4) a section that LOOKS like a stub but whose provenance does not parse is a failure, not a
+          live body. This is the direction that cost iter166 two wrong regexes: an unmatched stub is
+          silently reclassified as a live body, and its archived body then reports as an orphan.
+
+    THE REFUSAL APPENDS RATHER THAN RETURNS (iter165's shape, and it matters here for iter165's
+    exact reason): the stub population is derived by REGEX, so it empties the moment the stub layer
+    is reworded, while directions (2) and (3) still have their full populations - 24 archived
+    sections and 3 declared generations. A refusal that returned would print "nothing to check" and
+    skip an orphaned body in the same run.
+    """
+    problems = []
+    notes = os.path.join(LOOP_DIR, "method-notes.md")
+    if not os.path.isfile(notes):
+        print("\nmethod-notes.md stubs <-> their archived bodies (iter166):")
+        print("  BROKEN: tools/loop/method-notes.md is not on disk")
+        return ["tools/loop/method-notes.md is not on disk"]
+
+    sections = markdown_sections(notes)
+    generations = {}
+    for name in METHOD_NOTES_GENERATIONS:
+        path = os.path.join(LOOP_DIR, name)
+        generations[f"tools/loop/{name}"] = markdown_sections(path) if os.path.isfile(path) else None
+
+    stubs, live_bodies = [], []
+    for heading, body in sections.items():
+        match = METHOD_NOTES_MOVED_RE.search(body)
+        if match:
+            stubs.append((heading, match.group(1), match.group(2)))
+            continue
+        live_bodies.append((heading, body))
+
+    # (1) EVERY STUB RESOLVES. A missing section means a rotation that dropped it, or a heading
+    # edited on one side only - and the stub is the only thing that knows the body ever existed.
+    resolved = 0
+    for heading, dest, when in stubs:
+        if dest not in generations:
+            problems.append(
+                f"stub {heading!r} cites {dest!r} ({when}), which is not a declared method-note"
+                " generation - add it to METHOD_NOTES_GENERATIONS and ARCHIVE_FILES, or fix the path"
+            )
+            continue
+        if generations[dest] is None:
+            problems.append(
+                f"stub {heading!r} cites {dest!r} ({when}), declared but not on disk"
+            )
+            continue
+        body = generations[dest].get(heading)
+        if body is None:
+            problems.append(
+                f"ORPHAN STUB {heading!r} claims it was moved to {dest} at {when}, but that file has"
+                " no section with that heading. Recover it with"
+                f" `git log -S '{heading[:40]}' -- tools/loop/`; never delete the stub to pass"
+            )
+            continue
+        if len(body.strip()) < 200:
+            problems.append(
+                f"stub {heading!r} resolves in {dest} but the section is only"
+                f" {len(body.strip()):,} B - the stub promises a full body was preserved there"
+            )
+            continue
+        resolved += 1
+
+    # (2) NO ORPHAN BODY. Invisible from method-notes.md by construction: nothing in the live file
+    # mentions a lesson that lost its pointer, so only this direction can find one.
+    cited = {(heading, dest) for heading, dest, _ in stubs}
+    archived_total = 0
+    for dest, secs in generations.items():
+        if secs is None:
+            continue
+        archived_total += len(secs)
+        for heading in secs:
+            if (heading, dest) not in cited:
+                problems.append(
+                    f"ORPHAN BODY {heading!r} lives in {dest} but no stub in method-notes.md points"
+                    " at it - a lesson that has fallen out of the read path entirely. Add the stub"
+                    " back (heading + destination + its headlines), do not delete the body"
+                )
+
+    # (3) A GENERATION CANNOT EXIST WITHOUT ITS EXEMPTION. `nextAction` has carried this as prose
+    # since iter162; here it fails a run instead.
+    for name in METHOD_NOTES_GENERATIONS:
+        if name not in ARCHIVE_FILES:
+            problems.append(
+                f"{name!r} is a declared method-note generation but is NOT in ARCHIVE_FILES, so it is"
+                " held to the read-whole token budget it exists to escape - declare it in the same"
+                " change that creates it"
+            )
+
+    # (4) A STUB THAT DOES NOT PARSE IS NOT A LIVE BODY. Without this, a fourth spelling of the
+    # provenance sentence is absorbed silently and takes its archived body down as an orphan with it.
+    for heading, body in live_bodies:
+        named = [dest for dest in generations if dest in body]
+        if named:
+            problems.append(
+                f"section {heading!r} names {named[0]} but carries no parseable"
+                " \"MOVED to `<archive>` at iterNNN\" sentence, so it counted as a LIVE BODY and its"
+                " archived section will report as an orphan. Fix the wording to the canonical form"
+                " (or widen METHOD_NOTES_MOVED_RE) - do not leave it half-classified"
+            )
+
+    # THE VACUITY REFUSAL, and it APPENDS. See the docstring.
+    if not stubs:
+        problems.append(
+            f"nothing to check - 0 of {len(sections)} sections in method-notes.md parsed as a stub."
+            " The stub layer was reworded out from under METHOD_NOTES_MOVED_RE, or the file no longer"
+            " has one. A vacuous pass is not a pass"
+        )
+
+    print("\nmethod-notes.md stubs <-> their archived bodies (iter166):")
+    print(f"  {len(sections)} sections = {len(stubs)} stubs + {len(live_bodies)} live bodies")
+    print(f"  {resolved} resolved against {archived_total} archived sections in"
+          f" {len(METHOD_NOTES_GENERATIONS)} declared generations")
+    for problem in problems:
+        print(f"  BROKEN: {problem}")
+    if not problems:
+        print("  OK: every stub resolves to a non-trivial archived body, every archived body is")
+        print("      cited by a stub, and every generation is declared in ARCHIVE_FILES.")
+    return problems
+
+
 def find_iteration(wanted):
     """`grep -n 'iterNNN'` is WRONG for 27 of 135 iterations. This is the lookup that works.
 
@@ -1202,6 +1389,7 @@ def main():
     stub_problems = check_stub_bodies(doc)
     settled_problems = check_settled_bodies(doc)
     archive_mirror_problems = check_gates_archive(doc)
+    method_notes_problems = check_method_notes_stubs()
 
     if calibration_problems:
         print("\nFAIL: a bytes-per-token constant is optimistic, so every estimate and headroom")
@@ -1253,11 +1441,20 @@ def main():
         print("`git log -S <key> -- tools/loop/gates-archive.json`. If a key is deliberately not a")
         print("gate, declare it in GATES_ARCHIVE_NON_GATE_KEYS with the reason, do not rename it away.")
         return 1
+    if method_notes_problems:
+        print("\nFAIL: method-notes.md and its archive generations disagree about what was rotated.")
+        print("Rotating a section is a THREE-PLACE edit: append the body to the generation VERBATIM,")
+        print("assert the round trip BEFORE the destructive write to method-notes.md, and leave the")
+        print("heading plus its headlines behind as a stub. The stub is the only thing that knows the")
+        print("body exists - recover a lost one with `git log -S <heading> -- tools/loop/`, and never")
+        print("delete a stub or a body to make this pass. Recipe: .mtk/paths-162/rotate-method-notes.py.")
+        return 1
     print("\nOK: all three step-1 Reads return their whole file, every read-whole file under")
     print("tools/loop/ fits in one too, the done archive is intact, every GATES.md checkbox is")
     print("mirrored, no open gate points at work that is finished, every blocker/decision stub")
     print("resolves to its archived body, every settled tombstone still has the body it was archived")
-    print("from, and `gates`'s long-mirror archive pairs both ways.")
+    print("from, `gates`'s long-mirror archive pairs both ways, and every method-notes.md stub")
+    print("resolves to the archived body it claims.")
     return 0
 
 

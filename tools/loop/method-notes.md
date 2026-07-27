@@ -11,21 +11,28 @@
 > now EXITS NON-ZERO on it** where it used to print "OVER CAP - Read TRUNCATES" and pass, which is how
 > it spent ~23 iterations past the Read tool's cap while every iteration was ordered to read it.
 > When your new section puts it over: rotate the oldest settled `##` sections into
-> `tools/loop/method-notes-archive-2.md` VERBATIM, assert the round trip BEFORE rewriting this file,
-> and leave the heading plus its headlines behind as a stub (the heading has to stay — GATES.md cites
-> one of them by name). Generation 1, `method-notes-archive.md`, is full and frozen. Worked recipe,
-> re-runnable: `.mtk/paths-162/rotate-method-notes.py` (or `.mtk/paths-165/rotate-iter165.py`, the
-> one-section form).
+> **`tools/loop/method-notes-archive-3.md`, the CURRENT generation (opened iter166)**, VERBATIM,
+> assert the round trip BEFORE rewriting this file, and leave the heading plus its headlines behind
+> as a stub (the heading has to stay — GATES.md cites one of them by name, and as of iter166
+> `check_method_notes_stubs` fails on a stub whose body is not where it says it is). Generations 1
+> and 2 are **full and frozen**: `method-notes-archive.md` at 32 KB since iter162, and
+> `method-notes-archive-2.md` at 54 KB / ~22.5 K tok since iter166, which is already past the
+> 20,000-token band and inside the Read tool's 25,000-token cap. **Do not rotate into either.**
+> Worked recipe, re-runnable: `.mtk/paths-162/rotate-method-notes.py`, with
+> `.mtk/paths-166/rotate-iter166.py` as the one-section form that also shows how to retarget it at a
+> new generation. **A generation 4 must be declared in BOTH `ARCHIVE_FILES` and
+> `METHOD_NOTES_GENERATIONS` in the same change that creates it — that is now a failing check, not
+> advice.**
 >
-> **MEASURED AT ITER165 (`python3 .mtk/paths-165/split-stubs-vs-bodies.py`), BECAUSE THAT REMEDY IS
-> NOW NEARLY SPENT: AFTER THIS ITERATION'S TWO ROTATIONS, 24 OF THE 26 `##` SECTIONS ARE STUBS -
-> 28.2 KB of pointers against 6.9 KB of live bodies**, which are iters 164-165, the work in flight.
-> **So "rotate the oldest settled section" has about ONE move left, and the next budget lever is the
-> STUB LAYER itself:** 24 pointers averaging 1,173 B, which is a summary each rather than a pointer.
-> Condensing them, or splitting their headlines into a generation 3, is a deliberate increment of its
-> own; a generation 3 must be declared in `ARCHIVE_FILES` in the same change that creates it. **And
-> measure the destination first: generation 2 is now 54 KB / ~22.5 K tok, past the 20,000-token band**
-> (exempt as a declared archive, opened by heading, but a whole Read of it truncates at 25,000).
+> **THE OTHER REMEDY THIS HEADER USED TO NAME IS MEASURED AND WITHDRAWN (iter166).** It told you the
+> next budget lever was condensing the stub layer, since 24 pointers averaging 1,173 B are summaries
+> rather than pointers. Counted (`python3 .mtk/paths-166/measure-stub-boilerplate.py`): of 26,556 B
+> of stub bodies, **only 1,829 B is repeated phrasing** — the destination path, "verbatim and
+> round-trip asserted", "Nothing was discarded.", "**The headlines:**". Stripping every one of them
+> nets about 1.1 KB, less than the section documenting the work would cost, and the other ~24.7 KB is
+> per-stub headline CONTENT that cannot go without discarding lessons. **So condensing is not a
+> budget lever; rotating into the current generation is.** The stub layer is the read path — it is
+> what makes this file worth reading whole — and it is not the fat.
 
 **METHOD NOTES — carried forward, plus one new.**
   * **iter127: EVERY FILE THIS LOOP APPENDS TO EVERY ITERATION WILL EVENTUALLY OUTGROW THE READ TOOL.**
@@ -443,77 +450,75 @@ was written down and never mechanised.*
     drops and needs no edit when it grows.
 ## Proving a vacuity judgement instead of writing one (iter164)
 
-  * **"NON-VACUOUS BY CONSTRUCTION" IS A CLAIM, AND THREE OF FOUR WERE FALSE.** iter163 fixed the one
-    check of eight that printed a verdict over an empty population and judged four others safe in
-    prose, reasoning that their REVERSE direction fires when a population empties. Measured, one cell
-    per judgement: `check_done_archive`, `check_stub_bodies` (twice) and `check_gate_mirror` all sit
-    green or silent over their own emptied population. Only `check_gate_pointers`' finding half held
-    up, and only because iter164 gave it the population it has never had. **The move that generalises:
-    when an iteration hardens one instance of a defect and reasons the siblings safe, the cheapest
-    real work available is a cell per sibling.**
-  * **"THE CHECKER EXITED NON-ZERO" ATTRIBUTES NOTHING WHEN main() RUNS EVERY CHECK.** Sharper than
-    iter161's "two checks can print BROKEN for one mutation": here a mutation emptied
-    `check_gate_mirror`'s two populations and the script still exited 1, because
-    `check_gate_pointers` and `check_gates_archive` fired for their own correct reasons. The check
-    under test had gone silent and the run read as a pass. Fix in the harness: **slice stdout by each
-    check's own section header and ask whether THAT block holds a `BROKEN:` line**, asserting every
-    header was located before grading anything. New verdict worth keeping distinct: **WRONG-CHECK - a
-    sibling covered for it.** A net that only holds while a different net holds is decoration.
-  * **THE POPULATION THAT SILENTLY EMPTIES IS THE ONE WHOSE COUNTER THE SAME EDIT CAN REPAIR.**
-    `check_done_archive` runs six checks over done-archive.jsonl and an empty file satisfies all six
-    at once: `doneCount` 0 agrees with 0 lines, `doneRecent` is already empty, and COVERAGE and HEAD
-    both skip themselves because nothing is attributed - so the HEAD check written to catch ONE
-    missing record cannot fire when EVERY record is missing.
-  * **SCOPING A CHECK TO A PROSE PREFIX IS A ONE-KEYSTROKE VACUITY, AND ITER159 KNEW.** That iteration
-    scoped a direction to stubs starting with `OPEN`, saw the risk, and put the population assertion
-    in its own scratch harness (read the printed `(7 OPEN)` back) rather than in the check - so the
-    guard lived where nothing re-runs it. `**OPEN**` is this file's house style and one keystroke away;
-    rewriting the markers plus deleting every body left seven orphaned questions and exit 0. iter154's
-    lesson a third time: **an instruction that depends on somebody remembering it is not a fix,
-    placement is.**
-  * **A NON-EMPTY ASSERTION IS THE WRONG FIX FOR A POPULATION THAT LEGITIMATELY EMPTIES** (iter159's
-    "a check must not fire on the event the loop is waiting for", applied while choosing between five
-    populations). Only `decisions` may never be empty - it grows, because an answered decision stays a
-    tombstone. `blockers`, blockers-open.json, the OPEN subset and the pointer set each reach zero the
-    day Mirko finishes something. So the refusal goes on the one, and the drift on the others is
-    caught by a different mechanism: **flag a status marker the classifier cannot read**, which fires
-    on reworded prose and stays green when the last decision is answered.
-  * **PREDICT EACH CELL'S VERDICT IN WRITING BEFORE THE FIRST RUN.** Eleven predictions, eleven
-    matches - which is what makes "three of four judgements were false" a measurement rather than a
-    story told after the fact. A cell whose result surprises you is either a find or a broken cell,
-    and only the prediction tells you which.
-  * **ONE MORE SHAPE THIS BASH TOOL STATICALLY REFUSES:** `<->` inside a quoted argument, read as a
-    zsh numeric-range glob. It is in this checker's own section headers, so grep for a neighbouring
-    phrase instead. Redirecting to `/tmp` is refused too - write scratch output under the repo.
-
+  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter166**, verbatim and round-trip asserted,
+    into the generation this rotation opened. Nothing was discarded, and the seam it records is
+    closed: iter165 proved the four declared refusals fire and fixed the two that skipped their
+    findings. **The headlines:** **"non-vacuous by construction" is a claim, and three of four were
+    false** - when an iteration hardens one instance of a defect and reasons the siblings safe, the
+    cheapest real work available is a cell per sibling; **"the checker exited non-zero" attributes
+    nothing when `main()` runs every check**, so slice stdout by each check's own section header and
+    ask whether THAT block holds a `BROKEN:` line, which yields the verdict **WRONG-CHECK - a sibling
+    covered for it**; **the population that silently empties is the one whose counter the same edit
+    can repair**; **scoping a check to a prose prefix is a one-keystroke vacuity**, and an instruction
+    that depends on somebody remembering it is not a fix, placement is; **a non-empty assertion is the
+    wrong fix for a population that legitimately empties** - put the refusal on the one population
+    that may never empty and catch the rest by flagging a status marker the classifier cannot read;
+    **predict each cell's verdict in writing before the first run**, which is what makes a count a
+    measurement rather than a story told after the fact; and **this Bash tool statically refuses
+    `<->` inside a quoted argument** (a zsh numeric-range glob) and refuses redirecting to `/tmp`.
 ## A refusal that returns is a refusal that skips (iter165)
 
-  * **A DECLARED REFUSAL IS PROSE UNTIL A CELL FIRES IT** - iter164's argument about "non-vacuous by
-    construction", one level in. Four checks carried an explicit vacuity refusal that nothing had ever
-    executed. All four fire (5 cells, 5 predictions, 5 matches), so **that half is a green measurement
-    and worth one sentence, not a story.** Two of the four needed a *source* mutation rather than a data
-    one, because their population comes from a walk and from their own declared list: `patch_source`
-    asserts the anchor matched **exactly once**, since a no-op replace leaves the tree healthy and grades
-    MISSED - a fabricated find.
-  * **THE DEFECT WAS ONE LEVEL PAST THAT, AND IT IS A SHAPE TO LOOK FOR ANYWHERE: A GUARD THAT
-    `return`s.** Two of the eight refusals ended in `return problems`; the other six append and carry
-    on. Their populations are **not interdependent** - `check_gates_archive`'s substring-derived
-    `citing` set going empty leaves 12 orphan-body comparisons and 4 declared keys fully assertable,
-    and `check_settled_bodies`' spike names going empty leaves the whole blocker side. Measured by
-    emptying the vacuous population **and planting a defect a skipped direction owns**: both printed
-    "nothing to check" and named neither plant. So the refusal was **buying an honest label at the price
-    of the findings**, and one of the two plants was the only defect in this tree that destroys text.
-    Fix: append the refusal, never return on it. New verdict: **MASKED**.
-  * **WHEN A CELL PASSES, RECORD WHO ELSE FIRED.** WRONG-CHECK catches a sibling covering for a SILENT
-    check; the weaker question - is this check the only detector for that emptying? - needs the co-fired
-    set printed on the CAUGHT line too. It immediately showed that iter164's `gate-mirror/mirror-drained`
-    cell had been firing `check_gates_archive`'s refusal as collateral all along, unattributed: the
-    branch iter165 set out to prove had been executing for an iteration and nobody could see it.
-  * **A REMEDY INSTRUCTION GOES STALE LIKE ANY OTHER CLAIM ABOUT THE TREE - MEASURE THE POPULATION IT
-    NAMES.** This file's header has told every iteration to "rotate the oldest settled sections" since
-    iter162; counting them showed 20 of 24 are already stubs and cannot be rotated twice, so the
-    instruction had one move left. Same family as iter151's gate steps that had you redo finished
-    setup: **an instruction is a claim, and the cheap check is to count what it points at.**
-  * **BOUND THE BLAST RADIUS BEFORE PREDICTING, IN THE CHECK'S SOURCE, NOT FROM MEMORY.** `blockersArchive.settled`
-    is read by two checks; the prediction "cell 1 is the sole detector" was only defensible after reading
-    that the second one merely loops over it (`for key in settled`) and so no-ops when drained.
+  * **MOVED to `tools/loop/method-notes-archive-3.md` at iter166**, verbatim and round-trip asserted,
+    to pay back the budget iter166's own section spent. Nothing was discarded, and the fix is committed
+    in all eight of check-state-size.py's checks. **The headlines:** **a declared refusal is prose until
+    a cell fires it** (all four fired, 5/5 - a green measurement worth one sentence, not a story), and
+    where a cell must mutate a SCRIPT rather than data, **assert the anchor matched exactly once**,
+    since a no-op replace leaves the tree healthy and grades MISSED, a fabricated find; **A GUARD THAT
+    `return`s IS A GUARD THAT SKIPS** - two of eight refusals returned where six append, their
+    populations were not interdependent, and both printed "nothing to check" while naming neither
+    planted defect, so the refusal was buying an honest label at the price of the findings (new verdict:
+    **MASKED**); **when a cell passes, record who ELSE fired**, which exposed iter164's own
+    `gate-mirror/mirror-drained` cell as having fired a sibling's refusal as unattributed collateral for
+    a whole iteration; **a remedy instruction goes stale like any other claim about the tree - measure
+    the population it names**; and **bound the blast radius in the check's SOURCE, not from memory**
+    before predicting that one cell is the sole detector.
+## The stub layer nobody had paired, and a regex that fabricated 18 findings (iter166)
+
+  * **A "VERBATIM, ROUND-TRIP ASSERTED" CLAIM IS ASSERTED ONCE, BY THE SCRIPT DOING THE ROTATING, AND
+    THEN NEVER AGAIN.** method-notes.md's 24 stubs each carried that sentence; `check_read_whole_files`
+    asserted only that the archive FILES exist, which says nothing about whether a given stub's section
+    is still in the file it names. This was the same split iters 159/160/161 closed three times inside
+    state.json - stub plus archived body - and the one instance they missed, because it lives in a
+    document rather than in `state.json`. **When an earlier iteration enumerates "every stub/body split"
+    and the enumeration is scoped to one file, the sibling in another file is the thing to look for.**
+    Closed by `check_method_notes_stubs`, 7/7 both directions; nothing was broken (24/24 resolved).
+  * **A REGEX THAT UNDER-MATCHES DOES NOT MISS FINDINGS, IT FABRICATES THEM - AND IT LOOKS LIKE A FIND.**
+    `[Mm]oved` does not match the all-caps `**MOVED to`, so 18 stubs were reclassified as live bodies
+    and their perfectly good archived bodies then reported as 18 ORPHAN BODY findings. The output was
+    confident, specific and entirely wrong. Fixing the case then still missed `MOVED ON to`, the one
+    section rotated twice, whose wording differs *because* its history does. **Two lessons: an
+    enumeration keyed on a phrase must be checked against an INDEPENDENT count of the same population
+    before its findings are believed** (`.mtk/paths-165/split-stubs-vs-bodies.py` said 24; the probe said
+    6, and the disagreement was the bug); and **a partial match is worse than no match**, because a
+    vacuity refusal fires on zero and stays silent on 6-of-24. The floor that catches it is a hard
+    minimum, not a non-empty assertion.
+  * **SO THE FOURTH DIRECTION OF A PAIRING CHECK IS "A STUB THAT DOES NOT PARSE IS NOT A LIVE BODY".**
+    Without it the classifier's own blind spot is unobservable from inside the check: an unparsed stub
+    silently joins the live-body count and its body reports as an orphan, which blames the archive for
+    a defect in the reader. Detect it structurally - a section that NAMES an archive but carries no
+    parseable provenance sentence - so a fifth spelling fails loudly instead of being absorbed.
+  * **THE NAMED INCREMENT WAS NOT AVAILABLE, AND THE MEASUREMENT IS WHY.** `nextAction` had named
+    "condense the stub layer" on the reasoning that 24 pointers averaging 1,173 B are summaries rather
+    than pointers. Measured (`.mtk/paths-166/measure-stub-boilerplate.py`): of 26,556 B of stub bodies,
+    only **1,829 B is repeated phrasing** - the destination path, "verbatim and round-trip asserted",
+    "Nothing was discarded.", "**The headlines:**". Condensing every one of them nets ~1.1 KB, less than
+    the section that would document the work. The other ~24.7 KB is per-stub headline CONTENT, so
+    condensing in place cannot buy budget without discarding lessons. **iter165's lesson one turn on: a
+    remedy instruction goes stale like any other claim, and the cheap check is to measure the population
+    it names - but measure what the bytes ARE, not just how many there are.** The rotation into a new
+    generation was the move that paid; the condensation was correctly abandoned rather than performed
+    for its own sake.
+  * **A SCRATCH PROBE THAT RESTATES A COMMITTED DECLARATION GOES STALE INSIDE ONE ITERATION.** This
+    probe hardcoded the two generations, and creating generation 3 falsified it the same session. It now
+    imports `METHOD_NOTES_GENERATIONS` from the checker. iter144's "a mirror nobody diffs" applies to
+    throwaway harnesses too, and the cost of importing is one `importlib.util.spec_from_file_location`.

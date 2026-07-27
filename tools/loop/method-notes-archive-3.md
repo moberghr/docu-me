@@ -1,0 +1,96 @@
+# Method notes — archive, generation 3
+
+> Sections rotated out of `tools/loop/method-notes.md` from iter166 onwards, verbatim and round-trip
+> asserted.
+>
+> **Why a third archive file rather than more of `method-notes-archive-2.md`:** measured at iter166,
+> generation 2 was 54,043 B / ~22,517 tok — already past the 20,000-token budget and inside the Read
+> tool's 25,000-token cap, so a whole Read of it truncates. Another rotation into it would have
+> relocated the truncation rather than fixed it. Generation 2 is therefore frozen at its size, on
+> exactly the reasoning iter162 used to freeze generation 1 at 32,101 B.
+>
+> **This file is DECLARED in two places and both were written in the change that created it:**
+> `ARCHIVE_FILES` in `tools/loop/check-state-size.py` (which exempts it from the read-whole token
+> budget) and `METHOD_NOTES_GENERATIONS` in the same file (which is what `check_method_notes_stubs`
+> walks). Neither is inferred from the filename, deliberately — a rule like "anything matching
+> `method-notes-archive*`" would let a generation 4 exempt itself by being named well.
+>
+> All three generations are history you open on purpose; `method-notes.md` is the one you read
+> before writing code, and `grep` over `tools/loop/method-notes*.md` still spans all four files.
+## Proving a vacuity judgement instead of writing one (iter164)
+
+  * **"NON-VACUOUS BY CONSTRUCTION" IS A CLAIM, AND THREE OF FOUR WERE FALSE.** iter163 fixed the one
+    check of eight that printed a verdict over an empty population and judged four others safe in
+    prose, reasoning that their REVERSE direction fires when a population empties. Measured, one cell
+    per judgement: `check_done_archive`, `check_stub_bodies` (twice) and `check_gate_mirror` all sit
+    green or silent over their own emptied population. Only `check_gate_pointers`' finding half held
+    up, and only because iter164 gave it the population it has never had. **The move that generalises:
+    when an iteration hardens one instance of a defect and reasons the siblings safe, the cheapest
+    real work available is a cell per sibling.**
+  * **"THE CHECKER EXITED NON-ZERO" ATTRIBUTES NOTHING WHEN main() RUNS EVERY CHECK.** Sharper than
+    iter161's "two checks can print BROKEN for one mutation": here a mutation emptied
+    `check_gate_mirror`'s two populations and the script still exited 1, because
+    `check_gate_pointers` and `check_gates_archive` fired for their own correct reasons. The check
+    under test had gone silent and the run read as a pass. Fix in the harness: **slice stdout by each
+    check's own section header and ask whether THAT block holds a `BROKEN:` line**, asserting every
+    header was located before grading anything. New verdict worth keeping distinct: **WRONG-CHECK - a
+    sibling covered for it.** A net that only holds while a different net holds is decoration.
+  * **THE POPULATION THAT SILENTLY EMPTIES IS THE ONE WHOSE COUNTER THE SAME EDIT CAN REPAIR.**
+    `check_done_archive` runs six checks over done-archive.jsonl and an empty file satisfies all six
+    at once: `doneCount` 0 agrees with 0 lines, `doneRecent` is already empty, and COVERAGE and HEAD
+    both skip themselves because nothing is attributed - so the HEAD check written to catch ONE
+    missing record cannot fire when EVERY record is missing.
+  * **SCOPING A CHECK TO A PROSE PREFIX IS A ONE-KEYSTROKE VACUITY, AND ITER159 KNEW.** That iteration
+    scoped a direction to stubs starting with `OPEN`, saw the risk, and put the population assertion
+    in its own scratch harness (read the printed `(7 OPEN)` back) rather than in the check - so the
+    guard lived where nothing re-runs it. `**OPEN**` is this file's house style and one keystroke away;
+    rewriting the markers plus deleting every body left seven orphaned questions and exit 0. iter154's
+    lesson a third time: **an instruction that depends on somebody remembering it is not a fix,
+    placement is.**
+  * **A NON-EMPTY ASSERTION IS THE WRONG FIX FOR A POPULATION THAT LEGITIMATELY EMPTIES** (iter159's
+    "a check must not fire on the event the loop is waiting for", applied while choosing between five
+    populations). Only `decisions` may never be empty - it grows, because an answered decision stays a
+    tombstone. `blockers`, blockers-open.json, the OPEN subset and the pointer set each reach zero the
+    day Mirko finishes something. So the refusal goes on the one, and the drift on the others is
+    caught by a different mechanism: **flag a status marker the classifier cannot read**, which fires
+    on reworded prose and stays green when the last decision is answered.
+  * **PREDICT EACH CELL'S VERDICT IN WRITING BEFORE THE FIRST RUN.** Eleven predictions, eleven
+    matches - which is what makes "three of four judgements were false" a measurement rather than a
+    story told after the fact. A cell whose result surprises you is either a find or a broken cell,
+    and only the prediction tells you which.
+  * **ONE MORE SHAPE THIS BASH TOOL STATICALLY REFUSES:** `<->` inside a quoted argument, read as a
+    zsh numeric-range glob. It is in this checker's own section headers, so grep for a neighbouring
+    phrase instead. Redirecting to `/tmp` is refused too - write scratch output under the repo.
+
+## A refusal that returns is a refusal that skips (iter165)
+
+  * **A DECLARED REFUSAL IS PROSE UNTIL A CELL FIRES IT** - iter164's argument about "non-vacuous by
+    construction", one level in. Four checks carried an explicit vacuity refusal that nothing had ever
+    executed. All four fire (5 cells, 5 predictions, 5 matches), so **that half is a green measurement
+    and worth one sentence, not a story.** Two of the four needed a *source* mutation rather than a data
+    one, because their population comes from a walk and from their own declared list: `patch_source`
+    asserts the anchor matched **exactly once**, since a no-op replace leaves the tree healthy and grades
+    MISSED - a fabricated find.
+  * **THE DEFECT WAS ONE LEVEL PAST THAT, AND IT IS A SHAPE TO LOOK FOR ANYWHERE: A GUARD THAT
+    `return`s.** Two of the eight refusals ended in `return problems`; the other six append and carry
+    on. Their populations are **not interdependent** - `check_gates_archive`'s substring-derived
+    `citing` set going empty leaves 12 orphan-body comparisons and 4 declared keys fully assertable,
+    and `check_settled_bodies`' spike names going empty leaves the whole blocker side. Measured by
+    emptying the vacuous population **and planting a defect a skipped direction owns**: both printed
+    "nothing to check" and named neither plant. So the refusal was **buying an honest label at the price
+    of the findings**, and one of the two plants was the only defect in this tree that destroys text.
+    Fix: append the refusal, never return on it. New verdict: **MASKED**.
+  * **WHEN A CELL PASSES, RECORD WHO ELSE FIRED.** WRONG-CHECK catches a sibling covering for a SILENT
+    check; the weaker question - is this check the only detector for that emptying? - needs the co-fired
+    set printed on the CAUGHT line too. It immediately showed that iter164's `gate-mirror/mirror-drained`
+    cell had been firing `check_gates_archive`'s refusal as collateral all along, unattributed: the
+    branch iter165 set out to prove had been executing for an iteration and nobody could see it.
+  * **A REMEDY INSTRUCTION GOES STALE LIKE ANY OTHER CLAIM ABOUT THE TREE - MEASURE THE POPULATION IT
+    NAMES.** This file's header has told every iteration to "rotate the oldest settled sections" since
+    iter162; counting them showed 20 of 24 are already stubs and cannot be rotated twice, so the
+    instruction had one move left. Same family as iter151's gate steps that had you redo finished
+    setup: **an instruction is a claim, and the cheap check is to count what it points at.**
+  * **BOUND THE BLAST RADIUS BEFORE PREDICTING, IN THE CHECK'S SOURCE, NOT FROM MEMORY.** `blockersArchive.settled`
+    is read by two checks; the prediction "cell 1 is the sole detector" was only defensible after reading
+    that the second one merely loops over it (`for key in settled`) and so no-ops when drained.
+
