@@ -112,19 +112,13 @@
 ## The CLI's own stderr, and probing with child sessions (iter131)
 
   * **MOVED to `tools/loop/method-notes-archive-2.md` at iter162**, verbatim and round-trip asserted
-    (8.8 KB, the largest section in the rotation). Nothing was discarded. **The headlines:**
-    **`claude` writes real diagnostics to stderr and this loop has been discarding them**, so capture
-    stdout and stderr to SEPARATE files, because `2>&1` puts the untrusted-workspace warning in front
-    of every `--output-format json` payload and the parse dies at char 0; **`Write(path)` permission
-    rules match nothing, only `Edit(path)` does**, and the rewrite the CLI prescribes for
-    `.claude/**` is exactly the one that must not be applied; **hooks ARE honoured from a
-    `--settings` file**, so hand a settings change the loop may not install to a child `claude -p`
-    under `.mtk/`, always with a control cell and a benign cell; **this harness cannot run a shell
-    script** (there is no `Bash(bash:*)`), so probes are `.py` driving bash through `subprocess`, and
-    **`cd` PERSISTS between Bash calls**; **verify green BEFORE you start, not only before you
-    commit**; **`modelUsage` is the only honest way to ask which model ran**; and the phone push is
-    still dead, attributed to "Remote Control inactive". Open the archive for the method behind each,
-    for the further statically-refused bash shapes, and for the regex and vacuous-floor lessons.
+    (8.8 KB, the largest section in the rotation). **INDEXED at iter176** to fund that iteration's
+    note. Open the archive for: `claude` writing real diagnostics to stderr that `2>&1` then feeds to
+    a JSON parse (capture the two streams separately); `Write(path)` permission rules matching nothing
+    where `Edit(path)` does; hooks being honoured from a `--settings` file, so a child `claude -p` can
+    exercise one the loop may not install; no `Bash(bash:*)` here, so probes are `.py` driving bash;
+    `cd` persisting between Bash calls; verifying green BEFORE you start; `modelUsage` as the only
+    honest way to ask which model ran; and the regex and vacuous-floor lessons.
 ## Hooks in a project settings file (iter133)
 
   * **MOVED to `tools/loop/method-notes-archive-2.md` at iter162**, verbatim and round-trip
@@ -221,20 +215,12 @@ fix.*
 
 ## When the enforcement of a rule is a hardcoded list (iter142)
 
-*Moved to `tools/loop/method-notes-archive.md` at iter145 (verbatim, round trip asserted) — its
-subject is settled: the hardcoded skill list it found is now asserted to equal the shipped set, and
-its control-cell method has been restated by every rule-tracing section since. **Headlines, because
-they still describe how to find this class of gap:** a list that every per-subject test iterates is
-**the enforcement boundary, not the directory it describes** — assert the shipped set equals the
-list, and the next subject turns the suite red instead of shipping unchecked; **"something else
-enumerates the directory" is not the same claim as "something else checks the rule"** — read what the
-other enumerator ASSERTS (four classes enumerated `plugin/skills/` and all four asked only whether a
-skill was *documented*); **the control cell is the finding** — watching the PRE-EXISTING tests stay
-green under the same mutation is what proves the hole was real, and an expected-GREEN cell can carry
-more information than the RED one; a mutation that adds a tracked directory must be cleaned up **as a
-directory**, and the `git status` check afterwards has to be scoped to the path it touched; and when
-scanning for a secret, **grade the needles by kind and never print one** — a scan whose findings are
-mostly false is a scan nobody re-runs. Also settled there: **§1.2 is traced and holds — do not
+*Moved to `tools/loop/method-notes-archive.md` at iter145 (verbatim, round trip asserted); its subject
+is settled. **INDEXED at iter176** to fund that iteration's note. Open the archive for: a list every
+per-subject test iterates being the enforcement boundary rather than the directory it describes;
+"something else enumerates the directory" not being "something else checks the rule"; **the control
+cell being the finding**; cleaning a mutated directory up as a directory; and grading secret-scan
+needles by kind without printing one. Also settled there: **§1.2 is traced and holds — do not
 re-trace it** (one `SendAsync`, six call sites, all six through `ThrowIfFailed`).*
 
 ## Making a placement-enforced rule structural (iter143)
@@ -302,23 +288,15 @@ was written down and never mechanised.*
     deliberate inventory**.
 ## When the verification command destroys its own evidence (iter154)
 
-  * **MOVED to `tools/loop/method-notes-archive-2.md` at iter162**, verbatim and round-trip
-    asserted, in the second pass of that rotation - the first pass left this file 2,593 B under its
-    budget, which is less than one iteration's section. Nothing was discarded. **The operational
-    headline, which `nextAction` also carries: run `python3 tools/loop/run-suite.py`, NOT
-    `dotnet test | tail`** - the pipe keeps the summary and drops the failure lines above it, so a
-    red suite reads as a bare number and MTP writes no artifact unless asked. The runner prints
-    failing ids with assertion messages, mirrors the exit code, leaves a log + TRX in gitignored
-    `.mtk/suite-runs/`, and takes `--repeat N`. **The other headlines:** **an instruction that depends
-    on the next agent remembering it is not a fix, placement is** (iter120 wrote this same lesson into
-    a done-archive entry and it recurred 34 iterations later); **`dotnet test -- <runner args>` dies
-    on this SDK**, so pass MTP options with no separator; **a green single-class run is not a green
-    suite**, and before adding a row to a table in `docs/wiki/` grep `tests/` for the page name,
-    because several of those tables are contracts with a corpus behind them; **measure a library's
-    surface, not the four cases your corpus happens to hold**; **a gate's "it is your call" can still
-    contain a question of fact that is the loop's to answer**, so re-read gate prose for embedded
-    *check / find out / see whether* before ending on WAITING-GATE; and **when a late failure changes
-    what you did, go back and correct the record you already wrote.**
+  * **MOVED to `tools/loop/method-notes-archive-2.md` at iter162**, verbatim and round-trip asserted.
+    **INDEXED at iter176** to fund that iteration's note. **The one headline that stays inline, because
+    every iteration runs it: `python3 tools/loop/run-suite.py`, NOT `dotnet test | tail`** - the pipe
+    keeps the summary and drops the failure lines above it. Open the archive for: an instruction that
+    depends on the next agent remembering it not being a fix (placement is); `dotnet test -- <args>`
+    dying on this SDK; **a green single-class run not being a green suite**; grepping `tests/` before
+    adding a row to a `docs/wiki/` table; measuring a library's surface rather than your corpus's four
+    cases; a gate's "your call" still containing a question of fact the loop owes; and correcting the
+    record you already wrote when a late failure changes it.
 ## When a check is named after one file but guards the whole tree (iter157)
 
   * **MOVED to `tools/loop/method-notes-archive-2.md` at iter164**, verbatim and round-trip asserted,
@@ -567,3 +545,29 @@ was written down and never mechanised.*
     `WithCallback(_ => cts.Cancel())` seam then needs no delegate. **Scope the `when` clause to the
     token**, or the same catch starts swallowing client timeouts, which arrive as `TaskCanceledException`
     with the token untouched.
+
+## The write itself was the unguarded seam, plus two harness bugs of mine (iter176)
+
+  * **EVERY ACCUMULATOR IN THIS PRODUCT FUNNELS INTO ONE `File.WriteAllText`, WHICH TRUNCATES THE LIVE
+    FILE BEFORE THE FIRST NEW BYTE LANDS.** iters 174-175 asked that question of aborts and of
+    cancellation; under both sits the primitive, where `FileMode.Create` means a killed save leaves
+    `docs/wiki/_meta/state.json` half-written - losing page ids EARLIER runs earned. **Ask of any durable
+    write: is the live file the write target?** Temp sibling -> flush -> one rename; the sibling must be a
+    sibling: a rename is atomic within one volume only.
+  * **IN C# THE PROSE AND THE CODE SHARE ONE FILE, as iter125 found for YAML templates.** A doc comment naming a
+    Confluence read method took `RemoteBodyReadTests`' §9.1 scan from 5 files to 6: it greps
+    `src/` text and cannot tell a mention from a call. The scan is right to be
+    blunt, so reword the comment - **inflating a tripwire's count to fit prose is how the next real
+    call site passes silently.**
+  * **A "REVERT THE FIX" CELL SHOULD BE `git show HEAD:<file>`, NEVER A HAND-WRITTEN INVERSE.** Mine
+    replaced the new write block with the old one-liner and scored BUILD-FAILED - it orphaned
+    `temporary` and the `System.Text` using, both errors here (iter173). HEAD is the pre-fix file
+    exactly and builds by construction; the no-op guard is "HEAD differs from the working tree".
+  * **A GREEN RUN MEANS TWO DIFFERENT THINGS AND THEY MUST NOT SHARE A WORD.** I predicted MISSED for
+    the unguarded-flush cell; the grader printed GREEN because GREEN is all it could print. Green on a
+    mutated tree is MISSED, green on a control is GREEN, and **a predicted verdict your grader cannot
+    emit is a bug in the grader that costs you the cell.** (Recorded gap: `flushToDisk` is unobservable in-process,
+    so nothing guards it.)
+  * **RUN THE FULL SUITE PER CELL** (7 cells, ~4 min): the copy-instead-of-rename cell was also caught
+    by `ProjectScaffolderTests.Scaffold_SecondRun_...` noticing the leaked temp file, a second
+    independent net a single-class run hides.

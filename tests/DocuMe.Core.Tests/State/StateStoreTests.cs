@@ -86,6 +86,81 @@ public sealed class StateStoreTests : IDisposable
         File.Exists(path).ShouldBeTrue();
     }
 
+    /// <summary>
+    /// The invariant PLAN.md §6.2 step 8 rests on, asserted against the write itself: a save that cannot
+    /// finish must leave the live file exactly as it was, because that file is the only record of every
+    /// page id, approval and feedback cursor the tool has ever earned.
+    /// </summary>
+    /// <remarks>
+    /// The failure is injected by putting a directory where <c>StateStore.Save</c> writes its sibling
+    /// temp file — a write that cannot start, standing in for the disk filling up or the process being
+    /// killed. The <c>.tmp</c> suffix is named literally here and in <c>StateStore.TemporarySuffix</c>;
+    /// changing it there turns this test red rather than leaving it vacuous, which is the point of
+    /// naming it.
+    /// </remarks>
+    [Fact]
+    public void Save_WhenTheWriteCannotFinish_LeavesTheLiveFileByteIdentical()
+    {
+        var path = Path("state.json");
+        StateStore.Save(path, new DocumeState { BaselineSha = "committed-sha" });
+        var before = File.ReadAllBytes(path);
+
+        Directory.CreateDirectory(path + ".tmp");
+
+        // UnauthorizedAccessException on both platforms today; the shared base keeps a platform that
+        // maps EISDIR to an IOException from reading as "no failure at all".
+        Should.Throw<SystemException>(
+            () => StateStore.Save(path, new DocumeState { BaselineSha = "run-that-died" }));
+
+        File.ReadAllBytes(path).ShouldBe(before);
+        StateStore.Load(path).BaselineSha.ShouldBe("committed-sha");
+    }
+
+    /// <summary>A successful save leaves the state file and nothing else — no temp file to commit.</summary>
+    [Fact]
+    public void Save_LeavesNoTemporaryFileBehind()
+    {
+        var path = Path("state.json");
+
+        StateStore.Save(path, new DocumeState());
+
+        Directory.GetFileSystemEntries(_dir).ShouldHaveSingleItem().ShouldBe(path);
+    }
+
+    /// <summary>
+    /// The temp name is deterministic, so a run that died mid-write leaves one stale file rather than a
+    /// growing pile — and the next save has to overwrite it instead of failing on it.
+    /// </summary>
+    [Fact]
+    public void Save_OverwritesATemporaryFileLeftByAKilledRun()
+    {
+        var path = Path("state.json");
+        File.WriteAllText(path + ".tmp", "{ half a state file");
+
+        StateStore.Save(path, new DocumeState { BaselineSha = "fresh" });
+
+        StateStore.Load(path).BaselineSha.ShouldBe("fresh");
+        Directory.GetFileSystemEntries(_dir).ShouldHaveSingleItem().ShouldBe(path);
+    }
+
+    /// <summary>
+    /// The encoding the state file has always had, pinned now that the bytes go through a
+    /// <see cref="FileStream"/> rather than <c>File.WriteAllText</c>: UTF-8 with no byte-order mark and
+    /// no trailing newline. A BOM or a stray newline would show up as a whitespace-only diff on a
+    /// committed, machine-owned file in every consumer repo.
+    /// </summary>
+    [Fact]
+    public void Save_WritesUtf8WithNoByteOrderMarkAndNoTrailingNewline()
+    {
+        var path = Path("state.json");
+
+        StateStore.Save(path, new DocumeState { BaselineSha = "98c6df844" });
+
+        var bytes = File.ReadAllBytes(path);
+        bytes[0].ShouldBe((byte)'{');
+        bytes[^1].ShouldBe((byte)'}');
+    }
+
     [Fact]
     public void Load_NewerVersion_ThrowsStateVersion()
     {
