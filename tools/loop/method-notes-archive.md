@@ -171,3 +171,51 @@
   * **RESIDUAL RISK, RECORDED RATHER THAN FIXED:** nothing makes the invariant *structural*. An
     eleventh write method, or a fifth command, is guarded only if whoever adds it remembers. Four
     per-surface tests are the whole enforcement of rules §0.1/§1.4.
+
+## When the enforcement of a rule is a hardcoded list (iter142)
+
+  * **A LIST THAT EVERY PER-SUBJECT TEST ITERATES IS THE ENFORCEMENT BOUNDARY, NOT THE DIRECTORY IT
+    DESCRIBES.** `SkillContractTests.Skills` is `["docs-refresh", "docs-feedback", "docs-loop"]`, and
+    five per-skill checks loop over it — rule §1.3's untrusted-input clause and rule §0.4's CLI
+    boundary among them. A fourth skill under `plugin/skills/` was therefore subject to the
+    prompt-injection defense (CLAUDE.md §0.2, PLAN.md §9) *by rule and by no test*. This is iter141's
+    residual risk in a cheaper form: here the invariant CAN be made structural, by asserting the
+    shipped set equals the list, so the next skill turns the suite red until it is listed — at which
+    point all five checks pick it up at once.
+  * **"SOMETHING ELSE ENUMERATES THE DIRECTORY" IS NOT THE SAME CLAIM AS "SOMETHING ELSE CHECKS THE
+    RULE."** Four other classes do enumerate `plugin/skills/` (`PluginManifestTests`,
+    `SkillsReferencePageTests`, `QuickstartTests`), and all of them ask whether a skill is
+    *documented* — in README.md, in `docs/wiki/30-automation/skills.md`, in the manifest. An author who
+    documents a fourth skill satisfies every one of them without ever writing the clause. Check what
+    the other enumerator ASSERTS before concluding a gap is covered.
+  * **THE CONTROL CELL IS THE FINDING.** Mutating in a fourth skill and watching the NEW test go red
+    proves the test works; running the PRE-EXISTING §1.3 and §0.4 tests against the same mutation and
+    watching them stay GREEN is what proves the hole was real rather than already covered. 9/9,
+    `.mtk/paths-142/mutate-skill-coverage.py`, cells A/B/C/D/E. Extends iter125's control-case note: an
+    expected-GREEN cell can carry more information than the expected-RED one.
+  * **A MUTATION THAT ADDS A TRACKED DIRECTORY MUST BE CLEANED UP AS A DIRECTORY** (`shutil.rmtree` in
+    a `finally`), and the `git status` check afterwards has to be SCOPED to the path the mutation
+    touched — `git status --short tests` fails on the iteration's own uncommitted edit, which is the
+    right reason and the wrong cell. Assert the edited file's restore by comparing bytes instead.
+  * **SCANNING FOR A SECRET: GRADE THE NEEDLES BY KIND, AND NEVER PRINT ONE.**
+    `.mtk/paths-142/scan-credential-leak.py` reads the credentials from env per rule §1.1 and prints
+    only counts, paths and lengths. Its first run reported **11 "LEAK" lines that were all
+    `author.email` in the plugin manifests** — the probe had lumped `DOCUME_CONFLUENCE_EMAIL` in with
+    the token, and this repo publishes that address on purpose. A scan whose findings are mostly false
+    is a scan nobody re-runs: only the token and a base64 basic-auth header fail it now, the email is
+    reported as `info`. **The result that matters: the 192-char token appears in ZERO of 167 iteration
+    logs, 335 tracked files, 452.9 MB of `.mtk/` scratch and 17 bookkeeping files.** Rule §0.3's
+    "never in logs" is measured, not assumed. Re-runnable in ~40 s.
+  * **§1.2 TRACED AND IT HOLDS — DO NOT RE-TRACE IT.** iter141 nominated it as the next placement worth
+    walking; it turns out to be a *computation* behind a single choke point, which is why there was
+    nothing to find. `ConfluenceClient` has exactly one `_httpClient.SendAsync` (:1535) and six private
+    call sites, and **all six call `ThrowIfFailed`**, which maps 401/403 to
+    `ConfluenceAuthenticationException` before anything else looks at the status. The retry half is one
+    hand-written predicate (`ConfluenceHttp.IsRetryable`) wired through `ShouldHandle`, deliberately not
+    delegated to the library's transient predicate so a package upgrade cannot widen it. Both are
+    pinned by tests that CAN go red: the test helper defaults to `maxRetryAttempts: 2`, so
+    `LogEntries.Count.ShouldBe(1)` on a 401 would read 3 if the predicate drifted, and a sibling proves
+    a 500 does retry to `retries + 1`. All seven catch placements in the executors put the
+    auth-specific `catch` above the base `ConfluenceException` (or filter it out explicitly with
+    `when (ex is not ConfluenceAuthenticationException)`), and `DriftCommand.LabelAsync`'s per-page loop
+    returns on the first failure rather than continuing — so no loop replays an expired token.

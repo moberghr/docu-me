@@ -417,51 +417,21 @@ fix.*
 
 ## When the enforcement of a rule is a hardcoded list (iter142)
 
-  * **A LIST THAT EVERY PER-SUBJECT TEST ITERATES IS THE ENFORCEMENT BOUNDARY, NOT THE DIRECTORY IT
-    DESCRIBES.** `SkillContractTests.Skills` is `["docs-refresh", "docs-feedback", "docs-loop"]`, and
-    five per-skill checks loop over it — rule §1.3's untrusted-input clause and rule §0.4's CLI
-    boundary among them. A fourth skill under `plugin/skills/` was therefore subject to the
-    prompt-injection defense (CLAUDE.md §0.2, PLAN.md §9) *by rule and by no test*. This is iter141's
-    residual risk in a cheaper form: here the invariant CAN be made structural, by asserting the
-    shipped set equals the list, so the next skill turns the suite red until it is listed — at which
-    point all five checks pick it up at once.
-  * **"SOMETHING ELSE ENUMERATES THE DIRECTORY" IS NOT THE SAME CLAIM AS "SOMETHING ELSE CHECKS THE
-    RULE."** Four other classes do enumerate `plugin/skills/` (`PluginManifestTests`,
-    `SkillsReferencePageTests`, `QuickstartTests`), and all of them ask whether a skill is
-    *documented* — in README.md, in `docs/wiki/30-automation/skills.md`, in the manifest. An author who
-    documents a fourth skill satisfies every one of them without ever writing the clause. Check what
-    the other enumerator ASSERTS before concluding a gap is covered.
-  * **THE CONTROL CELL IS THE FINDING.** Mutating in a fourth skill and watching the NEW test go red
-    proves the test works; running the PRE-EXISTING §1.3 and §0.4 tests against the same mutation and
-    watching them stay GREEN is what proves the hole was real rather than already covered. 9/9,
-    `.mtk/paths-142/mutate-skill-coverage.py`, cells A/B/C/D/E. Extends iter125's control-case note: an
-    expected-GREEN cell can carry more information than the expected-RED one.
-  * **A MUTATION THAT ADDS A TRACKED DIRECTORY MUST BE CLEANED UP AS A DIRECTORY** (`shutil.rmtree` in
-    a `finally`), and the `git status` check afterwards has to be SCOPED to the path the mutation
-    touched — `git status --short tests` fails on the iteration's own uncommitted edit, which is the
-    right reason and the wrong cell. Assert the edited file's restore by comparing bytes instead.
-  * **SCANNING FOR A SECRET: GRADE THE NEEDLES BY KIND, AND NEVER PRINT ONE.**
-    `.mtk/paths-142/scan-credential-leak.py` reads the credentials from env per rule §1.1 and prints
-    only counts, paths and lengths. Its first run reported **11 "LEAK" lines that were all
-    `author.email` in the plugin manifests** — the probe had lumped `DOCUME_CONFLUENCE_EMAIL` in with
-    the token, and this repo publishes that address on purpose. A scan whose findings are mostly false
-    is a scan nobody re-runs: only the token and a base64 basic-auth header fail it now, the email is
-    reported as `info`. **The result that matters: the 192-char token appears in ZERO of 167 iteration
-    logs, 335 tracked files, 452.9 MB of `.mtk/` scratch and 17 bookkeeping files.** Rule §0.3's
-    "never in logs" is measured, not assumed. Re-runnable in ~40 s.
-  * **§1.2 TRACED AND IT HOLDS — DO NOT RE-TRACE IT.** iter141 nominated it as the next placement worth
-    walking; it turns out to be a *computation* behind a single choke point, which is why there was
-    nothing to find. `ConfluenceClient` has exactly one `_httpClient.SendAsync` (:1535) and six private
-    call sites, and **all six call `ThrowIfFailed`**, which maps 401/403 to
-    `ConfluenceAuthenticationException` before anything else looks at the status. The retry half is one
-    hand-written predicate (`ConfluenceHttp.IsRetryable`) wired through `ShouldHandle`, deliberately not
-    delegated to the library's transient predicate so a package upgrade cannot widen it. Both are
-    pinned by tests that CAN go red: the test helper defaults to `maxRetryAttempts: 2`, so
-    `LogEntries.Count.ShouldBe(1)` on a 401 would read 3 if the predicate drifted, and a sibling proves
-    a 500 does retry to `retries + 1`. All seven catch placements in the executors put the
-    auth-specific `catch` above the base `ConfluenceException` (or filter it out explicitly with
-    `when (ex is not ConfluenceAuthenticationException)`), and `DriftCommand.LabelAsync`'s per-page loop
-    returns on the first failure rather than continuing — so no loop replays an expired token.
+*Moved to `tools/loop/method-notes-archive.md` at iter145 (verbatim, round trip asserted) — its
+subject is settled: the hardcoded skill list it found is now asserted to equal the shipped set, and
+its control-cell method has been restated by every rule-tracing section since. **Headlines, because
+they still describe how to find this class of gap:** a list that every per-subject test iterates is
+**the enforcement boundary, not the directory it describes** — assert the shipped set equals the
+list, and the next subject turns the suite red instead of shipping unchecked; **"something else
+enumerates the directory" is not the same claim as "something else checks the rule"** — read what the
+other enumerator ASSERTS (four classes enumerated `plugin/skills/` and all four asked only whether a
+skill was *documented*); **the control cell is the finding** — watching the PRE-EXISTING tests stay
+green under the same mutation is what proves the hole was real, and an expected-GREEN cell can carry
+more information than the RED one; a mutation that adds a tracked directory must be cleaned up **as a
+directory**, and the `git status` check afterwards has to be scoped to the path it touched; and when
+scanning for a secret, **grade the needles by kind and never print one** — a scan whose findings are
+mostly false is a scan nobody re-runs. Also settled there: **§1.2 is traced and holds — do not
+re-trace it** (one `SendAsync`, six call sites, all six through `ThrowIfFailed`).*
 
 ## Making a placement-enforced rule structural (iter143)
 
@@ -536,3 +506,39 @@ state.json **and** to GATES.md, which is exactly when a two-copy invariant break
     the `§` and `—` characters inflate it, and main() checks the token budget BEFORE the mirror, so
     the cell would go red with the wrong message. Cell K round-trips with no semantic change and
     must stay green. Assert the SPECIFIC failure message, never just a non-zero exit.
+
+## When a rule's enforcement is one argument at one call site (iter145)
+
+Rule §9.6 has two halves that are enforced in different KINDS of way, and the kind is what decides
+whether anything can cover it. "Never runs in CI" is a computation — `PruneGuard.Refusal` — and
+`PruneGuardTests` drives it through an injected env reader, so it goes red when deleted. "Requires
+interactive confirmation" is not a computation anywhere: it is the third argument of
+`PublishCommand.cs:453`. `PruneExecutor` deletes whatever its delegate agrees to, deliberately, so
+the "no" case is testable offline — and the consequence nobody had drawn is that **every test that
+reaches the executor supplies its own stub, so not one of them has an opinion about the real one.**
+
+  * **WHEN A SEAM EXISTS TO MAKE A RULE TESTABLE, THE PRODUCTION ARGUMENT IS WHAT NOBODY TESTS.** The
+    injected-delegate pattern (`PruneConfirmation`, `DiagramRenderer`) is right, and it moves the
+    invariant out of the class the tests exercise and into the one line that wires it. Wherever this
+    repo injects a collaborator to keep a path offline-testable, ask what asserts the real argument.
+    Sibling shape to iter141's placement lesson: there the guard's CALL SITE was untested, here the
+    guard's ARGUMENT is.
+  * **A LAMBDA SHOULD BE REFUSED, NOT INSPECTED.** `(_, _) => Task.FromResult(true)` and a lambda
+    that really prompts are the same shape to any scan short of a compiler, so
+    `PruneConfirmationCoverageTests` requires the argument to be a bare identifier and reads the
+    named method's body. Cheaper than parsing, and it fails toward the reviewable option.
+  * **BUDGET THE ANALYZERS INTO THE CELL DESIGN, NOT INTO A RETRY.** Three of seven cells needed a
+    second edit purely to keep compiling, and the first run of the measurement lost BOTH cells to it:
+    swapping the call-site argument orphans the prompt (**S1144** unused private method, so delete the
+    method too — check first what else calls its helpers; `RenderPaths` had 7 other callers), and
+    deleting the guard block orphans a parameter (**S1172**, so drop the parameter and its argument).
+    A cell that does not compile reports as red and is not evidence — print the compiler line and
+    call it INCONCLUSIVE rather than counting it.
+  * **A CONTROL THAT RENAMES THE THING IS WORTH MORE THAN ONE THAT LEAVES IT ALONE.** Cell E renames
+    the prompt at both ends and must stay GREEN: that is the only cell proving the class keys on the
+    wiring rather than on the string `ConfirmPruneAsync`, which is the failure mode a source-scanning
+    test is most likely to ship with. Cell F, rewording the prompt, does the same for its message.
+  * **RUN THE FULL SUITE UNDER THE FLAGSHIP DEFECT, ONCE.** One `dotnet test` under cell B1 gives the
+    finding and the fix in a single number: 2 failed of 1384, both in the new class, nothing else —
+    which is iter142's "the control cell is the finding" without paying for a run per legacy class.
+    Read the failing test NAMES, not just the count.
