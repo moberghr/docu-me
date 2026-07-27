@@ -567,6 +567,58 @@ public sealed class CliFeedbackTests : IDisposable
     }
 
     /// <summary>
+    /// <c>--dry-run</c> across the one sync half that writes to Confluence (§9 step 5): no reply posted,
+    /// no inline comment closed, and no item stamped. The reads still happen — a reply plan nobody can
+    /// see is what the flag exists to print.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The gap this closes was a whole write surface, not a spelling.
+    /// <see cref="A_sync_dry_run_files_nothing_and_leaves_the_state_file_alone"/> covers the ingestion
+    /// half, whose writes are all in the repo, and <c>--labels</c> writes nothing anywhere — so before
+    /// this test the flag was asserted on every sync path except the only one that can reach Confluence
+    /// with a POST.
+    /// </para>
+    /// <para>
+    /// <strong>Both write stubs are registered on purpose.</strong> Without them an escaped reply would
+    /// fail on a missing route and the run would still come back clean, so the assertion would be
+    /// measuring WireMock's 404 rather than the dry-run branch. With them a reply that got past the
+    /// branch succeeds, which is the only condition under which this test is evidence.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_reply_dry_run_posts_nothing_and_stamps_no_item()
+    {
+        var work = Seeded(nameof(A_reply_dry_run_posts_nothing_and_stamps_no_item));
+
+        WriteTriagedItem(work, FeedbackStatus.Fixed, resolution: "Rewrote the rate table from source.");
+
+        StubComments(footer: NoComments, inline: InlineComments(CommentId, version: 3));
+        StubReply();
+        StubResolve(CommentId);
+
+        var run = Invoke(work, "sync", "--reply", "--dry-run");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+        run.Flowed.ShouldContain("--dry-run", customMessage: run.Diagnostics);
+
+        // Named, not counted: the plan is the point of the run, and a reviewer's comment id is how a
+        // human checks the reply is going where they expect before letting the real run post it.
+        run.FlowedAll.ShouldContain(CommentId, customMessage: run.Diagnostics);
+
+        var writes = Writes();
+        var because = $"`sync --reply --dry-run` wrote to Confluence: [{string.Join(", ", writes)}]."
+            + Environment.NewLine + run.Diagnostics;
+
+        writes.ShouldBeEmpty(because);
+
+        // The repo half of the same promise. A stamp without a posted reply is the one outcome that
+        // cannot be repaired by re-running: every later pass reads the item as already answered.
+        Stamp(work).ShouldBeNull(
+            $"`sync --reply --dry-run` stamped the item.{Environment.NewLine}{run.Diagnostics}");
+    }
+
+    /// <summary>
     /// <c>--output-dir</c> is bound and honored: items go where it points and nowhere else. Only the
     /// command can be asked this, and a run that silently ignored it would file a reviewer's comment
     /// somewhere nobody is looking.
