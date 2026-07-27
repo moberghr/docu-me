@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using DocuMe.Core.State;
 using Shouldly;
 using WireMock;
@@ -530,6 +531,43 @@ public sealed class CliConfluenceTests : IDisposable
     }
 
     /// <summary>
+    /// Rule §1.4 / §0.1: the dashboard is a page, so publishing it into a protected space is a write the
+    /// lock has to stop, and stop before any request — the refusal is resolved from the config alone.
+    /// </summary>
+    /// <remarks>
+    /// The fourth of the four write paths <c>docs/wiki/20-reference/cli.md</c> names ("`publish`,
+    /// `dashboard`, `drift --mark` and `sync --reply` all refuse it"), and the only one nothing asserted:
+    /// the other three are pinned by <c>PublishExecutorTests</c>, <c>CliDriftTests</c> and
+    /// <c>CliFeedbackTests</c> respectively. The guard is a placement, not a computation — it holds only
+    /// while it sits ahead of the client — so a test that never runs the command cannot see it move.
+    /// </remarks>
+    [Fact]
+    public void Dashboard_is_refused_when_the_space_is_protected()
+    {
+        var work = Scaffolded(nameof(Dashboard_is_refused_when_the_space_is_protected));
+
+        Protect(work);
+        StubSpace();
+        StubLabelSearch(approved: [], stale: []);
+        StubNoPageWithTitle();
+        StubCreate();
+
+        var run = Invoke(work, "dashboard");
+
+        run.Code.ShouldNotBe(0, run.Diagnostics);
+        run.FlowedAll.ShouldContain("protectedSpaces", customMessage: run.Diagnostics);
+
+        var asked = Seen()
+            .Select(request => $"{request.Method} {request.Path}")
+            .ToList();
+
+        var because = $"`dashboard` reached Confluence before refusing: [{string.Join(", ", asked)}]."
+            + Environment.NewLine + run.Diagnostics;
+
+        asked.ShouldBeEmpty(because);
+    }
+
+    /// <summary>
     /// The second publish of a page, which is every publish after the first — and the branch this class
     /// could not reach until now: every other test here stubs a create, so the whole CLI-level suite was
     /// a suite of first runs. A create happens once per page ever; an update happens on every scheduled
@@ -933,6 +971,21 @@ public sealed class CliConfluenceTests : IDisposable
         config.ShouldContain(quoted, customMessage: named);
 
         File.WriteAllText(path, config.Replace(quoted, $"\"{title}\"", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Adds this suite's space to <c>confluence.protectedSpaces</c>, which is how rule §1.4's write lock
+    /// is expressed in a consumer repo (§9.5: the space key belongs in config, not in the tool).
+    /// </summary>
+    private static void Protect(string work)
+    {
+        var path = Path.Combine(work, "docume.json");
+        var config = JsonNode.Parse(File.ReadAllText(path))
+            ?? throw new InvalidOperationException($"{path} parsed as null.");
+
+        config["confluence"]!["protectedSpaces"] = new JsonArray(JsonValue.Create(SpaceKey));
+
+        File.WriteAllText(path, config.ToJsonString());
     }
 
     /// <summary>Adds a page to the scaffolded wiki, wiki-root-relative.</summary>
