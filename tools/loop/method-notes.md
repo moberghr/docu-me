@@ -9,12 +9,9 @@
 
 **METHOD NOTES — carried forward, plus one new.**
   * **iter127: EVERY FILE THIS LOOP APPENDS TO EVERY ITERATION WILL EVENTUALLY OUTGROW THE READ TOOL.**
-    *(CORRECTED AND SUPERSEDED AT ITER128 — the note as written said "the ceiling is 256 KB and the Read
-    simply fails; it does not truncate". Half right: that is the BYTE ceiling, and there is also a
-    25,000-TOKEN cap that TRUNCATES, which state.json had been over for longer. Deliberately not restated
-    here, because two copies of one rule in two files is how the iter127 version came to be stale in the
-    first place. THE ONE AUTHORITY IS `state.json → readMe`, which sits ahead of every long field so a
-    truncated Read still shows it, and the check is `python3 tools/loop/check-state-size.py`.)*
+    Two ceilings, a 256 KB byte one that fails the Read and a 25,000-token one that truncates. Not
+    restated here — two copies of one rule is how the iter127 wording went stale. **The one authority is
+    `state.json → readMe`**; the check is `python3 tools/loop/check-state-size.py`.
   * **NEW, iter125: IN A YAML TEMPLATE THE PROSE AND THE CODE SHARE ONE FILE.** A bare `--fail-on-drift`
     Absent pattern was satisfied by the header comment "no `--fail-on-drift` here", and a bare
     `git merge-base` by the comment above the step. Anchor every template pattern to an invocation —
@@ -435,38 +432,14 @@ re-trace it** (one `SendAsync`, six call sites, all six through `ThrowIfFailed`)
 
 ## Making a placement-enforced rule structural (iter143)
 
-  * **A REGEX OVER C# SOURCE WILL EVENTUALLY MEET A NESTED GENERIC, AND ITS FAILURE MODE IS
-    MISATTRIBUTION, NOT A MISS.** `Task(?:<[^>]*>)?\s+(\w+)\s*\(` matches `Task<ConfluencePage>` and
-    fails `Task<IReadOnlyList<ConfluenceLabel>>` — the character class stops at the inner `>`. The
-    first run of `.mtk/paths-143/measure-write-surface.py` therefore reported **9** write methods
-    instead of 10: `AddLabelsAsync` did not match, so the backward walk kept going and filed its
-    `Post` under `UploadAttachmentAsync`, which already had a verb and looked entirely normal. Use a
-    greedy `<.*>`, or skip the return type altogether and take the token before `(`. Same family as
-    iter132's `owner/docu-me` meeting a filesystem path: a classifier over real text, wrong in a way
-    that reads as a result.
-  * **WALK BACK TO THE NEAREST MEMBER DECLARATION, NOT THE NEAREST `public` ONE.** Stopping at the
-    first `public` steps straight over a private helper and files its verbs under whichever public
-    method happens to sit above it. Stop at the first line that declares *any* member and report a
-    non-public one as an orphan — a write issued from a private helper is invisible to a caller scan
-    that keys on public names, which is worth failing on rather than silently reattributing.
-  * **THE MTP `--filter-query` TAKES EXACTLY ONE PATTERN.** `'/*/*/A/*|/*/*/B/*'` runs **zero tests
-    and exits 1**; `'/*/*/(A|B)/*'` runs zero and exits **8**. Neither says "no such syntax". One run
-    per class, and a harness that needs five control checks pays for five `dotnet test` invocations
-    (the rebuild is shared, so the cost is per mutation, not per run). Note also that
-    `--treenode-filter` — recorded above from iter132 — now runs zero tests and exits 1; the live
-    spelling is `--filter-query`.
-  * **THE CONTROL CELL SCALES: FIVE GREEN CHECKS SAY MORE THAN ONE RED ONE.** iter142's lesson applied
-    to a rule enforced by placement rather than by a list. `.mtk/paths-143/mutate-write-lock-coverage.py`
-    (17/17) puts an eleventh write method on the client (cell B) and a fifth caller file in `src/`
-    (cell D), and against **both** runs `PublishGuardTests` (8/8) and all four per-surface tests —
-    **ten green results across two real holes.** That, not the new class going red, is what
-    establishes the gap was open. Cell F adds an eleventh *read* method and everything stays green,
-    which is what stops the class from keying on "the client changed".
-  * **A MUTATION THAT ADDS A FILE UNDER `src/` HAS A SECOND AUDIENCE.** `DogfoodWikiTests` fails any
-    shipped file no wiki page's `sources` glob covers, so a fixture dropped into `src/` goes red there
-    too — for documentation coverage, not for the write lock. Scope the control runs to the checks
-    whose silence is the claim, or the finding drowns in an unrelated failure.
-
+*Moved to `tools/loop/method-notes-archive.md` at iter146 (verbatim, round trip asserted) — settled:
+`WriteLockCoverageTests` is committed and its method has been restated by iters 144, 145 and 146.
+**Headlines:** a regex over C# **meets a nested generic and misattributes rather than misses**
+(`Task<[^>]*>` fails `Task<IReadOnlyList<...>>` — use a greedy `<.*>`); walk back to the nearest
+**member** declaration, not the nearest `public` one; **the MTP `--filter-query` takes exactly ONE
+pattern** (`a|b` exits 1, `(a|b)` exits 8, both zero tests; `--treenode-filter` is dead); **the control
+cell scales**; and a mutation adding a file under `src/` **has a second audience** in
+`DogfoodWikiTests`. Open the archive for the method behind each.*
 ## When the mirror of a rule is a second copy nobody diffs (iter144)
 
 Rule §9.7 has two halves: "update `state.json` every iteration" (which every iteration does, visibly)
@@ -542,3 +515,34 @@ reaches the executor supplies its own stub, so not one of them has an opinion ab
     finding and the fix in a single number: 2 failed of 1384, both in the new class, nothing else —
     which is iter142's "the control cell is the finding" without paying for a run per legacy class.
     Read the failing test NAMES, not just the count.
+
+## When the rule is "do not carry knowledge", and the knowledge is in the tree (iter146)
+
+§9.5 ("the tool and skills stay generic") reads untestable — genericity is a negative over all possible
+content. It is testable **because this repo dogfoods**: `docs/wiki/_meta/STYLE.md` is a filled-in
+consumer guide sitting in the same tree as the code that must not contain it.
+
+  * **WHEN A RULE FORBIDS CARRYING SOMEBODY'S KNOWLEDGE, FIND A COPY OF IT ALREADY IN THE TREE AND DIFF
+    AGAINST THAT.** A hardcoded needle list ages into yesterday's mistakes; a derived one tracks what it
+    protects. Proof it is really derived is a GREEN cell that REWORDS the source (cell F): needles change
+    wholesale, suite stays green. iter145's rename cell, one level out.
+  * **A PHRASE SCAN NEEDS A MEASURED n, AND THE BAND HAS TWO EDGES.** n=4 indicted ordinary prose ("pages
+    in confluence a"); n=7 let the defect through, its longest lift being six words. 5 and 6 both worked;
+    6 taken as the wide end. One edge measured would have shipped 4 or 8 with equal confidence.
+  * **A STYLE GUIDE QUOTES THE PRODUCT AS AN EXAMPLE, AND THE QUOTE IS NOT A LEAK.** Its Tone section
+    quotes *"The repo is the source of truth"* — a PLAN.md §1 statement `src/` makes for its own reasons.
+    Four innocent files were indicted until quoted spans were dropped from the needle source. Generalise:
+    **the illustrative register is not the assertive one.**
+  * **A MECHANISM THAT REMOVES NOTHING ONCE ANOTHER LANDS MUST NOT SHIP.** The first fix for that was
+    subtracting PLAN.md's own n-grams. It worked — then quote-stripping subsumed it and it measurably
+    removed **0**, so it was dropped rather than kept as belt-and-braces. Nobody can tell which of two
+    mechanisms is load-bearing.
+  * **A PER-PART FLOOR BEATS A FLOOR OVER THE UNION.** Three sections contribute 28, 45 and 91 phrases to
+    a union of 164, so any global floor loose enough to survive editing the largest waves through losing
+    the smallest. Assert each part contributes — cell I proves it then fails loudly.
+  * **TWO NETS OVER ONE RULE MUST BE PROVEN INDEPENDENT, OR ONE IS DECORATION.** Cell E is a taxonomy leak
+    with zero phrase overlap and fails the taxonomy fact ALONE.
+  * **REUSE THE REPO'S OWN DEFINITION INSTEAD OF RESTATING IT** (iter142, applied before the fact).
+    "Shipped" is already `DogfoodWikiTests.ShippedRoots`, and §9.5's per-skill half went into
+    `SkillContractTests` over its existing `Skills` list — a new class with its own list would have
+    re-created the exact defect iter142 fixed, while fixing a different rule.

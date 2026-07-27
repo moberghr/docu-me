@@ -219,3 +219,37 @@
     auth-specific `catch` above the base `ConfluenceException` (or filter it out explicitly with
     `when (ex is not ConfluenceAuthenticationException)`), and `DriftCommand.LabelAsync`'s per-page loop
     returns on the first failure rather than continuing — so no loop replays an expired token.
+
+## Making a placement-enforced rule structural (iter143)
+
+  * **A REGEX OVER C# SOURCE WILL EVENTUALLY MEET A NESTED GENERIC, AND ITS FAILURE MODE IS
+    MISATTRIBUTION, NOT A MISS.** `Task(?:<[^>]*>)?\s+(\w+)\s*\(` matches `Task<ConfluencePage>` and
+    fails `Task<IReadOnlyList<ConfluenceLabel>>` — the character class stops at the inner `>`. The
+    first run of `.mtk/paths-143/measure-write-surface.py` therefore reported **9** write methods
+    instead of 10: `AddLabelsAsync` did not match, so the backward walk kept going and filed its
+    `Post` under `UploadAttachmentAsync`, which already had a verb and looked entirely normal. Use a
+    greedy `<.*>`, or skip the return type altogether and take the token before `(`. Same family as
+    iter132's `owner/docu-me` meeting a filesystem path: a classifier over real text, wrong in a way
+    that reads as a result.
+  * **WALK BACK TO THE NEAREST MEMBER DECLARATION, NOT THE NEAREST `public` ONE.** Stopping at the
+    first `public` steps straight over a private helper and files its verbs under whichever public
+    method happens to sit above it. Stop at the first line that declares *any* member and report a
+    non-public one as an orphan — a write issued from a private helper is invisible to a caller scan
+    that keys on public names, which is worth failing on rather than silently reattributing.
+  * **THE MTP `--filter-query` TAKES EXACTLY ONE PATTERN.** `'/*/*/A/*|/*/*/B/*'` runs **zero tests
+    and exits 1**; `'/*/*/(A|B)/*'` runs zero and exits **8**. Neither says "no such syntax". One run
+    per class, and a harness that needs five control checks pays for five `dotnet test` invocations
+    (the rebuild is shared, so the cost is per mutation, not per run). Note also that
+    `--treenode-filter` — recorded above from iter132 — now runs zero tests and exits 1; the live
+    spelling is `--filter-query`.
+  * **THE CONTROL CELL SCALES: FIVE GREEN CHECKS SAY MORE THAN ONE RED ONE.** iter142's lesson applied
+    to a rule enforced by placement rather than by a list. `.mtk/paths-143/mutate-write-lock-coverage.py`
+    (17/17) puts an eleventh write method on the client (cell B) and a fifth caller file in `src/`
+    (cell D), and against **both** runs `PublishGuardTests` (8/8) and all four per-surface tests —
+    **ten green results across two real holes.** That, not the new class going red, is what
+    establishes the gap was open. Cell F adds an eleventh *read* method and everything stays green,
+    which is what stops the class from keying on "the client changed".
+  * **A MUTATION THAT ADDS A FILE UNDER `src/` HAS A SECOND AUDIENCE.** `DogfoodWikiTests` fails any
+    shipped file no wiki page's `sources` glob covers, so a fixture dropped into `src/` goes red there
+    too — for documentation coverage, not for the write lock. Scope the control runs to the checks
+    whose silence is the claim, or the finding drowns in an unrelated failure.
