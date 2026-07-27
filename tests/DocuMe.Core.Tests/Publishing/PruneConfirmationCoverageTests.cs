@@ -29,8 +29,21 @@ namespace DocuMe.Core.Tests.Publishing;
 /// statement about the whole tree, so no run of the path that is wired correctly can show that a second
 /// path is. What this class does <em>not</em> claim is that the prompt is well worded or that Spectre asks
 /// it properly — <see cref="Cli.CliConfluenceTests"/> owns the refusal that fires when no terminal can be
-/// asked at all. It pins that the delete is reached only through a named prompt that defaults to no, and
-/// that every file reaching the executor sits behind the guard.
+/// asked at all. It pins that the delete is reached only through a named prompt that defaults to no, that
+/// the prompt hands the answer back, and that every file reaching the executor sits behind the guard.
+/// </para>
+/// <para>
+/// That third fact was added after measuring this class against its own residual, the audit
+/// <c>AuthHardStopCoverageTests</c> earned for rule §1.2: a grep over a mechanism's body reads a
+/// <em>toothless</em> mechanism as compliant. A prompt that awaits the confirmation, discards what the
+/// human said and returns <c>true</c> still contains <c>ConfirmAsync(</c> and still contains
+/// <c>defaultValue: false</c>, so it satisfied every fact here — and nothing else could object either,
+/// because the production prompt is unreachable from any test: it is private, it is driven by the static
+/// <c>AnsiConsole</c>, and <c>PublishCommand.PruneRefusal</c> turns <c>--prune</c> away before the prune
+/// runs at all when the terminal cannot prompt, which is every test host. Measured, not argued: that
+/// mutation failed <em>nothing</em> in the whole suite as it stood when this fact was written, and now
+/// fails this fact alone — no count is quoted here on purpose, because a number in prose is a mirror
+/// nobody diffs and the suite's floor already lives in one place.
 /// </para>
 /// </remarks>
 public sealed class PruneConfirmationCoverageTests
@@ -47,6 +60,9 @@ public sealed class PruneConfirmationCoverageTests
 
     /// <summary>The refusal that carries §9.6's CI half and the §0.1/§1.4 write lock.</summary>
     private const string GuardCall = "PruneGuard.Refusal(";
+
+    /// <summary>The ask itself. One spelling, read by the two facts that need it.</summary>
+    private const string ConfirmCall = "ConfirmAsync(";
 
     /// <summary>Zero-based position of the <c>PruneConfirmation</c> parameter in <c>PruneAsync</c>.</summary>
     private const int ConfirmationArgument = 2;
@@ -153,13 +169,72 @@ public sealed class PruneConfirmationCoverageTests
                 + "does not ask anybody anything. Rule §9.6 wants a human's answer in front of the "
                 + "delete, not a method named as though there were one.";
 
-            body.ShouldContain("ConfirmAsync(", customMessage: silent);
+            body.ShouldContain(ConfirmCall, customMessage: silent);
 
             var defaulted = $"{file}'s `{confirmation}` does not pass `defaultValue: false`. A destructive "
                 + "prompt that defaults to yes turns a stray newline into a delete, which is the one "
                 + "mistake rule §9.6 exists to make impossible.";
 
             body.ShouldContain("defaultValue: false", customMessage: defaulted);
+        }
+    }
+
+    /// <summary>
+    /// The answer each prompt is given is the answer it hands back — the assertion a prompt that asks and
+    /// discards fails.
+    /// </summary>
+    /// <remarks>
+    /// Two shapes are accepted, and anything else is refused rather than reasoned about: the ask is the
+    /// returned expression, or it is assigned to a local that the body returns. A prompt written some third
+    /// way is not wrong, but it is unreadable to a scan, and this is the call that cannot be undone outside
+    /// the space trash — so the refusal asks for the prompt to be rewritten or this fact to be repinned
+    /// deliberately, rather than guessing which locals reach a <c>return</c>.
+    /// </remarks>
+    [Fact]
+    public void Every_named_prompt_returns_the_answer_the_human_gave()
+    {
+        foreach (var (file, arguments) in CallSites())
+        {
+            var confirmation = arguments[ConfirmationArgument];
+            var body = PromptBody(file, confirmation);
+
+            body.ShouldNotBeNull($"{confirmation} is not declared in {file}.");
+
+            var statement = AskingStatement(body);
+
+            // Vacuous-pass guard. Two causes, and the message names both because only one of them is this
+            // fact's business: a prompt that stopped asking is fact 3's finding and fails there in the same
+            // run, while a body no statement can be read out of is this scan having gone blind. Either way,
+            // returning early here would report the answer honoured by a prompt that never took one.
+            var unreadable = $"{file}'s `{confirmation}` contains no statement this scan can attribute a "
+                + $"{ConfirmCall} call to. Either the prompt no longer asks — check whether "
+                + $"{nameof(Every_named_prompt_asks_and_defaults_to_no)} failed alongside this, which is "
+                + "where that belongs — or this scan has stopped reading the body, in which case check "
+                + "AskingStatement against the declaration's shape.";
+
+            statement.ShouldNotBeNull(unreadable);
+
+            var opening = statement[0].Trim();
+
+            if (opening.StartsWith("return", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var held = Assigned(opening);
+
+            var discarded = $"{file}'s `{confirmation}` asks and then drops the answer: the statement "
+                + $"holding the ask reads `{opening}`, which neither returns it nor assigns it to a local. "
+                + "A prompt that awaits a human's \"no\" and deletes anyway is rule §9.6 satisfied on paper "
+                + "and broken in the one way that matters, and it reads as compliant to every other fact "
+                + "in this class.";
+
+            held.ShouldNotBeNull(discarded);
+
+            var stranded = $"{file}'s `{confirmation}` puts the answer in `{held}` and never returns it, so "
+                + "whatever it does hand back is not what the human said.";
+
+            body.ShouldContain($"return {held};", customMessage: stranded);
         }
     }
 
@@ -307,6 +382,84 @@ public sealed class PruneConfirmationCoverageTests
         index++;
 
         return true;
+    }
+
+    /// <summary>
+    /// The statement in <paramref name="body"/> that holds the <see cref="ConfirmCall"/>, as its lines, or
+    /// <c>null</c> when no line makes that call.
+    /// </summary>
+    /// <remarks>
+    /// Walked back line by line to the previous statement boundary rather than parsed: the ask is a fluent
+    /// chain broken over three lines, so the line the call sits on says nothing about what happens to its
+    /// result. The declaration's own opening brace is a boundary, which is what stops the walk at the top of
+    /// a body whose first statement is the ask.
+    /// </remarks>
+    private static string[]? AskingStatement(string body)
+    {
+        var lines = body.Split(Environment.NewLine);
+        var at = Array.FindIndex(lines, line => line.Contains(ConfirmCall, StringComparison.Ordinal));
+
+        if (at < 0)
+        {
+            return null;
+        }
+
+        var start = at;
+
+        while (start > 0 && !Bounds(lines[start - 1]))
+        {
+            start--;
+        }
+
+        return lines[start..(at + 1)];
+    }
+
+    /// <summary>
+    /// Whether <paramref name="line"/> closes a statement, opens a block, or is blank.
+    /// </summary>
+    /// <remarks>
+    /// A blank line counts, and leaving it out is what the first run of this fact caught: the ask sits one
+    /// blank line below <c>RenderPaths</c>, so a walk that stepped over it reported the statement as the
+    /// empty string and failed the compliant tree.
+    /// </remarks>
+    private static bool Bounds(string line)
+    {
+        var trimmed = line.TrimEnd();
+
+        return trimmed.Length == 0
+            || trimmed.EndsWith(';')
+            || trimmed.EndsWith('{')
+            || trimmed.EndsWith('}');
+    }
+
+    /// <summary>
+    /// The local <paramref name="statement"/> declares or assigns, or <c>null</c> when it is not an
+    /// assignment. Comparisons are excluded so <c>if (x == y)</c> is not read as one.
+    /// </summary>
+    /// <remarks>
+    /// Split rather than indexed: <c>MA0001</c> refuses <c>IndexOf(string)</c> without a
+    /// <c>StringComparison</c> and <c>CA1865</c> refuses the string overload for a single character, so the
+    /// two rules leave no spelling of that call standing. Splitting once needs neither.
+    /// </remarks>
+    private static string? Assigned(string statement)
+    {
+        var parts = statement.Split('=', 2);
+
+        if (parts.Length < 2 || parts[1].StartsWith('='))
+        {
+            return null;
+        }
+
+        var head = parts[0].TrimEnd();
+
+        if (head.Length == 0 || head[^1] is '!' or '<' or '>')
+        {
+            return null;
+        }
+
+        var target = head.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        return target.Length >= 2 ? target[^1] : null;
     }
 
     /// <summary>Whether <paramref name="argument"/> is a bare identifier — a method group, not a lambda.</summary>
