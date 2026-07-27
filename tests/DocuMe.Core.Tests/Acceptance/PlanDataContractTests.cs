@@ -9,6 +9,7 @@ using DocuMe.Core.Json;
 using DocuMe.Core.Markdown;
 using DocuMe.Core.State;
 using DocuMe.Core.Tests.Cli;
+using DocuMe.Core.Tests.Fixtures;
 using Shouldly;
 
 namespace DocuMe.Core.Tests.Acceptance;
@@ -363,7 +364,7 @@ public sealed partial class PlanDataContractTests
     [Fact]
     public void Every_shipped_artifact_that_names_a_dead_knob_is_recorded()
     {
-        var shipped = ShippedArtifacts();
+        var shipped = ShippedTree.Files();
 
         const string vacuous = "No shipped artifact was scanned at all, so this inventory is broken rather "
             + "than clean. The roots it walks have moved.";
@@ -398,51 +399,6 @@ public sealed partial class PlanDataContractTests
             stale.ShouldBeEmpty(gone);
         }
     }
-
-    /// <summary>
-    /// The files a consumer or an agent reads, repo-relative with forward slashes.
-    /// </summary>
-    /// <remarks>
-    /// Rooted at <c>docs/wiki</c> rather than <c>docs</c> so the dated plan records under
-    /// <c>docs/plans/</c> are out of scope structurally, not by a filter a later edit can drop.
-    /// </remarks>
-    private static List<ShippedFile> ShippedArtifacts()
-    {
-        string[] roots = ["PLAN.md", "README.md", "CHANGELOG.md", "docume.json", "docs/wiki", "plugin", "templates", "schema"];
-        string[] extensions = [".md", ".json", ".yml", ".yaml", ".mjs"];
-
-        var collected = new List<ShippedFile>();
-
-        foreach (var root in roots)
-        {
-            var absolute = Path.Combine(DocumeCli.RepoRoot, root.Replace('/', Path.DirectorySeparatorChar));
-
-            if (File.Exists(absolute))
-            {
-                collected.Add(new ShippedFile(root, absolute));
-                continue;
-            }
-
-            var missing = $"The shipped root '{root}' does not exist, so this inventory no longer covers "
-                + "what it claims to cover.";
-
-            Directory.Exists(absolute).ShouldBeTrue(missing);
-
-            var files = Directory
-                .EnumerateFiles(absolute, "*", SearchOption.AllDirectories)
-                .Where(file => extensions.Contains(Path.GetExtension(file), StringComparer.Ordinal))
-                .Select(file => new ShippedFile(
-                    Path.GetRelativePath(DocumeCli.RepoRoot, file).Replace(Path.DirectorySeparatorChar, '/'),
-                    file));
-
-            collected.AddRange(files);
-        }
-
-        return collected;
-    }
-
-    /// <summary>A shipped artifact, keyed by the repo-relative path a message quotes.</summary>
-    private sealed record ShippedFile(string Relative, string Absolute);
 
     /// <summary>
     /// Walks a parsed §5 block against the type that binds it, collecting both directions of disagreement.
