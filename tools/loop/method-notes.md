@@ -404,31 +404,16 @@
 
 ## A guard that is a placement, not a computation (iter141)
 
-  * **TESTING A GUARD'S LOGIC SAYS NOTHING ABOUT WHETHER ANY CALLER RUNS IT.** `PublishGuard` is a pure
-    function and `PublishGuardTests` covers it thoroughly — case-insensitivity, blank entries, the
-    override, seven cases. None of that can tell you whether `dashboard` calls it, or calls it before
-    the client. **The lock is enforced by WHERE the call sits, so the test has to be per write surface
-    and it has to run the command.** Three of the four surfaces had one; `dashboard` — the surface that
-    creates a page — did not, for 141 iterations, while `docs/wiki/20-reference/cli.md:50` told readers
-    all four refuse.
-  * **HOW TO TRACE A "EVERY WRITE PATH CHECKS X" CLAIM: enumerate the verbs, not the commands.** Grep
-    `HttpMethod.Post|Put|Delete` in the client, name the public methods around them (10 here), grep
-    every caller outside the client, then walk each caller up to its guard. Enumerating *commands*
-    instead would have missed that `publish` reaches six of the ten and that `--prune`'s delete is
-    guarded only transitively, through `PublishOutcome.Succeeded` being false when the executor stops.
-  * **`|| true` IS NOT THE ONLY SWALLOW-BY-CONSTRUCTION SHAPE. `&& !dryRun` IS ANOTHER.** Every one of
-    the four surfaces bypasses the refusal under `--dry-run` deliberately, which is only safe because
-    each also returns before its first write. Two of them say so out loud; `dashboard` bypasses the
-    guard silently and is saved by an early return 145 lines later. Check the second half whenever a
-    guard is conditional on a flag.
-  * **A GUARD TEST THAT CANNOT GO RED IS DECORATION — MUTATE THE GUARD, NOT A NEIGHBOUR.** 3/3,
-    `.mtk/paths-141/mutate-dashboard-guard.py`: baseline green, then `&& !dryRun` → `&& dryRun` (the
-    real hole: a live run stops refusing) and `allowProtectedSpace` → `allowProtectedSpace || true`.
-    Both still compile, per iter124. The script saves and writes back the file text itself and asserts
-    the byte-for-byte restore, because `git checkout --` would drop the iteration's other edits.
-  * **RESIDUAL RISK, RECORDED RATHER THAN FIXED:** nothing makes the invariant *structural*. An
-    eleventh write method, or a fifth command, is guarded only if whoever adds it remembers. Four
-    per-surface tests are the whole enforcement of rules §0.1/§1.4.
+*Moved to `tools/loop/method-notes-archive.md` at iter144 (verbatim, round trip asserted) — its
+subject is settled: the section's own closing bullet recorded that nothing made the §0.1/§1.4 write
+lock structural, and iter143's `WriteLockCoverageTests` closed precisely that. Headlines kept here
+because they still describe how to trace this class of rule: **testing a guard's logic says nothing
+about whether any caller runs it** (the lock is enforced by WHERE the call sits, so a test must be
+per write surface and must run the command); **enumerate the verbs, not the commands**, when tracing
+an "every write path checks X" claim; **`&& !dryRun` is a swallow-by-construction shape** just as
+`|| true` is; **a guard test that cannot go red is decoration — mutate the guard, not a neighbour.**
+The successor section below, "Making a placement-enforced rule structural (iter143)", carries the
+fix.*
 
 ## When the enforcement of a rule is a hardcoded list (iter142)
 
@@ -511,3 +496,43 @@
     shipped file no wiki page's `sources` glob covers, so a fixture dropped into `src/` goes red there
     too — for documentation coverage, not for the write lock. Scope the control runs to the checks
     whose silence is the claim, or the finding drowns in an unrelated failure.
+
+## When the mirror of a rule is a second copy nobody diffs (iter144)
+
+Rule §9.7 has two halves: "update `state.json` every iteration" (which every iteration does, visibly)
+and "human gates live in GATES.md as `- [ ]` checkboxes **mirrored into state**" (which nothing
+checked). `paste-rule-8-2a` had no key in `state.json -> gates` from iter75 to iter144 — **69
+iterations, every one of which wrote that file.** The structural fix is `check_gate_mirror` in
+`tools/loop/check-state-size.py`, the second non-size invariant to live there for
+`check_done_archive`'s reason: it is the script `readMe` already requires after every edit to
+state.json **and** to GATES.md, which is exactly when a two-copy invariant breaks.
+
+  * **EQUAL COUNTS ARE NOT A MATCHING SET, AND THE COUNT IS WHAT AN EYE CHECKS.** GATES.md carried 11
+    checkboxes and `gates` carried 11 keys. They were different elevens: one mirror key belongs to
+    `gate-m1-aurservices-files`, whose heading is struck through (`~~id~~`) rather than a checkbox,
+    which bought back the slot `paste-rule-8-2a` had vacated. Diff the sets, never the cardinalities.
+  * **GREP CONFIRMS THE WRONG BLOCK.** `paste-rule-8-2a` appears in state.json four times over — in
+    `nextAction`'s list of side items and, spelled `rule-8-2a`, as a **`blockers`** key. So searching
+    the file for the id returns hits, from a block that is not the mirror the rule names. Same family
+    as iter136's archive grep and iter143's `Task<...>` regex: a confident wrong answer that reads as
+    a clean result. When a rule names a *specific* structure, assert against that structure.
+  * **ANCHOR A MARKDOWN-STRUCTURE SCAN TO THE LINE START AND THE BOLD ID.** Gate bodies cite other
+    gate ids constantly, and their steps are written as indented `- [ ]` sub-bullets. `^- \[([ x])\]
+    \*\*([a-z0-9-]+)\*\*` picks up headings only; cell J proves an indented box stays invisible.
+    Three heading shapes exist and they mean different things — checkbox (mirror REQUIRED), `~~id~~`
+    struck (permitted), bold-bullet under "Anticipated" (permitted). Requiring all three would have
+    failed on `gate-m7-production`, which is correctly absent.
+  * **THE DIRECTION WITH A FUTURE IS STATUS DRIFT, NOT ABSENCE.** Directions 1 and 2 catch a gate
+    going missing; direction 3 catches the mirror's status going stale, which is what happens the day
+    Mirko finally ticks a box — the loop orients off `gates`/`nextAction`, so a mirror that still says
+    PENDING is how it skips work it now owes. "PENDING" is present in every open gate's mirror and in
+    no closed one; that convention is the only machine-readable status in a free-prose field.
+  * **THE `git show HEAD:<script>` CONTROL BLOCK.** iter143 proved a gap was open by running other
+    tests against the mutation; for a standalone script there is a cheaper move — run the SAME five
+    defects against the checker as it stood at HEAD and assert all five exit 0. Five green results,
+    no fixture, one `git show`. `.mtk/paths-144/mutate-gate-mirror.py`, 16/16.
+  * **A JSON ROUND TRIP IS A MUTATION UNTIL A CONTROL SAYS IT IS NOT.** Rewriting state.json with
+    `json.dumps(indent=2)` to delete one key also reflows the whole file; with `ensure_ascii=True`
+    the `§` and `—` characters inflate it, and main() checks the token budget BEFORE the mirror, so
+    the cell would go red with the wrong message. Cell K round-trips with no semantic change and
+    must stay green. Assert the SPECIFIC failure message, never just a non-zero exit.

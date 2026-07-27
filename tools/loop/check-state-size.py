@@ -59,8 +59,20 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 LOOP_DIR = os.path.join(REPO, "tools", "loop")
 STATE = os.path.join(LOOP_DIR, "state.json")
 ARCHIVE = os.path.join(LOOP_DIR, "done-archive.jsonl")
+GATES_MD = os.path.join(REPO, "GATES.md")
 LOG_DIR = os.path.join(LOOP_DIR, "logs")
 LOOP_LOG = os.path.join(LOG_DIR, "loop.log")
+
+# The three shapes a gate heading takes in GATES.md. Anchored to the start of the line AND to the
+# bold id, because gate bodies cite other gate ids constantly - a bare id search matches prose in
+# six other gates. `- [ ]`/`- [x]` is a live gate, `~~id~~` one closed without action, and a bold
+# bullet with no box one in the "Anticipated" section that is not open yet.
+GATE_CHECKBOX = re.compile(r"^- \[([ x])\] \*\*([a-z0-9-]+)\*\*")
+GATE_STRUCK = re.compile(r"^- ~~\*\*([a-z0-9-]+)\*\*~~")
+GATE_ANTICIPATED = re.compile(r"^- \*\*([a-z0-9-]+)\*\* +[-—]")
+
+# `gates` keys that are not gates: the pointer naming GATES.md as the authoritative copy.
+NOT_A_GATE = frozenset({"authoritative"})
 
 READ_TOKEN_CAP = 25_000
 READ_BYTE_CEILING = 256 * 1024
@@ -291,6 +303,95 @@ def check_done_archive(doc):
     return problems
 
 
+def scan_gates_md(text):
+    """Every gate id GATES.md declares, split by the shape of its heading."""
+    boxes, struck, anticipated = {}, [], []
+    for line in text.splitlines():
+        match = GATE_CHECKBOX.match(line)
+        if match:
+            boxes[match.group(2)] = match.group(1) == "x"
+            continue
+        match = GATE_STRUCK.match(line)
+        if match:
+            struck.append(match.group(1))
+            continue
+        match = GATE_ANTICIPATED.match(line)
+        if match:
+            anticipated.append(match.group(1))
+    return boxes, struck, anticipated
+
+
+def check_gate_mirror(doc):
+    """Is `state.json -> gates` still the complete mirror of GATES.md that rule §9.7 requires?
+
+    ADDED ITER144, after finding it was not. Rule §9.7 says "human gates live in GATES.md as
+    `- [ ]` checkboxes mirrored into state", and `gates.authoritative` restates it - "this block is
+    the status mirror rule §9.7 asks for". Nothing checked it, and `paste-rule-8-2a` had been
+    unmirrored since iter75: 69 iterations, every one of which wrote this file.
+
+    WHY EYEBALLING NEVER CAUGHT IT, which is the reason this is a check and not a correction.
+    GATES.md carried 11 checkboxes and `gates` carried 11 keys - the counts MATCHED, because one
+    mirror key belongs to `gate-m1-aurservices-files`, whose heading is struck through rather than
+    a checkbox. Only a set comparison sees it. A grep does not help either: `paste-rule-8-2a`
+    appears in state.json four times over, in `nextAction`'s list of side items and in a `blockers`
+    key spelled `rule-8-2a`, so searching for the id returns hits from a block that is not the
+    mirror. Same family as iter136's archive lookup and iter143's regex - a confident wrong answer
+    that reads as a clean result.
+
+    THE THIRD CHECK IS THE ONE WITH A FUTURE. Directions (1) and (2) catch a gate going missing;
+    (3) catches the mirror's STATUS going stale, which is what happens on the day Mirko finally
+    ticks a box - the loop's whole orientation depends on `nextAction`/`gates` agreeing with
+    GATES.md about what is still open, and that disagreement has no other detector.
+
+    Checked here for `check_done_archive`'s reason: this is the script `readMe` requires after
+    every edit to state.json AND to GATES.md, which is exactly when the invariant can break.
+    """
+    problems = []
+    with open(GATES_MD, encoding="utf-8") as handle:
+        boxes, struck, anticipated = scan_gates_md(handle.read())
+
+    mirror = {k: v for k, v in doc.get("gates", {}).items() if k not in NOT_A_GATE}
+    known = set(boxes) | set(struck) | set(anticipated)
+
+    # (1) THE MIRROR RULE ITSELF. Every checkbox needs a line in `gates`.
+    for gate in boxes:
+        if gate not in mirror:
+            problems.append(
+                f"GATES.md has a checkbox for {gate!r} and `gates` has no key for it"
+                " - rule §9.7 says every checkbox is mirrored"
+            )
+
+    # (2) THE REVERSE. A key for a gate GATES.md no longer carries is a status nobody maintains.
+    for key in mirror:
+        if key not in known:
+            problems.append(f"`gates` has a key {key!r} that matches no gate heading in GATES.md")
+
+    # (3) STATUS DRIFT. Every open gate's mirror says PENDING and no closed one does; that
+    # convention is the only machine-readable status in a free-prose field, so it is worth holding.
+    for gate, is_ticked in boxes.items():
+        body = mirror.get(gate)
+        if not isinstance(body, str):
+            continue
+        if not is_ticked and "PENDING" not in body:
+            problems.append(
+                f"{gate!r} is unticked in GATES.md but its mirror does not say PENDING"
+                " - an open gate that reads as settled is how the loop skips work it owes"
+            )
+        if is_ticked and "PENDING" in body:
+            problems.append(f"{gate!r} is ticked in GATES.md but its mirror still says PENDING")
+
+    open_count = sum(1 for ticked in boxes.values() if not ticked)
+    print("\nGATES.md <-> state.json gate mirror (rule §9.7):")
+    print(f"  {len(boxes)} checkboxes ({open_count} open, {len(boxes) - open_count} ticked),"
+          f" {len(struck)} struck, {len(anticipated)} anticipated")
+    print(f"  {len(mirror)} mirror keys in `gates` (excluding {', '.join(sorted(NOT_A_GATE))})")
+    for problem in problems:
+        print(f"  BROKEN: {problem}")
+    if not problems:
+        print("  OK: every checkbox mirrored, no orphan keys, no status drift.")
+    return problems
+
+
 def transcript_for(wanted):
     """Which `logs/iter-*.log` holds iteration `wanted`'s transcript. NOT `iter-<wanted>-*` before 137.
 
@@ -434,6 +535,7 @@ def main():
 
     calibration_problems = check_calibration()
     archive_problems = check_done_archive(doc)
+    mirror_problems = check_gate_mirror(doc)
 
     if calibration_problems:
         print("\nFAIL: a bytes-per-token constant is optimistic, so every estimate and headroom")
@@ -449,7 +551,13 @@ def main():
         print("\nFAIL: done-archive.jsonl is not the complete log state.json claims. Repair it BEFORE")
         print("trimming doneRecent - an entry held only there is destroyed by the next iteration.")
         return 1
-    print("\nOK: all three step-1 Reads return their whole file, and the done archive is intact.")
+    if mirror_problems:
+        print("\nFAIL: `state.json -> gates` is not the mirror of GATES.md rule §9.7 requires. Add the")
+        print("missing line (one line: whose call it is, what to do, where the full text lives), drop the")
+        print("orphan, or correct the status - GATES.md is authoritative, so it is the mirror that moves.")
+        return 1
+    print("\nOK: all three step-1 Reads return their whole file, the done archive is intact, and")
+    print("every GATES.md checkbox is mirrored.")
     return 0
 
 

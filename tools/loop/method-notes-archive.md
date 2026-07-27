@@ -143,3 +143,31 @@
     budget to suit the prose that broke it. And note where this paragraph lives: iter134 first wrote
     it into `nextAction`, which pushed state.json over the budget it was warning about — durable
     method advice goes HERE, which is the rule this file exists to enforce.
+
+## A guard that is a placement, not a computation (iter141)
+
+  * **TESTING A GUARD'S LOGIC SAYS NOTHING ABOUT WHETHER ANY CALLER RUNS IT.** `PublishGuard` is a pure
+    function and `PublishGuardTests` covers it thoroughly — case-insensitivity, blank entries, the
+    override, seven cases. None of that can tell you whether `dashboard` calls it, or calls it before
+    the client. **The lock is enforced by WHERE the call sits, so the test has to be per write surface
+    and it has to run the command.** Three of the four surfaces had one; `dashboard` — the surface that
+    creates a page — did not, for 141 iterations, while `docs/wiki/20-reference/cli.md:50` told readers
+    all four refuse.
+  * **HOW TO TRACE A "EVERY WRITE PATH CHECKS X" CLAIM: enumerate the verbs, not the commands.** Grep
+    `HttpMethod.Post|Put|Delete` in the client, name the public methods around them (10 here), grep
+    every caller outside the client, then walk each caller up to its guard. Enumerating *commands*
+    instead would have missed that `publish` reaches six of the ten and that `--prune`'s delete is
+    guarded only transitively, through `PublishOutcome.Succeeded` being false when the executor stops.
+  * **`|| true` IS NOT THE ONLY SWALLOW-BY-CONSTRUCTION SHAPE. `&& !dryRun` IS ANOTHER.** Every one of
+    the four surfaces bypasses the refusal under `--dry-run` deliberately, which is only safe because
+    each also returns before its first write. Two of them say so out loud; `dashboard` bypasses the
+    guard silently and is saved by an early return 145 lines later. Check the second half whenever a
+    guard is conditional on a flag.
+  * **A GUARD TEST THAT CANNOT GO RED IS DECORATION — MUTATE THE GUARD, NOT A NEIGHBOUR.** 3/3,
+    `.mtk/paths-141/mutate-dashboard-guard.py`: baseline green, then `&& !dryRun` → `&& dryRun` (the
+    real hole: a live run stops refusing) and `allowProtectedSpace` → `allowProtectedSpace || true`.
+    Both still compile, per iter124. The script saves and writes back the file text itself and asserts
+    the byte-for-byte restore, because `git checkout --` would drop the iteration's other edits.
+  * **RESIDUAL RISK, RECORDED RATHER THAN FIXED:** nothing makes the invariant *structural*. An
+    eleventh write method, or a fifth command, is guarded only if whoever adds it remembers. Four
+    per-surface tests are the whole enforcement of rules §0.1/§1.4.
