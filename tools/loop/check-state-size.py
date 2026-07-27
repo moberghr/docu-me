@@ -499,6 +499,106 @@ def check_gate_pointers():
     return problems
 
 
+def check_stub_bodies(doc):
+    """Does every one-line stub in `blockers` and `decisions` still have the body it points at?
+
+    ADDED ITER159, and the case for it is `check_gate_mirror` above: `gates` was the FIRST of
+    state.json's stub-plus-body splits to get a checker, and it got one only after
+    `paste-rule-8-2a` sat unmirrored from iter75 to iter144. `blockers` and `decisions` are the
+    same shape and were the last two without one. Both spell the contract out themselves:
+
+      * blockers-open.json's `note` - "Full text of the OPEN blockers in tools/loop/state.json
+        ... state.json -> blockers holds a one-line stub per key."
+      * decisions-archive.json's `why` - "state.json keeps a one-line stub per key; this file is
+        the full text", and `blockers._archive` prescribes the edit for adding one: "a short
+        kebab-case key here with a ONE-LINE stub ending in a pointer, and the full body in
+        blockers-open.json under the same key. TO SETTLE ONE: delete the key from both".
+
+    A THREE-PLACE EDIT PRESCRIBED IN PROSE AND CHECKED BY NOTHING is the half-edit this catches:
+    add a blocker and skip the body, and the stub's own "Body: tools/loop/blockers-open.json"
+    sends the next iteration to a key that is not there; settle one in state.json only, and the
+    orphan body left behind is a settled blocker still reading as open in the file an iteration
+    opens to ACT.
+
+    WHAT THIS DELIBERATELY DOES NOT CHECK, because the archive disclaims it. decisions-archive's
+    `authoritative` says "The ANSWER lives in state.json -> decisions.<key>, not here ... if the
+    two ever disagree, state.json wins and this is stale." So a body still posing a question Mirko
+    has since answered is CORRECT BY DESIGN, and direction (3) below only asks for a body while
+    the stub itself still says OPEN. The day Mirko answers a decision this check stays green with
+    no edit - unlike the gate mirror, where a tick is exactly what the loop must go update.
+    """
+    problems = []
+    with open(os.path.join(LOOP_DIR, "blockers-open.json"), encoding="utf-8") as handle:
+        open_bodies = json.loads(handle.read()).get("blockers", {})
+    with open(os.path.join(LOOP_DIR, "decisions-archive.json"), encoding="utf-8") as handle:
+        decision_bodies = json.loads(handle.read()).get("decisions", {})
+
+    stubs = {k: v for k, v in doc.get("blockers", {}).items() if not k.startswith("_")}
+    decisions = {k: v for k, v in doc.get("decisions", {}).items() if not k.startswith("_")}
+
+    # (1) EVERY BLOCKER STUB HAS A BODY. `blockers` is the orientation copy and every entry there
+    # is open by definition, so this direction has no exemption.
+    for key in stubs:
+        if key not in open_bodies:
+            problems.append(
+                f"`blockers` has a stub {key!r} with no body in blockers-open.json"
+                " - the stub's own pointer sends the next iteration to a key that is not there"
+            )
+
+    # (2) THE REVERSE. A body for a blocker `blockers` no longer lists is a settled blocker that
+    # still reads as open in the file `_archive` tells the reader to open in order to ACT.
+    for key in open_bodies:
+        if key not in stubs:
+            problems.append(
+                f"blockers-open.json has a body {key!r} that `blockers` does not list"
+                " - settling one means deleting the key from BOTH files"
+            )
+
+    # (3) OPEN DECISIONS HAVE A BODY. Only the open ones: see the docstring: an answered stub needs
+    # no question behind it, and `compositeAction`/`formatOnEditHook` are exactly that shape today.
+    for key, stub in decisions.items():
+        if not isinstance(stub, str) or not stub.startswith("OPEN"):
+            continue
+        if key not in decision_bodies:
+            problems.append(
+                f"decision {key!r} still says OPEN and has no body in decisions-archive.json"
+                " - `nextAction` sends the reader there for every open decision's full body"
+            )
+
+    # (4) NO ORPHAN DECISION BODIES. Same failure as (2) and the same one paste-rule-8-2a had:
+    # a key that exists in one place and is invisible in the place orientation actually reads.
+    for key in decision_bodies:
+        if key not in decisions:
+            problems.append(
+                f"decisions-archive.json has a body {key!r} that `decisions` has no stub for"
+                " - a decision nobody orienting can see"
+            )
+
+    # (5) A SETTLED BLOCKER STAYS SETTLED. `blockersArchive.settled` exists so no iteration
+    # re-adds one ("append a one-line verdict ... so it is never re-added"); a key in both places
+    # at once means that tombstone failed at the only job it has.
+    settled = doc.get("blockersArchive", {}).get("settled", {})
+    for key in settled:
+        for where, block in (("`blockers`", stubs), ("blockers-open.json", open_bodies)):
+            if key in block:
+                problems.append(
+                    f"{key!r} is recorded settled in blockersArchive.settled but is open again in"
+                    f" {where} - re-adding a settled blocker is what that tombstone prevents"
+                )
+
+    open_decisions = sum(1 for v in decisions.values() if isinstance(v, str) and v.startswith("OPEN"))
+    print("\nstate.json stubs <-> their archived bodies (iter159):")
+    print(f"  {len(stubs)} blocker stubs / {len(open_bodies)} bodies in blockers-open.json,"
+          f" {len(settled)} settled tombstones")
+    print(f"  {len(decisions)} decision stubs ({open_decisions} OPEN)"
+          f" / {len(decision_bodies)} bodies in decisions-archive.json")
+    for problem in problems:
+        print(f"  BROKEN: {problem}")
+    if not problems:
+        print("  OK: every stub resolves to a body, no orphan bodies, no settled blocker reopened.")
+    return problems
+
+
 def transcript_for(wanted):
     """Which `logs/iter-*.log` holds iteration `wanted`'s transcript. NOT `iter-<wanted>-*` before 137.
 
@@ -644,6 +744,7 @@ def main():
     archive_problems = check_done_archive(doc)
     mirror_problems = check_gate_mirror(doc)
     pointer_problems = check_gate_pointers()
+    stub_problems = check_stub_bodies(doc)
 
     if calibration_problems:
         print("\nFAIL: a bytes-per-token constant is optimistic, so every estimate and headroom")
@@ -669,8 +770,14 @@ def main():
         print("section that is not there. Rewrite that gate's steps to name only what is left - the")
         print("cost of this one is measured in gates that look expensive and therefore stay unticked.")
         return 1
+    if stub_problems:
+        print("\nFAIL: a stub in `blockers`/`decisions` and its archived body disagree about what")
+        print("exists. Adding one writes BOTH places; settling a blocker deletes the key from BOTH and")
+        print("appends a verdict to blockersArchive.settled. Never drop a body to make this pass.")
+        return 1
     print("\nOK: all three step-1 Reads return their whole file, the done archive is intact, every")
-    print("GATES.md checkbox is mirrored, and no open gate points at work that is finished.")
+    print("GATES.md checkbox is mirrored, no open gate points at work that is finished, and every")
+    print("blocker/decision stub resolves to its archived body.")
     return 0
 
 

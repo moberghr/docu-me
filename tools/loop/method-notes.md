@@ -637,3 +637,29 @@ shape** and closed with a standing instruction "to capture the name in the same 
     (`§0` resolves to CLAUDE.md's critical rules, not to a missing PLAN.md section). Only the config
     fields had a gap. **Probing four dimensions to ship one test is the expected ratio** — the cost of
     a probe is a script, the cost of a test guarding a dimension that was never at risk is permanent.
+
+## The bookkeeping file's own invariants were the last unguarded seam (iter159)
+
+  * **WHEN ONE INSTANCE OF A PATTERN GETS A CHECKER, ENUMERATE THE OTHER INSTANCES.** `state.json` has
+    three stub-plus-archived-body splits — `gates`, `blockers`, `decisions` — and they fail identically:
+    a key present in one place and invisible in the other. `gates` got `check_gate_mirror` at iter144
+    only after `paste-rule-8-2a` sat unmirrored for **69 iterations**. The sibling fields kept the same
+    exposure for another 15. The cheapest way to find real work is not a new dimension: it is asking
+    which siblings of an already-proven defect were never checked. The prose even prescribed the
+    three-place edit (`blockers._archive`: "delete the key from both ... append a one-line verdict"),
+    which is the tell — **a multi-place edit written out in prose and enforced by nothing.**
+  * **A CHECK MUST NOT FIRE ON THE EVENT THE LOOP IS WAITING FOR.** `decisions-archive.json`'s own
+    `authoritative` field says state.json wins and the archive may be stale, so requiring a body for an
+    *answered* decision would turn Mirko's reply into a red checker. Direction (3) is therefore scoped
+    to stubs still starting with `OPEN`, and the harness carries **two must-stay-GREEN cases**
+    (`answered-body-left-stale`, `answered-body-removed`) alongside the five must-be-CAUGHT ones. When a
+    file documents its own permitted staleness, that sentence is a specification of what not to assert.
+  * **SCOPING A CHECK CREATES A VACUITY RISK, SO ASSERT THE POPULATION.** Narrowing direction (3) to
+    OPEN stubs means a broken detector inspects nothing and still prints OK. The harness reads the
+    reported count back (`10 decision stubs (7 OPEN)`) and fails on `(0 OPEN)` before running any
+    mutation — iter158's anti-vacuity rule, applied to a filter rather than to a file-tree walk.
+  * **`git checkout --` IS THE RIGHT RESTORE WHEN THE MUTATED FILES ARE CLEAN AT HEAD.** No saved copies,
+    no re-serialization drift to undo, exact by construction, and it works from a `finally` after a crash.
+    The harness still asserts the digest per case; it prints the clean `git status` of the three files
+    first, because that precondition is what makes the restore exact. **Not usable for an increment that
+    has already edited those files** — check `git status` before reaching for it.
