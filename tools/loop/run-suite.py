@@ -86,7 +86,7 @@ def failing_from_stdout(text):
 # project dropped from the solution, a filter left in place, a runner that collected nothing. Raise
 # it when the suite legitimately grows; lowering it is a deliberate act that needs a reason in the
 # commit message, exactly like check-state-size.py's MEASURED constants.
-EXPECTED_AT_LEAST = 1426  # iter179: +1, `sync --reply --dry-run` posts nothing and stamps no item
+EXPECTED_AT_LEAST = 1429  # iter180: +3, rule §1.2's hard stop pinned at every catch site in src/
 
 
 def verdict(returncode, blob):
