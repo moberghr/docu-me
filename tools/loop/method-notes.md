@@ -612,3 +612,28 @@ shape** and closed with a standing instruction "to capture the name in the same 
     instead of by a `.Where` a later edit can drop. The control case in
     `.mtk/paths-157/mutate-dead-knob-surface.py` proves it (mention a dead knob in an m0 plan record →
     correctly OK-IGNORED), which is iter125's control-case rule applied to a scope decision.
+
+## A mutation that does not compile is not evidence (iter158)
+
+  * **BUILD-FAILED IS NOT CAUGHT, AND IT READS LIKE IT.** iter158's harness renamed
+    `DashboardConfig.Title` in the record to prove `ConfigFieldSurfaceTests` catches a config field
+    whose docs were left behind. The first run reported the case as failing — but it failed at
+    `dotnet build` (`PublishPipeline.cs:104` still read `.Title`), so the test under examination never
+    ran at all. In C# a rename inside `src/` is compiler-enforced across every reader, which is exactly
+    why the *docs* are the interesting half: **to mutate a rename realistically, patch the record AND
+    every reader** (here four: `PublishPipeline`, `DashboardCommand`, `DriftCommand`, and one test), so
+    the tree compiles and the only thing stale is the prose. Have the harness report `BUILD-FAILED` as
+    its own verdict, distinct from `CAUGHT` and `MISSED` — a harness that folds the two together will
+    tell you a test works when it was never invoked.
+  * **ASSERT THE RESTORE, NOT JUST THE RUN.** Each case restores in a `finally` and the harness hashes
+    every touched file before the first mutation and after the last, printing `IDENTICAL` or
+    `DIRTY — RESTORE FAILED`, then rebuilds at restored HEAD. Five files were being rewritten per case;
+    without the digest, a crash between patch and restore leaves a mutation in the tree that the next
+    `git status` blames on the increment. (iter154's lesson, applied ahead of the failure.)
+  * **THE DIMENSION QUESTION IS RE-ASKABLE, AND MOST ANSWERS COME BACK CLEAN.** iter158 measured four
+    of the dimensions iter157 listed before writing anything: `DOCUME_*` env var names (two real, and
+    the two apparent phantoms are GitHub secret names, one of them documented at its point of use
+    inside the template comment), Confluence label names, and the `§`-numbers docs cite at each other
+    (`§0` resolves to CLAUDE.md's critical rules, not to a missing PLAN.md section). Only the config
+    fields had a gap. **Probing four dimensions to ship one test is the expected ratio** — the cost of
+    a probe is a script, the cost of a test guarding a dimension that was never at risk is permanent.
