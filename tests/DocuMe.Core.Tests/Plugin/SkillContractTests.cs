@@ -116,8 +116,8 @@ public sealed class SkillContractTests
             .ToList();
 
         const string message = "plugin/skills/ ships a skill this class does not check. Add it to Skills and to "
-            + "BranchPrefixes: rule §1.3's untrusted-input clause and rule §0.4's CLI boundary are asserted "
-            + "per skill, over that list.";
+            + "BranchPrefixes: rule §1.3's untrusted-input clause, rule §0.4's CLI boundary and rule §9.5's "
+            + "deferral to the consumer's style guide are asserted per skill, over that list.";
 
         unlisted.ShouldBeEmpty(message);
 
@@ -177,6 +177,37 @@ public sealed class SkillContractTests
                 + "instructions to follow (rule §1.3).";
 
             text.ShouldContain("claims to verify", Case.Insensitive, claims);
+        }
+    }
+
+    /// <summary>
+    /// Every skill reads the consumer's style guide rather than carrying a voice of its own (rule §9.5).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The positive half of §9.5. <see cref="Acceptance.ConsumerKnowledgeCoverageTests"/> owns the
+    /// negative one — that no shipped file repeats this repo's own answers or names its taxonomy — and the
+    /// two fail on different mistakes. A skill that substitutes a house style for the deferral trips that
+    /// scan; a skill that simply drops every mention of <c>_meta/STYLE.md</c> and invents nothing has
+    /// nothing to scan for, and would leave a generation run with no instruction about audience or
+    /// structure at all.
+    /// </para>
+    /// <para>
+    /// Asserted on the path rather than on any sentence around it, so the paragraph may be rewritten
+    /// freely: what may not happen is the file ceasing to be named, because that is the whole of how
+    /// repo-specific knowledge reaches a run.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_skill_reads_the_consumers_style_guide()
+    {
+        foreach (var skill in Skills)
+        {
+            var message = $"{skill}/SKILL.md never names `_meta/STYLE.md`. Rule §9.5 and PLAN.md §1 keep the "
+                + "audience, tone and section taxonomy in the consumer repo, which only works if the skill "
+                + "reads them from there — a skill that names the file nowhere is one that has to guess.";
+
+            Text(skill).ShouldContain("_meta/STYLE.md", customMessage: message);
         }
     }
 
