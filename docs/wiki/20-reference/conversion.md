@@ -107,14 +107,30 @@ pull request.
 > broken image reference, so a new diagram is worth a `convert --render-mermaid` before the pull
 > request.
 
-The renderer is a reimplementation of mermaid rather than mermaid itself, so it accepts a subset.
-These header spellings are rejected, and both of them render on GitHub, which is the case where the
-repository gives you no warning of its own:
+The renderer is a reimplementation of mermaid rather than mermaid itself, so it accepts a subset,
+and the subset is a closed list of six families: `graph` / `flowchart`, `sequenceDiagram`,
+`classDiagram`, `erDiagram`, `stateDiagram` / `stateDiagram-v2`, and `xychart-beta`. That is not a
+sample, it is the whole set the parser dispatches on, so anything else fails on its header line
+before a single node is read.
+
+The rejections below are the ones worth naming, because mermaid itself accepts both and the
+repository gives you no warning of its own. The golden corpus holds a case for each, so the build
+proves they still fail rather than taking this page's word for it:
 
 | Header | Why it fails |
 |---|---|
-| `pie` | The renderer does not implement pie charts |
-| `graph TD;` | A trailing semicolon on the header line. `graph TD` renders |
+| `pie` | The renderer does not implement pie charts, nor sixteen other diagram types outside the six families above |
+| `graph TD;` | A trailing semicolon, and only on `graph`, `flowchart` and `stateDiagram`. `sequenceDiagram;` and `classDiagram;` render, `graph TD` renders |
 
-`graph`, `flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram-v2`, `erDiagram` and
-`xychart-beta` all render.
+That second row is uneven for a reason worth knowing before you read the error twice: the semicolon
+is tolerated exactly where the diagram type is detected by its own name, and dropped where the
+header also has to carry a direction.
+
+One more failure is not in the table because the corpus does not exercise it, and it is the one
+least likely to look like a dialect problem: **the renderer does not read YAML frontmatter.** A
+mermaid `title:` or `config:` block fails every diagram type, including the six that otherwise
+work, reporting `Invalid mermaid header: "---"`. Frontmatter is standard mermaid and GitHub renders
+it, so put the title in the page instead.
+
+Every rejection here reports that same `Invalid mermaid header` message, which tells you the header
+was not recognised and never why.

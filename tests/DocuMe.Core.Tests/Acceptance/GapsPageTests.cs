@@ -128,7 +128,7 @@ public sealed partial class GapsPageTests
     }
 
     [Fact]
-    public void The_mermaid_entry_names_the_same_two_refusals_as_the_page_it_credits()
+    public void The_mermaid_entry_names_the_same_refusals_as_the_page_it_credits()
     {
         var conversion = File.ReadAllText(WikiPath("20-reference/conversion.md"));
         var gaps = Gaps();
@@ -151,6 +151,20 @@ public sealed partial class GapsPageTests
 
         gaps.ShouldContain("`pie`", Case.Sensitive, lostPie);
         gaps.ShouldContain("trailing semicolon", Case.Sensitive, lostSemicolon);
+
+        // The third refusal iter156 measured stays OUT of the table on purpose: that table is pinned
+        // to what the golden corpus proves (MermaidAcceptanceTests renders every row and fails a row
+        // the corpus never rejects), and no golden case carries frontmatter. It is prose on both
+        // pages instead, so this binds the pair the same way rather than leaving it unheld.
+        const string lostFrontmatter =
+            " stopped naming the frontmatter refusal. It fails every diagram type, including the six "
+            + "the renderer does implement, so it is the one that looks least like a dialect gap.";
+
+        gaps.ShouldContain("frontmatter", Case.Sensitive, PagePath + lostFrontmatter);
+        conversion.ShouldContain(
+            "frontmatter",
+            Case.Sensitive,
+            "20-reference/conversion.md" + lostFrontmatter);
     }
 
     [Fact]

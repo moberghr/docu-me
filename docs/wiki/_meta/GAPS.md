@@ -34,11 +34,15 @@ decision is written down instead of being an empty result.
   no other page's globs reached `actions/`.
 
 - **Which mermaid dialects the renderer rejects.** Named on `20-reference/conversion.md`, under
-  "Mermaid": `pie` and a trailing semicolon on the header line. These were parked here as sandbox
-  observations, and they are not. `MermaidAcceptanceTests` runs the real renderer over the golden
-  corpus and asserts both refusals, and `templates/tools/render-mermaid.mjs` records them against the
-  pinned version, so the wiki was withholding a fact the build already proved. Both spellings render on
-  GitHub, which is the case where a reader has no other signal.
+  "Mermaid": `pie`, a trailing semicolon on the header line, and YAML frontmatter. These were parked
+  here as sandbox observations, and they are not. `MermaidAcceptanceTests` runs the real renderer over
+  the golden corpus and asserts the first two refusals, and `templates/tools/render-mermaid.mjs`
+  records them against the pinned version, so the wiki was withholding a fact the build already
+  proved. All three render on GitHub, which is the case where a reader has no other signal.
+  The page states the supported set as a closed list of six families rather than a denylist of
+  spellings, because that is the shape of the parser's own dispatch and a denylist read as though
+  `pie` were an exception. The semicolon is the uneven one: tolerated on `sequenceDiagram;` and
+  `classDiagram;`, rejected on `graph TD;`.
 
 - **Why `approvedBy` is always `unknown`.** Confluence Cloud exposes no label author through any API
   DocuMe can reach. Documented on `10-concepts/approval-and-drift.md`, under "How approval is

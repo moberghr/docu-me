@@ -543,3 +543,44 @@ shape** and closed with a standing instruction "to capture the name in the same 
     reproduce it (1 red in 17 today, ~6%); it is **not** the iter59 mermaid flake, which was fixed.
     A lead, not a conclusion: both recorded occurrences were **the first suite run after a rebuild**,
     and the suite spawns real processes. The next occurrence will name itself.
+  * **A GATE'S "IT IS YOUR CALL" CAN STILL CONTAIN A QUESTION OF FACT THAT IS THE LOOP'S TO ANSWER
+    — CHECK BEFORE ENDING ON WAITING-GATE.** `decisions.mermaidDialectGap` sat open from iter113 to
+    iter156 as a three-way judgement Mirko owed, and it was — but option (a) was written
+    *"upgrade or replace `beautiful-mermaid` (check whether a later version takes `graph TD;` and
+    `pie`)"*, and that parenthesis was **homework assigned to Mirko that `npm view
+    beautiful-mermaid versions` answers in 30 seconds**: 1.1.3 IS `latest`, so the upgrade half was
+    a dead end for 43 iterations while the gate went on offering it. Measuring the rest took one
+    probe and found the gap was 17 diagram types rather than 1, a root cause that made option (b)
+    cheap, and a **fourth failure nobody had recorded** (YAML frontmatter). None of that picks the
+    option; all of it changes which option a reasonable person picks. **The judgement is Mirko's,
+    the facts are the loop's — and the facts were sitting inside the sentence describing the
+    judgement.** Before writing "only gated work remains", re-read the gate prose for embedded
+    verbs: *check*, *find out*, *see whether*, *confirm*. That is the loop's work wearing a gate's
+    clothes.
+  * **MEASURE A LIBRARY'S SURFACE, NOT THE FOUR CASES YOUR CORPUS HAPPENS TO HOLD.** iter113
+    measured mermaid dialects with the 4 diagrams in `tests/golden/cases/mermaid.md` and reported
+    "rejects 2 of them", which the wiki then wrote up as a **two-row denylist** — a shape that reads
+    as though `pie` were an exception. It is one of seventeen. The corpus is a sample of what *this
+    repo wrote*, never of what the dependency *supports*; for the supported set, read the
+    dependency's own dispatch (`detectDiagramType`, `index.ts:54`) and then confirm it by driving
+    the real script over the full surface. Predict first and score the predictions — 13/13 held,
+    which is what makes the mechanism claim quotable rather than a guess.
+  * **A DOC TABLE CAN BE PINNED TO THE GOLDEN CORPUS, SO A TRUE FACT CAN STILL BE THE WRONG THING TO
+    PUT IN IT.** iter156 measured that YAML frontmatter fails every mermaid diagram type and added a
+    row for it to `docs/wiki/20-reference/conversion.md`'s rejected-header table. Build green,
+    `GapsPageTests` green, full suite **red**:
+    `MermaidAcceptanceTests.The_conversion_page_names_exactly_the_headers_the_real_renderer_rejects`
+    renders **every row of that table through the real renderer** and fails any row the *golden
+    corpus* does not actually reject — *"names a header the real renderer no longer rejects, so the
+    page warns a reader off a diagram that works"*. No golden case carries frontmatter, so a
+    measured-elsewhere fact reads to that test as an over-claim, which is exactly what it is there to
+    catch. **The fix was prose under the table, not a weaker test.** Two lessons: (i) before adding a
+    row to a table in `docs/wiki/`, grep `tests/` for the page name — several tables are contracts
+    with a corpus behind them, not lists; (ii) **a green single-class run is not a green suite** —
+    `GapsPageTests` passed because its regex only counts rows, while the test that actually *renders*
+    them lives in a different class.
+  * **WHEN A LATE FAILURE CHANGES WHAT YOU DID, GO BACK AND CORRECT THE RECORD YOU ALREADY WROTE.**
+    iter156 had already written "adds the frontmatter row" into `state.json → phase` and into
+    done-archive line 157 before the suite refuted it. Both were rewritten before the commit. An
+    archive entry is the only account a cold session gets, and a done entry that describes work that
+    was reverted is worse than no entry: the next iteration reads it as HEAD's state.
