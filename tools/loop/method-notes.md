@@ -14,7 +14,18 @@
 > `tools/loop/method-notes-archive-2.md` VERBATIM, assert the round trip BEFORE rewriting this file,
 > and leave the heading plus its headlines behind as a stub (the heading has to stay — GATES.md cites
 > one of them by name). Generation 1, `method-notes-archive.md`, is full and frozen. Worked recipe,
-> re-runnable: `.mtk/paths-162/rotate-method-notes.py`.
+> re-runnable: `.mtk/paths-162/rotate-method-notes.py` (or `.mtk/paths-165/rotate-iter165.py`, the
+> one-section form).
+>
+> **MEASURED AT ITER165 (`python3 .mtk/paths-165/split-stubs-vs-bodies.py`), BECAUSE THAT REMEDY IS
+> NOW NEARLY SPENT: AFTER THIS ITERATION'S TWO ROTATIONS, 24 OF THE 26 `##` SECTIONS ARE STUBS -
+> 28.2 KB of pointers against 6.9 KB of live bodies**, which are iters 164-165, the work in flight.
+> **So "rotate the oldest settled section" has about ONE move left, and the next budget lever is the
+> STUB LAYER itself:** 24 pointers averaging 1,173 B, which is a summary each rather than a pointer.
+> Condensing them, or splitting their headlines into a generation 3, is a deliberate increment of its
+> own; a generation 3 must be declared in `ARCHIVE_FILES` in the same change that creates it. **And
+> measure the destination first: generation 2 is now 54 KB / ~22.5 K tok, past the 20,000-token band**
+> (exempt as a declared archive, opened by heading, but a whole Read of it truncates at 25,000).
 
 **METHOD NOTES — carried forward, plus one new.**
   * **iter127: EVERY FILE THIS LOOP APPENDS TO EVERY ITERATION WILL EVENTUALLY OUTGROW THE READ TOOL.**
@@ -401,78 +412,35 @@ was written down and never mechanised.*
     GREEN/REGRESSION pair for the must-stay-green control.
 ## A printed defect that exits 0, and a fixture list that rots (iter162)
 
-  * **A CHECK THAT REPORTS A DEFECT AND EXITS 0 TRAINS ITS READERS TO SKIM.** This checker printed
-    `method-notes.md OVER CAP - Read TRUNCATES` from iter139 to iter161 and exited 0, so ~23
-    iterations saw the flag and moved on while a Read of the file *this* document orders them to read
-    was dropping its newest notes. The fix was the exit code, not more prose beside the flag. **If a
-    check knows something is wrong, decide whether that is a failure; "reported" is not a state.**
-  * **A HARNESS THAT ENUMERATES ITS FIXTURE BY HAND ROTS THE MOMENT THE THING IT GUARDS GAINS A
-    DEPENDENCY.** `.mtk/paths-129/mutate-size-check.py`, the only guard on this checker's red
-    branches, was **0/5 at HEAD** and had been since ~iter136: its six-file `NEEDED` list never gained
-    the archives that iters 136/159/160/161's checks read, so the checker died on FileNotFoundError
-    inside the scratch tree. Copy the DIRECTORY, not a list. Only its own baseline assertion made the
-    silence free (it said "harness is invalid", not green), so **assert the un-mutated cell first**,
-    and **after adding a check to a script, re-run that script's own harness.**
-  * **A ROTATION HAS TWO CEILINGS, THE SOURCE'S AND THE DESTINATION'S: MEASURE THE DESTINATION FIRST.**
-    Archive-1 had 15,899 B before its own budget and the rotation was 28,614 B, so appending there
-    would have RELOCATED the truncation, hence generation 2. **The pair is the unit, not the file.**
-    And **headroom is the deliverable, not fitting:** the five sections `nextAction` named left 2,593
-    B, one iteration's worth, and the new hard check would have re-fired at once.
-  * **ANCHOR A MUTATION EXPECTATION ON THE CHECK'S OWN MESSAGE, NEVER ON THE MUTATED FILE'S NAME.**
-    Sharper than iter161's (two checks colliding): the size table prints EVERY filename on EVERY run,
-    green included, so a cell expecting `method-notes.md` scores CAUGHT against a passing checker.
-  * **A MIGRATION SCRIPT MUST REFUSE A PARTIALLY APPLIED INPUT, NOT MERELY DETECT A FULLY APPLIED
-    ONE.** Widening this rotation from five sections to seven and re-running would have taken the five
-    stubs as bodies and written them OVER the real bodies in the archive, the one path here that
-    destroys text. Escape was the pre-rotation backup; the guard is cell C of
-    `.mtk/paths-162/test-rotation-guard.py`, 3/3.
-  * **ONE MORE SHAPE THIS BASH TOOL STATICALLY REFUSES:** a newline followed by `#` inside a quoted
-    argument, so a multi-line `python3 -c "…"` cannot carry a comment line.
-
+  * **MOVED to `tools/loop/method-notes-archive-2.md` at iter165**, verbatim and round-trip asserted,
+    to pay back the budget iter165's own section spent. Nothing was discarded, and its mechanism is
+    committed: `check_read_whole_files`, whose vacuity refusal iter165 proved fires. **The headlines:**
+    **a check that reports a defect and exits 0 trains its readers to skim** - if a check knows
+    something is wrong, decide whether that is a failure, because "reported" is not a state; **a
+    harness that enumerates its fixture by hand rots the moment the thing it guards gains a
+    dependency** (0/5 at HEAD for ~26 iterations, so copy the DIRECTORY, not a list, and assert the
+    un-mutated cell first); **a rotation has two ceilings, the source's and the destination's -
+    measure the destination first**, and **headroom is the deliverable, not fitting**; **anchor a
+    mutation expectation on the check's own message, never on the mutated file's name**, since the
+    size table prints every filename on every run, green included; and **a migration script must
+    REFUSE a partially applied input**, not merely detect a fully applied one.
 ## A verdict nobody reached, and warnings that cannot be heard (iter163)
 
-  * **THE MIRROR IMAGE OF ITER162: A CHECK CAN ALSO PRINT A VERDICT IT NEVER REACHED.** iter162
-    hardened a check that printed a defect and exited 0. Sweeping the rest of tools/loop found the
-    opposite shape in `check_gate_pointers`, which has printed `OK: every pointer resolves to a
-    section that still has outstanding work` on **every run since it shipped at iter151 while
-    resolving nothing at all** - the population is empty, and has been from its first run, because
-    iter151 fixed the three stale pointers by REWRITING the gates that carried them. True the way
-    "every unicorn in this room is blue" is true. **VACUITY HAS TWO CAUSES AND ONLY ONE IS A
-    FAILURE:** nobody writes that prose form any more (legitimate - demanding the population exist
-    would be absurd) versus the parser broke (a real defect, and indistinguishable in the output).
-    So assert **the walk, not the finding count** - here, that GATES.md still yields `## ` sections
-    and gate bodies - and print which of the two happened instead of a conclusion. **THE GENERAL
-    MOVE: the check most likely to be vacuous is the one whose defect was fixed by removing its
-    population.** Six of this script's eight checks already refused a vacuous pass; the one that
-    did not was the one that had nothing left to look at.
-  * **"WARN AND CONTINUE" IS NOT ALWAYS ON THE MENU - MEASURE THE CHANNEL BEFORE DESIGNING FOR IT.**
-    `deny-history-rewrite.py` had a branch that printed to stderr and returned 0, describing itself
-    as "say so loudly and allow". Measured in the invocation `docume-loop.sh:117` actually uses
-    (`claude -p … 2>&1`, no hook-event flags): **exit 0 and exit 1 are equally silent** - the command
-    ran and the message reached neither the merged log nor the agent's turn - while **exit 2 was
-    quoted back by the agent verbatim.** So for a PreToolUse hook there is no advisory register at
-    all: every branch is a block or a silence, and one that knows it inspected nothing must be the
-    block. (Sits beside iter133's "a failing PostToolUse hook is invisible": the loop's hook channel
-    is mute unless it refuses.)
-  * **A PROBE THAT ENABLES THE VISIBILITY IT IS MEASURING PROVES NOTHING.** The first version of
-    that probe passed `--output-format stream-json --include-hook-events --verbose` and scored 4/4,
-    finding the hook's stderr present for exit 0, 1 and 2 alike - because it had asked for hook
-    events. The loop passes none of those flags. **Reproduce the invocation under test, flags
-    included**, or the measurement describes the probe.
-  * **AN ANCHOR PHRASE MUST BE CONTIGUOUS IN THE SOURCE, NOT JUST PRESENT IN IT.** Sharpens iter161
-    and iter162's "anchor on the check's own message": the new hook message wrapped
-    `could not be parsed as JSON` across a `\n` inside the string literal, so the cell expecting that
-    phrase reported **WRONG-CHECK against a hook that was behaving exactly as specified**. Keep the
-    greppable phrase on one line in the source and the harness agrees with reality. The harness
-    catching this before the commit is the whole argument for writing it first.
-  * **A NUMBER THE PROTOCOL ASKS EVERY ITERATION TO EYEBALL IS A MISSING ASSERTION.** `nextAction`
-    has carried "**Expect 1390 tests**" for many iterations, which is iter154's lesson (an
-    instruction that depends on the next agent remembering it is not a fix - placement is) in a
-    second place. It is now `EXPECTED_AT_LEAST` in run-suite.py: a FLOOR, not an equality, because
-    tests only get added here, so it fires when the count DROPS and needs no edit when it grows.
-    Same file also stopped treating a zero exit code as proof the suite ran - an unparseable summary
-    printed `total=?` beside the word PASS.
-
+  * **MOVED to `tools/loop/method-notes-archive-2.md` at iter165**, verbatim and round-trip asserted,
+    to leave this file the headroom one rotation did not buy. Nothing was discarded, and all three
+    mechanisms it records are committed and re-proven green by `.mtk/paths-163/run-all.py` (4/4).
+    **The headlines:** **a check can print a verdict it never reached** - the mirror image of iter162,
+    and `check_gate_pointers` printed "every pointer resolves" over an empty population for 12
+    iterations, so **assert the WALK, not the finding count**, and note that **the check most likely
+    to be vacuous is the one whose defect was fixed by removing its population**; **"warn and
+    continue" is not always on the menu - measure the channel first**, because in the driver's
+    invocation a PreToolUse hook's stderr is silent at exit 0 AND exit 1 and only exit 2 is quoted
+    back, so a branch that knows it inspected nothing must block; **a probe that enables the
+    visibility it is measuring proves nothing** (reproduce the invocation under test, flags included);
+    **an anchor phrase must be CONTIGUOUS in the source**, or a wrapped string literal makes a correct
+    hook score WRONG-CHECK; and **a number the protocol asks every iteration to eyeball is a missing
+    assertion** - "expect 1390 tests" is now `EXPECTED_AT_LEAST`, a floor that fires when the count
+    drops and needs no edit when it grows.
 ## Proving a vacuity judgement instead of writing one (iter164)
 
   * **"NON-VACUOUS BY CONSTRUCTION" IS A CLAIM, AND THREE OF FOUR WERE FALSE.** iter163 fixed the one
@@ -517,3 +485,35 @@ was written down and never mechanised.*
   * **ONE MORE SHAPE THIS BASH TOOL STATICALLY REFUSES:** `<->` inside a quoted argument, read as a
     zsh numeric-range glob. It is in this checker's own section headers, so grep for a neighbouring
     phrase instead. Redirecting to `/tmp` is refused too - write scratch output under the repo.
+
+## A refusal that returns is a refusal that skips (iter165)
+
+  * **A DECLARED REFUSAL IS PROSE UNTIL A CELL FIRES IT** - iter164's argument about "non-vacuous by
+    construction", one level in. Four checks carried an explicit vacuity refusal that nothing had ever
+    executed. All four fire (5 cells, 5 predictions, 5 matches), so **that half is a green measurement
+    and worth one sentence, not a story.** Two of the four needed a *source* mutation rather than a data
+    one, because their population comes from a walk and from their own declared list: `patch_source`
+    asserts the anchor matched **exactly once**, since a no-op replace leaves the tree healthy and grades
+    MISSED - a fabricated find.
+  * **THE DEFECT WAS ONE LEVEL PAST THAT, AND IT IS A SHAPE TO LOOK FOR ANYWHERE: A GUARD THAT
+    `return`s.** Two of the eight refusals ended in `return problems`; the other six append and carry
+    on. Their populations are **not interdependent** - `check_gates_archive`'s substring-derived
+    `citing` set going empty leaves 12 orphan-body comparisons and 4 declared keys fully assertable,
+    and `check_settled_bodies`' spike names going empty leaves the whole blocker side. Measured by
+    emptying the vacuous population **and planting a defect a skipped direction owns**: both printed
+    "nothing to check" and named neither plant. So the refusal was **buying an honest label at the price
+    of the findings**, and one of the two plants was the only defect in this tree that destroys text.
+    Fix: append the refusal, never return on it. New verdict: **MASKED**.
+  * **WHEN A CELL PASSES, RECORD WHO ELSE FIRED.** WRONG-CHECK catches a sibling covering for a SILENT
+    check; the weaker question - is this check the only detector for that emptying? - needs the co-fired
+    set printed on the CAUGHT line too. It immediately showed that iter164's `gate-mirror/mirror-drained`
+    cell had been firing `check_gates_archive`'s refusal as collateral all along, unattributed: the
+    branch iter165 set out to prove had been executing for an iteration and nobody could see it.
+  * **A REMEDY INSTRUCTION GOES STALE LIKE ANY OTHER CLAIM ABOUT THE TREE - MEASURE THE POPULATION IT
+    NAMES.** This file's header has told every iteration to "rotate the oldest settled sections" since
+    iter162; counting them showed 20 of 24 are already stubs and cannot be rotated twice, so the
+    instruction had one move left. Same family as iter151's gate steps that had you redo finished
+    setup: **an instruction is a claim, and the cheap check is to count what it points at.**
+  * **BOUND THE BLAST RADIUS BEFORE PREDICTING, IN THE CHECK'S SOURCE, NOT FROM MEMORY.** `blockersArchive.settled`
+    is read by two checks; the prediction "cell 1 is the sole detector" was only defensible after reading
+    that the second one merely loops over it (`for key in settled`) and so no-ops when drained.

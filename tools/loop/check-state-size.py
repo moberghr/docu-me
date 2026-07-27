@@ -787,15 +787,21 @@ def check_settled_bodies(doc):
 
     # (0) NOT VACUOUS. Every comparison below is "key in <collection>"; an empty left-hand side
     # passes all of them silently, which is the exact failure mode this guard exists to refuse.
+    #
+    # IT NO LONGER RETURNS (iter165). It used to print this and stop, and the three populations are
+    # NOT interdependent: draining `spikesArchive.settled` makes direction (4) vacuous and leaves the
+    # blocker side - 5 tombstones against 5 bodies - fully assertable. Measured: with the spike names
+    # drained AND one keyed body deleted, this check printed "nothing to check" and said nothing about
+    # the missing body, which is the only defect in the tree that destroys text (cell
+    # settled-bodies/spikes-drained-hides-missing-body). None of the directions below produces a
+    # falsehood over an empty population either - "every tombstone is missing its body" is exactly
+    # what a truncated archive means - so the refusal is now context on top of the findings, not
+    # instead of them.
     if not settled or not spikes or not records:
         problems.append(
             f"nothing to check - {len(settled)} blocker tombstones, {len(spikes)} spike names,"
             f" {len(records)} archived blocker bodies. A vacuous pass is not a pass"
         )
-        print("\nsettled tombstones <-> their archived bodies (iter160):")
-        for problem in problems:
-            print(f"  BROKEN: {problem}")
-        return problems
 
     # (1) EVERY ARCHIVED BODY IS KEYED. Without this the pairing below cannot be made at all - the
     # four pre-iter160 lines carried only `n` and `archivedAt`, which is why nothing had checked it.
@@ -908,15 +914,18 @@ def check_gates_archive(doc):
 
     # (0) NOT VACUOUS, method note (b). Both directions are "key in <collection>" lookups, so an
     # empty citing set or an empty archive would report OK forever over nothing at all.
+    #
+    # IT NO LONGER RETURNS (iter165), for check_settled_bodies' reason. `citing` is derived by
+    # SUBSTRING, so it empties the moment stubs get reworded - which iter155 already did to one of
+    # them - while directions (1) and (3) still have their full populations: 12 gate-shaped bodies and
+    # 4 declared keys. Measured: citations dropped AND an undeclared gate-shaped body planted, and
+    # this check printed "nothing to check" while direction (1)'s orphan went unnamed (cell
+    # gates-archive/citations-dropped-hides-orphan).
     if not citing or not bodies:
         problems.append(
             f"nothing to check - {len(citing)} gate stubs cite the archive, {len(bodies)} bodies"
             " in it. A vacuous pass is not a pass"
         )
-        print("\n`gates` <-> gates-archive.json, its second body (iter161):")
-        for problem in problems:
-            print(f"  BROKEN: {problem}")
-        return problems
 
     # (1) NO ORPHAN BODY. A gate-shaped key here that `gates` does not list is either a gate removed
     # without its mirror or a mis-keyed mirror - and a mis-keyed mirror is a pointer to nothing from

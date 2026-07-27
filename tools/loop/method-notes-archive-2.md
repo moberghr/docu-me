@@ -539,3 +539,77 @@ Its one operative sentence (truncation is not silent) stayed behind in `readMe`.
     dead weight, and a declared name that is ALSO a live gate would exempt a real mirror forever. Both
     are mutation cases in `.mtk/paths-161/mutate-gates-archive.py`.
 
+## A printed defect that exits 0, and a fixture list that rots (iter162)
+
+  * **A CHECK THAT REPORTS A DEFECT AND EXITS 0 TRAINS ITS READERS TO SKIM.** This checker printed
+    `method-notes.md OVER CAP - Read TRUNCATES` from iter139 to iter161 and exited 0, so ~23
+    iterations saw the flag and moved on while a Read of the file *this* document orders them to read
+    was dropping its newest notes. The fix was the exit code, not more prose beside the flag. **If a
+    check knows something is wrong, decide whether that is a failure; "reported" is not a state.**
+  * **A HARNESS THAT ENUMERATES ITS FIXTURE BY HAND ROTS THE MOMENT THE THING IT GUARDS GAINS A
+    DEPENDENCY.** `.mtk/paths-129/mutate-size-check.py`, the only guard on this checker's red
+    branches, was **0/5 at HEAD** and had been since ~iter136: its six-file `NEEDED` list never gained
+    the archives that iters 136/159/160/161's checks read, so the checker died on FileNotFoundError
+    inside the scratch tree. Copy the DIRECTORY, not a list. Only its own baseline assertion made the
+    silence free (it said "harness is invalid", not green), so **assert the un-mutated cell first**,
+    and **after adding a check to a script, re-run that script's own harness.**
+  * **A ROTATION HAS TWO CEILINGS, THE SOURCE'S AND THE DESTINATION'S: MEASURE THE DESTINATION FIRST.**
+    Archive-1 had 15,899 B before its own budget and the rotation was 28,614 B, so appending there
+    would have RELOCATED the truncation, hence generation 2. **The pair is the unit, not the file.**
+    And **headroom is the deliverable, not fitting:** the five sections `nextAction` named left 2,593
+    B, one iteration's worth, and the new hard check would have re-fired at once.
+  * **ANCHOR A MUTATION EXPECTATION ON THE CHECK'S OWN MESSAGE, NEVER ON THE MUTATED FILE'S NAME.**
+    Sharper than iter161's (two checks colliding): the size table prints EVERY filename on EVERY run,
+    green included, so a cell expecting `method-notes.md` scores CAUGHT against a passing checker.
+  * **A MIGRATION SCRIPT MUST REFUSE A PARTIALLY APPLIED INPUT, NOT MERELY DETECT A FULLY APPLIED
+    ONE.** Widening this rotation from five sections to seven and re-running would have taken the five
+    stubs as bodies and written them OVER the real bodies in the archive, the one path here that
+    destroys text. Escape was the pre-rotation backup; the guard is cell C of
+    `.mtk/paths-162/test-rotation-guard.py`, 3/3.
+  * **ONE MORE SHAPE THIS BASH TOOL STATICALLY REFUSES:** a newline followed by `#` inside a quoted
+    argument, so a multi-line `python3 -c "…"` cannot carry a comment line.
+
+## A verdict nobody reached, and warnings that cannot be heard (iter163)
+
+  * **THE MIRROR IMAGE OF ITER162: A CHECK CAN ALSO PRINT A VERDICT IT NEVER REACHED.** iter162
+    hardened a check that printed a defect and exited 0. Sweeping the rest of tools/loop found the
+    opposite shape in `check_gate_pointers`, which has printed `OK: every pointer resolves to a
+    section that still has outstanding work` on **every run since it shipped at iter151 while
+    resolving nothing at all** - the population is empty, and has been from its first run, because
+    iter151 fixed the three stale pointers by REWRITING the gates that carried them. True the way
+    "every unicorn in this room is blue" is true. **VACUITY HAS TWO CAUSES AND ONLY ONE IS A
+    FAILURE:** nobody writes that prose form any more (legitimate - demanding the population exist
+    would be absurd) versus the parser broke (a real defect, and indistinguishable in the output).
+    So assert **the walk, not the finding count** - here, that GATES.md still yields `## ` sections
+    and gate bodies - and print which of the two happened instead of a conclusion. **THE GENERAL
+    MOVE: the check most likely to be vacuous is the one whose defect was fixed by removing its
+    population.** Six of this script's eight checks already refused a vacuous pass; the one that
+    did not was the one that had nothing left to look at.
+  * **"WARN AND CONTINUE" IS NOT ALWAYS ON THE MENU - MEASURE THE CHANNEL BEFORE DESIGNING FOR IT.**
+    `deny-history-rewrite.py` had a branch that printed to stderr and returned 0, describing itself
+    as "say so loudly and allow". Measured in the invocation `docume-loop.sh:117` actually uses
+    (`claude -p … 2>&1`, no hook-event flags): **exit 0 and exit 1 are equally silent** - the command
+    ran and the message reached neither the merged log nor the agent's turn - while **exit 2 was
+    quoted back by the agent verbatim.** So for a PreToolUse hook there is no advisory register at
+    all: every branch is a block or a silence, and one that knows it inspected nothing must be the
+    block. (Sits beside iter133's "a failing PostToolUse hook is invisible": the loop's hook channel
+    is mute unless it refuses.)
+  * **A PROBE THAT ENABLES THE VISIBILITY IT IS MEASURING PROVES NOTHING.** The first version of
+    that probe passed `--output-format stream-json --include-hook-events --verbose` and scored 4/4,
+    finding the hook's stderr present for exit 0, 1 and 2 alike - because it had asked for hook
+    events. The loop passes none of those flags. **Reproduce the invocation under test, flags
+    included**, or the measurement describes the probe.
+  * **AN ANCHOR PHRASE MUST BE CONTIGUOUS IN THE SOURCE, NOT JUST PRESENT IN IT.** Sharpens iter161
+    and iter162's "anchor on the check's own message": the new hook message wrapped
+    `could not be parsed as JSON` across a `\n` inside the string literal, so the cell expecting that
+    phrase reported **WRONG-CHECK against a hook that was behaving exactly as specified**. Keep the
+    greppable phrase on one line in the source and the harness agrees with reality. The harness
+    catching this before the commit is the whole argument for writing it first.
+  * **A NUMBER THE PROTOCOL ASKS EVERY ITERATION TO EYEBALL IS A MISSING ASSERTION.** `nextAction`
+    has carried "**Expect 1390 tests**" for many iterations, which is iter154's lesson (an
+    instruction that depends on the next agent remembering it is not a fix - placement is) in a
+    second place. It is now `EXPECTED_AT_LEAST` in run-suite.py: a FLOOR, not an equality, because
+    tests only get added here, so it fires when the count DROPS and needs no edit when it grows.
+    Same file also stopped treating a zero exit code as proof the suite ran - an unparseable summary
+    printed `total=?` beside the word PASS.
+
