@@ -18,6 +18,12 @@ namespace DocuMe.Core.Tests.Markdown;
 /// twenty-odd iterations.
 /// </para>
 /// <para>
+/// The same reasoning covers one fact about the corpus's <em>shape</em> rather than its constructs
+/// (<see cref="No_golden_case_hides_below_the_corpus_root"/>): the runner enumerates recursively and
+/// every reviewing assertion enumerates the root, so a nested case would be converted by one and
+/// pinned by neither.
+/// </para>
+/// <para>
 /// This matters more since the bar was revised (2026-07-25): real-corpus validation moved to M7, so the
 /// goldens are the whole of M1's acceptance. Adding a row to §7's table means adding its case here in the
 /// same slice, which is the rule §4.4 sentence this class enforces.
@@ -107,6 +113,32 @@ public sealed class GoldenCoverageTests
         // asserted against a list that stopped describing the corpus.
         unclaimed.ShouldBeEmpty(
             "Map each new golden to the §7 row it pins, or add it to Extras with a reason.");
+    }
+
+    [Fact]
+    public void No_golden_case_hides_below_the_corpus_root()
+    {
+        // The third blind spot, and the only one that is a live vector rather than an omission. The
+        // shipped runner walks the corpus RECURSIVELY (ConversionAcceptance.RunDirectory,
+        // SearchOption.AllDirectories) while every assertion that reviews it — the three above, and
+        // GoldenFileTests — enumerates the root alone. A .md below the root is therefore converted
+        // and counted as a corpus page that no hand-reviewed .storage.xml pins and no §7 row claims,
+        // so rule §4.3's "asserted forever" quietly stops covering it while the suite stays green.
+        //
+        // Not hypothetical: the fixture is copied by a `..\golden\**\*` glob, so an UNTRACKED
+        // subdirectory reaches it. tests/golden/.claude/ is in bin/ today, one .md away from firing.
+        // The glob is deliberately left broad — narrowing it to the root would trade this loud
+        // failure for a silent one, where a genuinely nested case never reaches the fixture at all.
+        var nested = Directory
+            .EnumerateFiles(GoldenCorpus.Directory, "*.md", SearchOption.AllDirectories)
+            .Select(file => Path.GetRelativePath(GoldenCorpus.Directory, file).Replace('\\', '/'))
+            .Where(relative => relative.Contains('/', StringComparison.Ordinal))
+            .ToList();
+
+        nested.ShouldBeEmpty(
+            "The golden corpus is flat by contract: a nested .md is converted by the acceptance "
+            + "runner but reviewed by nothing. Move it to the corpus root with its .storage.xml, "
+            + "or keep it out of tests/golden entirely.");
     }
 
     [Fact]

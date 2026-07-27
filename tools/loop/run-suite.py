@@ -86,7 +86,7 @@ def failing_from_stdout(text):
 # project dropped from the solution, a filter left in place, a runner that collected nothing. Raise
 # it when the suite legitimately grows; lowering it is a deliberate act that needs a reason in the
 # commit message, exactly like check-state-size.py's MEASURED constants.
-EXPECTED_AT_LEAST = 1394  # iter169: +4, ToolchainPinningTests
+EXPECTED_AT_LEAST = 1395  # iter171: +1, GoldenCoverageTests corpus-shape guard
 
 
 def verdict(returncode, blob):
