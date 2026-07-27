@@ -121,6 +121,26 @@ ALWAYS_LOADED = [
     "tools/loop/ITERATION-PROMPT.md",
 ]
 
+# Files under tools/loop/ that are ARCHIVES: opened on purpose by key, heading or date with
+# grep/tail/offset, never Read whole, and therefore exempt from the token budget every other file
+# here is held to. Each entry states WHY, because an exemption without a reason is how a file that
+# IS read whole quietly becomes unreadable - which is exactly what happened to method-notes.md.
+#
+# DECLARED, NEVER INFERRED FROM THE FILENAME (iter161's lesson, applied before the fact): a rule like
+# "anything matching *-archive.* is exempt" would let the next file exempt itself by being named
+# well, and the whole point of this check is that a file cannot opt out of being readable by accident.
+# Anything under tools/loop/ that is NOT listed here must fit in one Read, budget included.
+ARCHIVE_FILES = {
+    "done-archive.jsonl": "one line per iteration; read with `--find`, never whole (doneArchive.howToRead).",
+    "blockers-archive.jsonl": "settled blocker bodies, one per line; opened by key.",
+    "decisions-archive.json": "full decision bodies; opened by the key a `decisions` stub names.",
+    "gates-archive.json": "the verbose pre-iter128 gate mirrors; GATES.md is the copy you read.",
+    "spikes-archive.json": "settled spike findings; opened by spike name.",
+    "handoff-archive.md": "session handoffs; opened by date when one is needed.",
+    "method-notes-archive.md": "method notes, generation 1 - full and frozen at iter162; opened by heading.",
+    "method-notes-archive-2.md": "method notes, generation 2 - iter162 onwards; opened by heading.",
+}
+
 
 def bytes_per_token(path):
     if os.path.splitext(path)[1] in (".json", ".jsonl"):
@@ -868,6 +888,89 @@ def transcript_for(wanted):
     return found, f"logs/{found[0]}{note}"
 
 
+def check_read_whole_files():
+    """Does every tools/loop file that an iteration READS WHOLE still fit in one Read?
+
+    ADDED ITER162, and it is a soft flag becoming a hard failure. This script has printed
+    "OVER CAP - Read TRUNCATES" next to `method-notes.md` since iter139 and exited 0 anyway, so for
+    ~23 iterations the protocol told every iteration to read a file whose newest notes a Read was
+    silently dropping, and every iteration saw the flag and moved on. THE LESSON IS NOT ABOUT THAT
+    FILE: a check that reports a defect without failing is a check that trains its readers to skim.
+    Step 1's three files have failed this script since iter129; the rest of tools/loop had a
+    printout. Now the printout has the same teeth.
+
+    Three facts, and a vacuity refusal:
+      (1) every file NOT declared an archive fits inside TARGET_TOKENS, with the remedy named
+      (2) every declared archive still exists, so the declaration cannot rot into exempting nothing
+      (3) an archive is exempt from the budget but still reported, because "you only grep it" is a
+          claim about how it is read, not permission for it to be unreadable
+    The refusal: if the scan classified no read-whole files at all, something is wrong with the walk
+    and a green result would mean nothing.
+    """
+    problems = []
+    read_whole, archives = [], []
+
+    for name in sorted(os.listdir(LOOP_DIR)):
+        path = os.path.join(LOOP_DIR, name)
+        if name == "state.json" or not os.path.isfile(path):
+            continue
+        if os.path.splitext(name)[1] not in (".json", ".jsonl", ".md"):
+            continue
+        n_bytes = os.path.getsize(path)
+        row = (name, n_bytes, est_tokens(n_bytes, name))
+        (archives if name in ARCHIVE_FILES else read_whole).append(row)
+
+    print("\nother files under tools/loop/ (NOT on the step-1 path). READ-WHOLE ones are held to the")
+    print("same budget as step 1's three; archives are exempt by declaration and read with grep/offset:")
+    for name, n_bytes, tokens in read_whole:
+        print(f"  read-whole  {n_bytes:>8,}  ~{tokens:>7,} tok  {name}  {status_for(n_bytes, tokens)}")
+    for name, n_bytes, tokens in archives:
+        print(f"  archive     {n_bytes:>8,}  ~{tokens:>7,} tok  {name}  {status_for(n_bytes, tokens)}")
+
+    # (1) THE READ-WHOLE CLASS FITS. Naming the remedy in the failure is the point: iter162's own
+    # rotation is the worked example, and it is cheaper than an iteration rediscovering the shape.
+    for name, n_bytes, tokens in read_whole:
+        if tokens > TARGET_TOKENS:
+            problems.append(
+                f"{name} is {n_bytes:,} B / ~{tokens:,} tok, past the {TARGET_TOKENS:,}-token budget"
+                " every read-whole file here must fit. Rotate its oldest settled sections into an"
+                " archive VERBATIM, assert the round trip before rewriting the live file, and leave"
+                " the heading plus its headlines behind (recipe:"
+                " .mtk/paths-162/rotate-method-notes.py). If it is genuinely never read whole,"
+                " declare it in ARCHIVE_FILES with the reason instead"
+            )
+
+    # (2) THE DECLARATION STAYS HONEST. A declared name that is not on disk exempts nothing and
+    # hides a rename - the same failure shape iter161 guarded on gates-archive.json's key list.
+    for name in ARCHIVE_FILES:
+        if not os.path.isfile(os.path.join(LOOP_DIR, name)):
+            problems.append(
+                f"ARCHIVE_FILES declares {name!r} exempt but tools/loop/{name} is not on disk -"
+                " drop the stale declaration or fix the name; a typo here silently exempts nothing"
+            )
+
+    # THE VACUITY REFUSAL. Every failure above is per-file, so a walk that finds no read-whole files
+    # passes with flying colours and asserts nothing whatsoever.
+    if not read_whole:
+        problems.append(
+            "the scan classified ZERO read-whole files under tools/loop/, so this check asserted"
+            " nothing - the walk or the declaration is wrong, not the tree"
+        )
+
+    print("\nread-whole vs archive under tools/loop/ (iter162):")
+    print(f"  {len(read_whole)} read-whole files, budget {TARGET_TOKENS:,} tok each;"
+          f" {len(archives)} declared archives, exempt")
+    print(f"  largest read-whole: "
+          f"{max(read_whole, key=lambda r: r[2])[0] if read_whole else 'none'}"
+          f" (~{max(r[2] for r in read_whole) if read_whole else 0:,} tok)")
+    for problem in problems:
+        print(f"  BROKEN: {problem}")
+    if not problems:
+        print("  OK: every read-whole file fits in one Read with budget to spare, and every declared")
+        print("      archive exemption still names a file that exists.")
+    return problems
+
+
 def find_iteration(wanted):
     """`grep -n 'iterNNN'` is WRONG for 27 of 135 iterations. This is the lookup that works.
 
@@ -942,18 +1045,7 @@ def main():
         n_bytes = os.path.getsize(os.path.join(REPO, rel))
         print(f"  {rel:<32} {n_bytes:>7,} B  ~{est_tokens(n_bytes, rel):>6,} tok")
 
-    print("\nother files under tools/loop/ (NOT on the step-1 path, but a Read of one truncates at")
-    print("the same cap - read those with grep/tail/offset instead):")
-    for name in sorted(os.listdir(LOOP_DIR)):
-        path = os.path.join(LOOP_DIR, name)
-        if name == "state.json" or not os.path.isfile(path):
-            continue
-        if os.path.splitext(name)[1] not in (".json", ".jsonl", ".md"):
-            continue
-        n_bytes = os.path.getsize(path)
-        tokens = est_tokens(n_bytes, name)
-        print(f"  {n_bytes:>8,}  ~{tokens:>7,} tok  {name}  {status_for(n_bytes, tokens)}")
-
+    read_whole_problems = check_read_whole_files()
     calibration_problems = check_calibration()
     archive_problems = check_done_archive(doc)
     mirror_problems = check_gate_mirror(doc)
@@ -998,6 +1090,13 @@ def main():
         print("The fourth is the only one whose omission destroys content - recover it from git")
         print("(`git log -S <key> -- tools/loop/blockers-open.json`), never delete a verdict to pass.")
         return 1
+    if read_whole_problems:
+        print("\nFAIL: a tools/loop file an iteration READS WHOLE no longer fits in one Read, or an")
+        print("archive exemption has gone stale. This branch used to be a printed flag that exited 0,")
+        print("and ~23 iterations read the flag and moved on while method-notes.md silently lost its")
+        print("newest notes to truncation. Rotate, do not delete, and do not declare a file an archive")
+        print("to silence this unless it is genuinely only ever opened by key, heading or date.")
+        return 1
     if archive_mirror_problems:
         print("\nFAIL: `gates` and gates-archive.json disagree about what has a long mirror. `gates`")
         print("is the one split with TWO bodies - GATES.md is authoritative and live, this archive is")
@@ -1005,10 +1104,11 @@ def main():
         print("`git log -S <key> -- tools/loop/gates-archive.json`. If a key is deliberately not a")
         print("gate, declare it in GATES_ARCHIVE_NON_GATE_KEYS with the reason, do not rename it away.")
         return 1
-    print("\nOK: all three step-1 Reads return their whole file, the done archive is intact, every")
-    print("GATES.md checkbox is mirrored, no open gate points at work that is finished, every")
-    print("blocker/decision stub resolves to its archived body, every settled tombstone still has")
-    print("the body it was archived from, and `gates`'s long-mirror archive pairs both ways.")
+    print("\nOK: all three step-1 Reads return their whole file, every read-whole file under")
+    print("tools/loop/ fits in one too, the done archive is intact, every GATES.md checkbox is")
+    print("mirrored, no open gate points at work that is finished, every blocker/decision stub")
+    print("resolves to its archived body, every settled tombstone still has the body it was archived")
+    print("from, and `gates`'s long-mirror archive pairs both ways.")
     return 0
 
 

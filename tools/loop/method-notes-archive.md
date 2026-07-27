@@ -3,6 +3,13 @@
 > Sections rotated out of `tools/loop/method-notes.md` when that file crossed its 20,000-token
 > budget. Verbatim, nothing dropped, each with a pointer left behind in the live file. This is
 > history you open on purpose; `method-notes.md` is the one you read before writing code.
+>
+> **THIS FILE IS FULL AND FROZEN AS OF ITER162; NEWER ROTATIONS GO TO
+> `tools/loop/method-notes-archive-2.md`.** At 32,101 B it had 15,899 B left before it would cross
+> the same budget it exists to protect and 27,899 B before the Read tool's cap, and iter162's
+> rotation was 28,614 B, so appending it here would have moved the truncation rather than removed
+> it. Append to generation 2 (or start generation 3 the same way when that fills), and `grep` over
+> `tools/loop/method-notes*.md` to search all of them at once.
 
 ## Estimating tokens from bytes, and the file nothing reads (iter138)
 
