@@ -442,43 +442,16 @@ cell scales**; and a mutation adding a file under `src/` **has a second audience
 `DogfoodWikiTests`. Open the archive for the method behind each.*
 ## When the mirror of a rule is a second copy nobody diffs (iter144)
 
-Rule §9.7 has two halves: "update `state.json` every iteration" (which every iteration does, visibly)
-and "human gates live in GATES.md as `- [ ]` checkboxes **mirrored into state**" (which nothing
-checked). `paste-rule-8-2a` had no key in `state.json -> gates` from iter75 to iter144 — **69
-iterations, every one of which wrote that file.** The structural fix is `check_gate_mirror` in
-`tools/loop/check-state-size.py`, the second non-size invariant to live there for
-`check_done_archive`'s reason: it is the script `readMe` already requires after every edit to
-state.json **and** to GATES.md, which is exactly when a two-copy invariant breaks.
-
-  * **EQUAL COUNTS ARE NOT A MATCHING SET, AND THE COUNT IS WHAT AN EYE CHECKS.** GATES.md carried 11
-    checkboxes and `gates` carried 11 keys. They were different elevens: one mirror key belongs to
-    `gate-m1-aurservices-files`, whose heading is struck through (`~~id~~`) rather than a checkbox,
-    which bought back the slot `paste-rule-8-2a` had vacated. Diff the sets, never the cardinalities.
-  * **GREP CONFIRMS THE WRONG BLOCK.** `paste-rule-8-2a` appears in state.json four times over — in
-    `nextAction`'s list of side items and, spelled `rule-8-2a`, as a **`blockers`** key. So searching
-    the file for the id returns hits, from a block that is not the mirror the rule names. Same family
-    as iter136's archive grep and iter143's `Task<...>` regex: a confident wrong answer that reads as
-    a clean result. When a rule names a *specific* structure, assert against that structure.
-  * **ANCHOR A MARKDOWN-STRUCTURE SCAN TO THE LINE START AND THE BOLD ID.** Gate bodies cite other
-    gate ids constantly, and their steps are written as indented `- [ ]` sub-bullets. `^- \[([ x])\]
-    \*\*([a-z0-9-]+)\*\*` picks up headings only; cell J proves an indented box stays invisible.
-    Three heading shapes exist and they mean different things — checkbox (mirror REQUIRED), `~~id~~`
-    struck (permitted), bold-bullet under "Anticipated" (permitted). Requiring all three would have
-    failed on `gate-m7-production`, which is correctly absent.
-  * **THE DIRECTION WITH A FUTURE IS STATUS DRIFT, NOT ABSENCE.** Directions 1 and 2 catch a gate
-    going missing; direction 3 catches the mirror's status going stale, which is what happens the day
-    Mirko finally ticks a box — the loop orients off `gates`/`nextAction`, so a mirror that still says
-    PENDING is how it skips work it now owes. "PENDING" is present in every open gate's mirror and in
-    no closed one; that convention is the only machine-readable status in a free-prose field.
-  * **THE `git show HEAD:<script>` CONTROL BLOCK.** iter143 proved a gap was open by running other
-    tests against the mutation; for a standalone script there is a cheaper move — run the SAME five
-    defects against the checker as it stood at HEAD and assert all five exit 0. Five green results,
-    no fixture, one `git show`. `.mtk/paths-144/mutate-gate-mirror.py`, 16/16.
-  * **A JSON ROUND TRIP IS A MUTATION UNTIL A CONTROL SAYS IT IS NOT.** Rewriting state.json with
-    `json.dumps(indent=2)` to delete one key also reflows the whole file; with `ensure_ascii=True`
-    the `§` and `—` characters inflate it, and main() checks the token budget BEFORE the mirror, so
-    the cell would go red with the wrong message. Cell K round-trips with no semantic change and
-    must stay green. Assert the SPECIFIC failure message, never just a non-zero exit.
+*Moved to `tools/loop/method-notes-archive.md` at iter147 (verbatim, round trip asserted) — settled:
+`check_gate_mirror` is committed in `tools/loop/check-state-size.py` and has gated every
+state.json/GATES.md edit since. **Headlines:** **equal counts are not a matching set** (11 checkboxes
+vs 11 keys were different elevens — diff the sets, never the cardinalities); **grep confirms the
+wrong block** (the id appears in `nextAction` and in `blockers`, so a search hits something that is
+not the mirror the rule names); anchor a markdown-structure scan **to the line start and the bold
+id**, since gate bodies cite ids constantly; **the direction with a future is status drift, not
+absence** (a mirror still reading PENDING the day a box is ticked is how the loop skips work it now
+owes); the **`git show HEAD:<script>` control block**; and **a JSON round trip is a mutation until a
+control says it is not**. Open the archive for the method behind each.*
 
 ## When a rule's enforcement is one argument at one call site (iter145)
 
@@ -546,3 +519,33 @@ consumer guide sitting in the same tree as the code that must not contain it.
     "Shipped" is already `DogfoodWikiTests.ShippedRoots`, and §9.5's per-skill half went into
     `SkillContractTests` over its existing `Skills` list — a new class with its own list would have
     re-created the exact defect iter142 fixed, while fixing a different rule.
+
+## When a test compares two machine-generated copies (iter147)
+
+§9.4 ("`init` never overwrites; it reports skips") already had a right-shaped test —
+`CliExecutionTests.Init_scaffolds_the_tree_and_a_second_run_writes_nothing_new` snapshots the tree,
+edits a file, re-runs, compares. It caught four of five injected write-anyway defects. The fifth
+shipped **green through all 1388 tests**, and the reason generalises past this repo.
+
+  * **A GENERATOR PRODUCES THE SAME BYTES FROM THE SAME INPUTS, SO AN UNTOUCHED SECOND RUN IS
+    BYTE-IDENTICAL WHETHER OR NOT IT REWROTE ANYTHING.** Only content that was *not* machine-generated
+    tells "skipped" from "overwrote with an identical copy". That test knew it — its comment says so —
+    and edited ONE file, leaving twelve targets compared against bytes the scaffolder had just
+    produced. **A sampled byte check is not a weak version of the real one; on the unsampled rows it
+    asserts nothing at all.**
+  * **THE TARGET THAT ESCAPES IS THE ONE THAT IS EMPTY AT CREATION AND LOAD-BEARING LATER.**
+    `_meta/state.json` is written empty, so re-saving `new DocumeState()` moves no bytes — and from the
+    first publish on it is the only record of which page each file owns. **Ask of any idempotence test:
+    which target's content is CONSTANT across the two runs?** That is the unchecked one.
+  * **EDIT EVERY TARGET, AND MAKE THE EDIT DECISION-PRESERVING.** Three targets' skip turns on their
+    content (the manifest keeps its pin, `.gitignore` a `node_modules` line, `docume.json` stays
+    loadable because three paths are read back out of it); the other ten get an appended line. **The
+    default is what a fourteenth target gets** — cells F/G are one new target misbehaving and behaving,
+    and only that pair proves the property derived rather than pinned to thirteen.
+  * **A PERTURBATION HARNESS NEEDS A GUARD THAT IT PERTURBED.** Assert every file's bytes CHANGED
+    before the second run, or a target the editor silently skipped is compared against machine output
+    again — the original defect rebuilt inside its own fix. Cell I drops one edit and it fails loudly.
+  * **JUDGE A CELL PER-TEST, NOT PER-SUITE, WHEN IT CHANGES A DELIBERATE INVENTORY.** A fourteenth
+    target reddens `ExpectedFiles` on purpose; counting that as a catch scores F and G the same.
+  * S1144 a second time (iter145, now paid twice): dropping a call orphans its private helper and the
+    cell stops compiling. Delete the helper in the same cell, or the cell is not evidence.

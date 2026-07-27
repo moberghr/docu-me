@@ -253,3 +253,43 @@
     shipped file no wiki page's `sources` glob covers, so a fixture dropped into `src/` goes red there
     too — for documentation coverage, not for the write lock. Scope the control runs to the checks
     whose silence is the claim, or the finding drowns in an unrelated failure.
+
+## When the mirror of a rule is a second copy nobody diffs (iter144)
+
+Rule §9.7 has two halves: "update `state.json` every iteration" (which every iteration does, visibly)
+and "human gates live in GATES.md as `- [ ]` checkboxes **mirrored into state**" (which nothing
+checked). `paste-rule-8-2a` had no key in `state.json -> gates` from iter75 to iter144 — **69
+iterations, every one of which wrote that file.** The structural fix is `check_gate_mirror` in
+`tools/loop/check-state-size.py`, the second non-size invariant to live there for
+`check_done_archive`'s reason: it is the script `readMe` already requires after every edit to
+state.json **and** to GATES.md, which is exactly when a two-copy invariant breaks.
+
+  * **EQUAL COUNTS ARE NOT A MATCHING SET, AND THE COUNT IS WHAT AN EYE CHECKS.** GATES.md carried 11
+    checkboxes and `gates` carried 11 keys. They were different elevens: one mirror key belongs to
+    `gate-m1-aurservices-files`, whose heading is struck through (`~~id~~`) rather than a checkbox,
+    which bought back the slot `paste-rule-8-2a` had vacated. Diff the sets, never the cardinalities.
+  * **GREP CONFIRMS THE WRONG BLOCK.** `paste-rule-8-2a` appears in state.json four times over — in
+    `nextAction`'s list of side items and, spelled `rule-8-2a`, as a **`blockers`** key. So searching
+    the file for the id returns hits, from a block that is not the mirror the rule names. Same family
+    as iter136's archive grep and iter143's `Task<...>` regex: a confident wrong answer that reads as
+    a clean result. When a rule names a *specific* structure, assert against that structure.
+  * **ANCHOR A MARKDOWN-STRUCTURE SCAN TO THE LINE START AND THE BOLD ID.** Gate bodies cite other
+    gate ids constantly, and their steps are written as indented `- [ ]` sub-bullets. `^- \[([ x])\]
+    \*\*([a-z0-9-]+)\*\*` picks up headings only; cell J proves an indented box stays invisible.
+    Three heading shapes exist and they mean different things — checkbox (mirror REQUIRED), `~~id~~`
+    struck (permitted), bold-bullet under "Anticipated" (permitted). Requiring all three would have
+    failed on `gate-m7-production`, which is correctly absent.
+  * **THE DIRECTION WITH A FUTURE IS STATUS DRIFT, NOT ABSENCE.** Directions 1 and 2 catch a gate
+    going missing; direction 3 catches the mirror's status going stale, which is what happens the day
+    Mirko finally ticks a box — the loop orients off `gates`/`nextAction`, so a mirror that still says
+    PENDING is how it skips work it now owes. "PENDING" is present in every open gate's mirror and in
+    no closed one; that convention is the only machine-readable status in a free-prose field.
+  * **THE `git show HEAD:<script>` CONTROL BLOCK.** iter143 proved a gap was open by running other
+    tests against the mutation; for a standalone script there is a cheaper move — run the SAME five
+    defects against the checker as it stood at HEAD and assert all five exit 0. Five green results,
+    no fixture, one `git show`. `.mtk/paths-144/mutate-gate-mirror.py`, 16/16.
+  * **A JSON ROUND TRIP IS A MUTATION UNTIL A CONTROL SAYS IT IS NOT.** Rewriting state.json with
+    `json.dumps(indent=2)` to delete one key also reflows the whole file; with `ensure_ascii=True`
+    the `§` and `—` characters inflate it, and main() checks the token budget BEFORE the mirror, so
+    the cell would go red with the wrong message. Cell K round-trips with no semantic change and
+    must stay green. Assert the SPECIFIC failure message, never just a non-zero exit.
