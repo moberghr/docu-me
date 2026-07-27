@@ -94,3 +94,43 @@
     is read by two checks; the prediction "cell 1 is the sole detector" was only defensible after reading
     that the second one merely loops over it (`for key in settled`) and so no-ops when drained.
 
+## The stub layer nobody had paired, and a regex that fabricated 18 findings (iter166)
+
+  * **A "VERBATIM, ROUND-TRIP ASSERTED" CLAIM IS ASSERTED ONCE, BY THE SCRIPT DOING THE ROTATING, AND
+    THEN NEVER AGAIN.** method-notes.md's 24 stubs each carried that sentence; `check_read_whole_files`
+    asserted only that the archive FILES exist, which says nothing about whether a given stub's section
+    is still in the file it names. This was the same split iters 159/160/161 closed three times inside
+    state.json - stub plus archived body - and the one instance they missed, because it lives in a
+    document rather than in `state.json`. **When an earlier iteration enumerates "every stub/body split"
+    and the enumeration is scoped to one file, the sibling in another file is the thing to look for.**
+    Closed by `check_method_notes_stubs`, 7/7 both directions; nothing was broken (24/24 resolved).
+  * **A REGEX THAT UNDER-MATCHES DOES NOT MISS FINDINGS, IT FABRICATES THEM - AND IT LOOKS LIKE A FIND.**
+    `[Mm]oved` does not match the all-caps `**MOVED to`, so 18 stubs were reclassified as live bodies
+    and their perfectly good archived bodies then reported as 18 ORPHAN BODY findings. The output was
+    confident, specific and entirely wrong. Fixing the case then still missed `MOVED ON to`, the one
+    section rotated twice, whose wording differs *because* its history does. **Two lessons: an
+    enumeration keyed on a phrase must be checked against an INDEPENDENT count of the same population
+    before its findings are believed** (`.mtk/paths-165/split-stubs-vs-bodies.py` said 24; the probe said
+    6, and the disagreement was the bug); and **a partial match is worse than no match**, because a
+    vacuity refusal fires on zero and stays silent on 6-of-24. The floor that catches it is a hard
+    minimum, not a non-empty assertion.
+  * **SO THE FOURTH DIRECTION OF A PAIRING CHECK IS "A STUB THAT DOES NOT PARSE IS NOT A LIVE BODY".**
+    Without it the classifier's own blind spot is unobservable from inside the check: an unparsed stub
+    silently joins the live-body count and its body reports as an orphan, which blames the archive for
+    a defect in the reader. Detect it structurally - a section that NAMES an archive but carries no
+    parseable provenance sentence - so a fifth spelling fails loudly instead of being absorbed.
+  * **THE NAMED INCREMENT WAS NOT AVAILABLE, AND THE MEASUREMENT IS WHY.** `nextAction` had named
+    "condense the stub layer" on the reasoning that 24 pointers averaging 1,173 B are summaries rather
+    than pointers. Measured (`.mtk/paths-166/measure-stub-boilerplate.py`): of 26,556 B of stub bodies,
+    only **1,829 B is repeated phrasing** - the destination path, "verbatim and round-trip asserted",
+    "Nothing was discarded.", "**The headlines:**". Condensing every one of them nets ~1.1 KB, less than
+    the section that would document the work. The other ~24.7 KB is per-stub headline CONTENT, so
+    condensing in place cannot buy budget without discarding lessons. **iter165's lesson one turn on: a
+    remedy instruction goes stale like any other claim, and the cheap check is to measure the population
+    it names - but measure what the bytes ARE, not just how many there are.** The rotation into a new
+    generation was the move that paid; the condensation was correctly abandoned rather than performed
+    for its own sake.
+  * **A SCRATCH PROBE THAT RESTATES A COMMITTED DECLARATION GOES STALE INSIDE ONE ITERATION.** This
+    probe hardcoded the two generations, and creating generation 3 falsified it the same session. It now
+    imports `METHOD_NOTES_GENERATIONS` from the checker. iter144's "a mirror nobody diffs" applies to
+    throwaway harnesses too, and the cost of importing is one `importlib.util.spec_from_file_location`.

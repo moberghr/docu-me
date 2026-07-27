@@ -191,6 +191,48 @@ METHOD_NOTES_MOVED_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# CITATION RESOLUTION (iter167, check #10)
+#
+# What a cold session is told to OPEN and RUN. Every check through iter166 pairs a stub with a body
+# inside a DECLARED set; none of them ever asked whether the ~85 `path/to/thing.ext` tokens in the
+# orientation layer name files that exist. A dangling one sends the next iteration at a ghost.
+CITATION_SOURCES = (
+    "tools/loop/state.json",
+    "GATES.md",
+    "tools/loop/method-notes.md",
+    "tools/loop/blockers-open.json",
+    "tools/loop/decisions-archive.json",
+)
+
+# Citations that are ABSENT ON PURPOSE. DECLARED, never inferred - for ARCHIVE_FILES' reason, and
+# for a sharper one here: three of these four are absences the orientation layer is deliberately
+# TELLING you about ("deliberately absent", "do NOT recreate"), so a blunt "every citation must
+# resolve" rule would report the tree's clearest documentation as four defects.
+CITATION_KNOWN_ABSENT = {
+    "tools/hooks/format-on-edit.py":
+        "DELETED at iter155 (20c043a) when decisions.formatOnEditHook was answered 'delete'. Cited"
+        " in state.json and GATES.md precisely to say DO NOT RECREATE IT. If this ever resolves,"
+        " someone recreated it - that is the failure, not this declaration.",
+    "cases/mermaid.md":
+        "Deliberately absent from the golden corpus: beautiful-mermaid 1.1.3 rejects `graph TD;`"
+        " and `pie`, and a page fails as a unit (gate-m2's caveat, decisions.mermaidDialectGap)."
+        " Prose shorthand - the corpus is flat in tests/golden/, there is no cases/ directory.",
+    "_meta/feedback/inbox/":
+        "A CONSUMER-repo path. `docume sync --comments` writes it into the repo being documented;"
+        " DocuMe's own tree has no _meta/. Absent here by design, at every commit.",
+    "20-reference/conversion.md":
+        "Shorthand for docs/wiki/20-reference/conversion.md, which exists and is cited in full in"
+        " the same file. The suffix form is prose, not a second file.",
+}
+
+_SEG = r"[A-Za-z0-9_.@+-]+"
+_CITE_RE = re.compile(rf"(?<![A-Za-z0-9_/:.-])((?:{_SEG})?(?:/{_SEG})+/?)")
+_CITE_DELIMS = re.compile(r"[\s`'\"()\[\]{},;<>*]+")
+_CITE_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
+_CITE_EXT = re.compile(r"\.[A-Za-z0-9]{1,6}$")
+_CITE_LINE = re.compile(r":\d+(?:-\d+)?$")
+
 
 def bytes_per_token(path):
     if os.path.splitext(path)[1] in (".json", ".jsonl"):
@@ -1148,6 +1190,240 @@ def check_read_whole_files():
     return problems
 
 
+def cite_strip_line(tok):
+    """`src/X.cs:48` -> `src/X.cs`. Citations carry :line and :line-range."""
+    return _CITE_LINE.sub("", tok)
+
+
+def cite_normalise(tok):
+    """The ONE place a prefix or suffix is trimmed, so both extractions trim identically.
+
+    TWO BUGS LIVED HERE DURING ITER167'S MEASUREMENT, both of the fabricating kind:
+      - stripping punctuation from BOTH ends turned `.mtk/x.py` into `mtk/x.py`: 43 invented misses
+      - a sentence-ending period is INSIDE the segment class, so `...surface.py.` and
+        `tests/golden/.claude/.` failed the extension test and were dropped silently
+    """
+    tok = tok.strip()
+    while tok.startswith("./"):
+        tok = tok[2:]
+    while tok.endswith(".") and not tok.endswith("/."):
+        tok = tok[:-1]
+    if tok.endswith("/."):
+        tok = tok[:-1]
+    return tok
+
+
+def cite_plausible(tok):
+    """Is this a repo-relative path, or prose that happens to contain a slash?"""
+    if not tok or tok.startswith(("http", "//")):
+        return False
+    if _CITE_SCHEME.search(tok):
+        return False
+    # `~/.claude.json` and `../../x` lose their root to the segment class; not repo-relative, and
+    # resolving them against REPO would invent a verdict.
+    if tok.startswith("/") or tok.startswith(".."):
+        return False
+    if "<" in tok or ">" in tok or "{" in tok:
+        return False
+    # `${CLAUDE_PLUGIN_ROOT}/hooks/x.sh`: the brace is outside the class, so the match starts after it.
+    head = tok.split("/")[0]
+    if head.isupper() and "_" in head:
+        return False
+    if "/" not in tok:
+        return False
+    # A bare top-level directory (`src/`, `.claude/`) names a region, not a thing to open.
+    if len([s for s in cite_strip_line(tok).split("/") if s]) < 2:
+        return False
+    # `state.json/GATES.md` is prose disjunction: a real path carries no extension in a NON-FINAL
+    # segment. Excluding it beats letting the pattern invent a file and report it missing.
+    stem = cite_strip_line(tok).rstrip("/").split("/")[:-1]
+    if any(_CITE_EXT.search(seg) and not seg.startswith(".") for seg in stem):
+        return False
+    if tok.endswith("/"):
+        return True
+    return bool(_CITE_EXT.search(cite_strip_line(tok)))
+
+
+def cite_source_text(path):
+    """A .json source is PARSED, not slurped: scanning raw bytes makes the `\\n` escape inside a
+    string literal part of the next token, and `\\n.mtk/x.py` resolves against nothing."""
+    with open(path, encoding="utf-8") as handle:
+        if not path.endswith(".json"):
+            return handle.read()
+        doc = json.load(handle)
+
+    chunks = []
+
+    def walk(node):
+        if isinstance(node, str):
+            chunks.append(node)
+        elif isinstance(node, dict):
+            for key, value in node.items():
+                chunks.append(key)
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(doc)
+    return "\n".join(chunks)
+
+
+def cite_extract_pattern(text):
+    """Extraction A: one compiled pattern over the whole text."""
+    out = set()
+    for match in _CITE_RE.finditer(text):
+        before = text[max(0, match.start() - 8):match.start()]
+        if "://" in before[-4:] or before.endswith(":/"):
+            continue
+        tok = cite_normalise(match.group(1))
+        if cite_plausible(tok):
+            out.add(tok)
+    return out
+
+
+def cite_extract_tokens(text):
+    """Extraction B: tokenise on delimiters FIRST, filter second. Never sees _CITE_RE."""
+    out = set()
+    for raw in _CITE_DELIMS.split(text):
+        tok = raw.rstrip(".,:;")
+        if raw.endswith("/"):
+            tok = raw
+        base = re.match(rf"^((?:{_SEG})?(?:/{_SEG})+/?)", tok)
+        if not base:
+            continue
+        tok = cite_normalise(base.group(1))
+        if cite_plausible(tok):
+            out.add(tok)
+    return out
+
+
+def cite_resolves(tok):
+    clean = cite_strip_line(tok)
+    full = os.path.join(REPO, clean.rstrip("/"))
+    if clean.endswith("/"):
+        return os.path.isdir(full)
+    return os.path.exists(full)
+
+
+def check_citation_resolution():
+    """Does every path the orientation layer cites as an ACTION exist on disk?
+
+    ADDED ITER167, and it is a different dimension from every check above it. Those pair a stub with
+    a body inside a set this file DECLARES (ARCHIVE_FILES, METHOD_NOTES_GENERATIONS,
+    gates-archive's keys). None of them looks at the ~85 ordinary `path/to/thing.ext` tokens that
+    make up the orientation layer's actual instructions - "run this probe", "the exact text is in
+    that file", "strike the entry off this test". A cold session follows those literally.
+
+    NOTHING IS BROKEN TODAY: 85 citations, 81 resolve, 4 are absent on purpose and declared above.
+    Green, and said plainly. The value is standing - state.json's prose is rewritten every single
+    iteration, and a citation typed into it is never checked by anything else.
+
+    THE FIRST FACT IS ABOUT THE INSTRUMENT, NOT THE TREE, and that is deliberate. iter166's lesson
+    was that an enumeration keyed on a phrase must be checked against an INDEPENDENT count of the
+    same population before its findings are believed; iter167 then reproduced that failure three
+    times inside the probe written to apply it - 43 fabricated findings, then 4, then 2, every one
+    confident and specific. So the agreement of two independent extractions is not a note in a
+    docstring here, it is fact (1), and a disagreement FAILS: when the instrument is wrong the
+    other three facts are noise, and a green from them would be worse than no check at all.
+
+    Four facts, and a vacuity refusal:
+      (1) two independent extractions agree on the population, or nothing below is believable
+      (2) every citation resolves, or is declared absent-on-purpose with a reason
+      (3) every declared absence is STILL ABSENT - a declaration that starts resolving is stale,
+          and for format-on-edit.py that specific direction IS the thing worth catching
+      (4) every declared absence is STILL CITED - an exemption nobody invokes exempts nothing, the
+          same rot ARCHIVE_FILES' existence check guards against
+
+    THE REFUSAL APPENDS RATHER THAN RETURNS (iter165's shape): facts (3) and (4) have their own
+    population - the four declarations - and a returning refusal would skip them in the same run
+    that the extraction went quiet.
+    """
+    problems = []
+    print("\norientation-layer citations <-> the working tree (iter167):")
+
+    per_source, pattern_all, token_all = {}, set(), set()
+    for rel in CITATION_SOURCES:
+        path = os.path.join(REPO, rel)
+        if not os.path.isfile(path):
+            problems.append(
+                f"CITATION_SOURCES names {rel!r} but it is not on disk - a source that vanished"
+                " takes its whole citation population with it, silently"
+            )
+            continue
+        try:
+            text = cite_source_text(path)
+        except (ValueError, UnicodeDecodeError) as exc:
+            problems.append(f"{rel} could not be parsed for citations: {exc}")
+            continue
+        by_pattern, by_token = cite_extract_pattern(text), cite_extract_tokens(text)
+        per_source[rel] = by_pattern | by_token
+        pattern_all |= by_pattern
+        token_all |= by_token
+
+    # (1) THE INSTRUMENT AGREES WITH ITSELF.
+    only_pattern, only_token = sorted(pattern_all - token_all), sorted(token_all - pattern_all)
+    if only_pattern or only_token:
+        problems.append(
+            f"the two extractions disagree on {len(only_pattern) + len(only_token)} citation(s) -"
+            f" pattern-only {only_pattern[:6]}, token-only {only_token[:6]}. Until they agree the"
+            " resolution figures below are noise: fix the shared cite_normalise/cite_plausible"
+            " rules, never silence one extraction to match the other"
+        )
+
+    population = pattern_all | token_all
+    declared = set(CITATION_KNOWN_ABSENT)
+    missing = sorted(t for t in population if not cite_resolves(t) and t not in declared)
+    resolving = sorted(t for t in population if cite_resolves(t))
+
+    print(f"  {len(population)} unique citations across {len(per_source)} sources;"
+          f" {len(resolving)} resolve, {len(declared)} declared absent-on-purpose")
+
+    # (2) EVERY CITATION RESOLVES OR IS DECLARED.
+    for tok in missing:
+        where = sorted(rel for rel, toks in per_source.items() if tok in toks)
+        problems.append(
+            f"{tok!r} is cited in {', '.join(where)} but is not on disk. Fix the path, or - if it"
+            " is absent ON PURPOSE - declare it in CITATION_KNOWN_ABSENT with the reason, in the"
+            " same change. Do not delete the sentence that cites it to make this pass"
+        )
+
+    # (3) AND (4) THE DECLARATION STAYS HONEST IN BOTH DIRECTIONS.
+    for tok, reason in sorted(CITATION_KNOWN_ABSENT.items()):
+        if not reason.strip():
+            problems.append(f"CITATION_KNOWN_ABSENT[{tok!r}] has no reason - a silent exemption")
+        if cite_resolves(tok):
+            problems.append(
+                f"CITATION_KNOWN_ABSENT declares {tok!r} absent on purpose, but it EXISTS now."
+                " Either it was recreated against a recorded decision (for"
+                " tools/hooks/format-on-edit.py that is exactly the event worth catching - see"
+                " decisions.formatOnEditHook, answered 'delete'), or the declaration is stale and"
+                " belongs deleted"
+            )
+        if tok not in population:
+            problems.append(
+                f"CITATION_KNOWN_ABSENT declares {tok!r} but nothing in the orientation layer cites"
+                " it any more, so the exemption covers nothing. Delete the entry - an exemption"
+                " kept past its citation is how a list rots into exempting a future typo"
+            )
+
+    # THE VACUITY REFUSAL. Every failure above is per-citation, so an extraction that went quiet -
+    # a reworded source, a JSON that stopped parsing - passes clean while asserting nothing.
+    if len(population) < 20:
+        problems.append(
+            f"only {len(population)} citations were extracted from {len(CITATION_SOURCES)} sources,"
+            " which is far below the ~85 that have always been there - the extraction is broken,"
+            " not the tree, and a green result here would mean nothing"
+        )
+
+    for problem in problems:
+        print(f"  BROKEN: {problem}")
+    if not problems:
+        print("  OK: both extractions agree on the population, every citation resolves or is")
+        print("      declared absent-on-purpose, and every declaration is still absent and still cited.")
+    return problems
+
+
 def markdown_sections(path):
     """{heading: body} for every '## ' section. Shared by check_method_notes_stubs."""
     out, current, buf = {}, None, []
@@ -1390,6 +1666,7 @@ def main():
     settled_problems = check_settled_bodies(doc)
     archive_mirror_problems = check_gates_archive(doc)
     method_notes_problems = check_method_notes_stubs()
+    citation_problems = check_citation_resolution()
 
     if calibration_problems:
         print("\nFAIL: a bytes-per-token constant is optimistic, so every estimate and headroom")
@@ -1449,12 +1726,21 @@ def main():
         print("body exists - recover a lost one with `git log -S <heading> -- tools/loop/`, and never")
         print("delete a stub or a body to make this pass. Recipe: .mtk/paths-162/rotate-method-notes.py.")
         return 1
+    if citation_problems:
+        print("\nFAIL: the orientation layer cites a path that is not there, or its absent-on-purpose")
+        print("list has rotted. These citations ARE the instructions - a cold session runs and opens")
+        print("them literally - so fix the path, or declare a deliberate absence in")
+        print("CITATION_KNOWN_ABSENT with its reason in the SAME change. If the failure is the two")
+        print("extractions disagreeing, fix that FIRST and ignore everything else this check said:")
+        print("a mis-matching extractor does not miss findings quietly, it invents them (iter167).")
+        return 1
     print("\nOK: all three step-1 Reads return their whole file, every read-whole file under")
     print("tools/loop/ fits in one too, the done archive is intact, every GATES.md checkbox is")
     print("mirrored, no open gate points at work that is finished, every blocker/decision stub")
     print("resolves to its archived body, every settled tombstone still has the body it was archived")
-    print("from, `gates`'s long-mirror archive pairs both ways, and every method-notes.md stub")
-    print("resolves to the archived body it claims.")
+    print("from, `gates`'s long-mirror archive pairs both ways, every method-notes.md stub")
+    print("resolves to the archived body it claims, and every path the orientation layer cites")
+    print("either exists or is declared absent on purpose.")
     return 0
 
 
