@@ -60,9 +60,13 @@ contracts rather than preferences:
 
 - Every page declares at least one `sources` glob, and every glob matches a file that exists.
 - Every shipped path reaches some page's globs, so nothing DocuMe hands over is invisible to
-  `docume drift`. Shipped means `actions/`, `plugin/`, `schema/`, `src/` and `templates/`: how DocuMe
-  is made (its tests, its CI, the build loop) is not what it hands over, and this wiki documents the
-  product. A shipped file that genuinely needs no page is listed in the test with its reason.
+  `docume drift`. Shipped means `.claude-plugin/`, `actions/`, `plugin/`, `schema/`, `src/` and
+  `templates/`: how DocuMe is made (its tests, its CI, the build loop) is not what it hands over, and
+  this wiki documents the product. A shipped file that genuinely needs no page is listed in the test
+  with its reason.
+- Every top-level directory is declared shipped or not, so a new one arrives as a decision. The list
+  above is what bounds the shipped sweep and the rule §9.5 knowledge scan, and both pass over anything
+  outside it without a word — an unclassified directory would be exempt from both in silence.
 - Every directory publishes through its own `README.md`, and exactly one page sits at the tree root.
 - The whole wiki converts with **zero failures and zero degradations** under the strict policy.
   DocuMe's own docs do not use constructs DocuMe converts badly.

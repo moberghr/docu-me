@@ -33,18 +33,42 @@ public sealed class DogfoodWikiTests
         new(StringComparer.Ordinal) { ".git", ".mtk", "bin", "obj", "node_modules" };
 
     /// <summary>
-    /// What a consumer receives: the tool, the plugin, the files <c>init</c> scaffolds, the composite
-    /// action and the config schema. Everything else in the repo (tests, the build loop, CI for this
-    /// repository) is how DocuMe is made rather than what it hands over, and the wiki documents the
-    /// product.
+    /// What a consumer receives: the marketplace this repo is, the tool, the plugin, the files
+    /// <c>init</c> scaffolds, the composite action and the config schema. Everything else in the repo
+    /// (tests, the build loop, CI for this repository) is how DocuMe is made rather than what it hands
+    /// over, and the wiki documents the product.
     /// </summary>
     /// <remarks>
     /// Internal because <see cref="StyleGuidePageTests"/> holds the style guide's description of
     /// "shipped" to this list: the guide is what a generation run reads, and a run that believes
-    /// <c>tests/</c> needs a page writes one.
+    /// <c>tests/</c> needs a page writes one. Paired with <see cref="UnshippedRoots"/> against the
+    /// tree's own top level by
+    /// <see cref="Every_top_level_directory_is_declared_shipped_or_not"/>.
     /// </remarks>
     internal static readonly string[] ShippedRoots =
-        ["actions/", "plugin/", "schema/", "src/", "templates/"];
+        [".claude-plugin/", "actions/", "plugin/", "schema/", "src/", "templates/"];
+
+    /// <summary>
+    /// The complement: top-level directories that are how DocuMe is made rather than what it hands over,
+    /// each classified on purpose.
+    /// </summary>
+    /// <remarks>
+    /// Not a second definition of "shipped" — its job is to make the two lists together account for the
+    /// whole top level. Both sweeps that ask what DocuMe hands over bound their population by
+    /// <see cref="ShippedRoots"/> and pass over everything outside it without a word: the
+    /// <c>sources</c> coverage below, and <see cref="ConsumerKnowledgeCoverageTests"/>'s rule §9.5 scan.
+    /// So before this pairing an unclassified directory was exempt from both at once, and exempt
+    /// silently.
+    /// </remarks>
+    private static readonly string[] UnshippedRoots =
+    [
+        ".claude/",  // this repo's own agent configuration: rules, references, MTK settings.
+        ".github/",  // CI for this repository. The workflows `init` scaffolds live under templates/.
+        "docs/",     // the wiki itself: what documents the product, not an artifact it describes.
+        "tasks/",    // MTK's lessons and todo list — notes about building DocuMe.
+        "tests/",    // this suite, and the golden corpus it asserts against.
+        "tools/",    // the build loop, and this repo's own scaffolded copy of the render script.
+    ];
 
     /// <summary>
     /// Shipped files no page derives from, each for a stated reason. Adding a line here is a decision
@@ -179,6 +203,63 @@ public sealed class DogfoodWikiTests
         invisible.ShouldBeEmpty(UncoveredMessage);
     }
 
+    /// <summary>
+    /// The tree's top level is accounted for by the two declared lists, both ways.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ShippedRoots"/> is a literal that bounds the population of every "what does DocuMe
+    /// hand over" sweep in the suite, and nothing paired it with the tree it describes. A directory
+    /// added at the top level therefore arrived outside both sweeps in silence — no error, no warning,
+    /// the same failure mode the <c>sources</c> check above exists to catch one level down.
+    /// </para>
+    /// <para>
+    /// What this cannot do, recorded rather than implied: a determined edit can still move a root from
+    /// one list to the other and reword the guide's sentence. The bar it sets is that dropping a root
+    /// now costs a written claim that the root is how DocuMe is made, where before it cost nothing.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_top_level_directory_is_declared_shipped_or_not()
+    {
+        var actual = TopLevelDirectories();
+
+        // Each direction below is the other's vacuity guard — an empty walk fails the second, an empty
+        // declaration fails the first. This floor covers the case neither does: both going empty.
+        actual.Count.ShouldBeGreaterThan(ShippedRoots.Length);
+
+        const string unclassified =
+            "A top-level directory is in neither ShippedRoots nor UnshippedRoots. Both sweeps that ask "
+            + "what DocuMe hands over start from ShippedRoots and pass over everything else without a "
+            + "word — the `sources` coverage above, and ConsumerKnowledgeCoverageTests' rule §9.5 scan "
+            + "— so an unclassified directory is exempt from both without anyone deciding it should be. "
+            + "Add it to ShippedRoots if a consumer receives it, or to UnshippedRoots with the reason. "
+            + "Unclassified:";
+
+        actual
+            .Except(ShippedRoots.Concat(UnshippedRoots), StringComparer.Ordinal)
+            .ShouldBeEmpty(unclassified);
+
+        const string vanished =
+            "A declared root is not on disk, so the list holding it describes a tree that has moved. A "
+            + "shipped root that vanished takes its files out of both sweeps; an unshipped one launders "
+            + "an exemption nothing needs any more. Declared but absent:";
+
+        ShippedRoots
+            .Concat(UnshippedRoots)
+            .Except(actual, StringComparer.Ordinal)
+            .ShouldBeEmpty(vanished);
+
+        const string contradictory =
+            "A root is declared shipped and unshipped at once, which makes the classification mean "
+            + "nothing: the sweeps read ShippedRoots, so the unshipped entry is decoration a reviewer "
+            + "would read as an exemption. In both lists:";
+
+        ShippedRoots
+            .Intersect(UnshippedRoots, StringComparer.Ordinal)
+            .ShouldBeEmpty(contradictory);
+    }
+
     [Fact]
     public void Every_directory_publishes_through_its_own_index_page()
     {
@@ -208,6 +289,19 @@ public sealed class DogfoodWikiTests
     }
 
     private static WikiTree Load() => WikiTree.Load(Path.Combine(RepoRoot, "docs", "wiki"));
+
+    /// <summary>
+    /// The repo's immediate subdirectories, trailing-slash spelled to match the declared roots, minus
+    /// the ones <see cref="SkippedDirectories"/> names (build output, scratch, vendored packages).
+    /// </summary>
+    private static List<string> TopLevelDirectories() =>
+        new DirectoryInfo(RepoRoot)
+            .EnumerateDirectories()
+            .Select(directory => directory.Name)
+            .Where(name => !SkippedDirectories.Contains(name))
+            .Select(name => $"{name}/")
+            .Order(StringComparer.Ordinal)
+            .ToList();
 
     private static string DirectoryOf(string pagePath)
     {

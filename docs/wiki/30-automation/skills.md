@@ -2,6 +2,7 @@
 sources:
   - plugin/skills/**
   - plugin/.claude-plugin/plugin.json
+  - .claude-plugin/*.json
 ---
 
 # Claude Skills

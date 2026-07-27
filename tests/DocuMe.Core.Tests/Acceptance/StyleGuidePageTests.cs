@@ -85,6 +85,7 @@ public sealed class StyleGuidePageTests
         ["Every_page_declares_the_code_it_derives_from"] = "at least one `sources` glob",
         ["Every_sources_glob_matches_a_file_that_exists"] = "matches a file that exists",
         ["Every_shipped_path_reaches_some_page_through_its_sources"] = "Every shipped path reaches some page",
+        ["Every_top_level_directory_is_declared_shipped_or_not"] = "declared shipped or not",
         ["Every_directory_publishes_through_its_own_index_page"] = "publishes through its own `README.md`",
     };
 
@@ -166,7 +167,37 @@ public sealed class StyleGuidePageTests
             + "including the tests and CI that are how DocuMe is made rather than what it hands over.";
 
         section.ShouldContain("how DocuMe", Case.Sensitive, unbounded);
+
+        // And the other direction, which is the half a coordinated edit used to walk through: dropping a
+        // root from ShippedRoots stops this loop asking about it, so the guide could keep naming a
+        // directory no sweep visits any more. Every directory token in this section is a shipped root.
+        var named = DirectoryTokens(section);
+
+        named.ShouldNotBeEmpty("no directory token in this section, so the sentence above proves nothing");
+
+        const string stale =
+            $"{StylePath} names a directory this suite does not walk. Either it was dropped from "
+            + $"{nameof(DogfoodWikiTests)}.{nameof(DogfoodWikiTests.ShippedRoots)} and the guide still "
+            + "advertises it as covered, or this section grew a directory token that is not a shipped "
+            + "root — write it without backticks. Named but not shipped:";
+
+        named
+            .Except(DogfoodWikiTests.ShippedRoots, StringComparer.Ordinal)
+            .ShouldBeEmpty(stale);
     }
+
+    /// <summary>
+    /// Every distinct backticked token ending in <c>/</c> in <paramref name="section"/>: the spelling the
+    /// guide uses for a directory, and the one the shipped sentence is written in.
+    /// </summary>
+    private static List<string> DirectoryTokens(string section) =>
+        section
+            .Split('`')
+            .Where((_, index) => index % 2 == 1)
+            .Where(token => token.EndsWith('/'))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToList();
 
     [Fact]
     public void Every_degradation_code_has_a_bullet_and_still_fires_from_its_own_sample()
@@ -280,7 +311,7 @@ public sealed class StyleGuidePageTests
 
         Style().Length.ShouldBeGreaterThan(1000, $"{StylePath} is far shorter than the guide these tests scan.");
         DeclaredCodes().Length.ShouldBe(7);
-        DogfoodContracts().Count.ShouldBe(6);
+        DogfoodContracts().Count.ShouldBe(7);
         GoldenMarkers().Count.ShouldBe(2);
     }
 
