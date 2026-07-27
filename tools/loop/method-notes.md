@@ -276,34 +276,18 @@
 
 ## Reading the loop's own history back (iter136)
 
-  * **`n` IN done-archive.jsonl IS A LINE INDEX, NOT AN ITERATION NUMBER, AND HAS NOT MATCHED ONE
-    SINCE LINE 50.** iter48 logged two slices, so from n=50 onward `n = iteration + 1` — 87 of 136
-    lines. `doneCount` 136 against iteration 135 is that offset, not a miscount. Never read an
-    iteration number off `n`, and never renumber to "fix" the gap: the duplicate is a real record.
-  * **THE ARCHIVE HAS TWO ENTRY SHAPES AND ANY READER MUST HANDLE BOTH.** 107 entries are strings
-    naming themselves in a leading `iterNNN`; 29 are objects carrying `{"iteration": NNN, "slice": …}`.
-    Both are legal per `doneArchive.format`, but every instruction written for the archive assumed
-    the first.
-  * **THE DOCUMENTED LOOKUP WAS WRONG FOR 27 OF 135 ITERATIONS, AND ITS FAILURE MODE LOOKS LIKE A
-    HIT.** `grep -n 'iterNNN' done-archive.jsonl` — the exact command `doneArchive.howToRead`
-    prescribed — returned nothing for 3 (the object-shaped ones) and, for 24 more, returned only
-    lines belonging to some *other* entry: ask for iter113 and it hands back iter134's and iter135's
-    records, which cite it in prose. Because loop entries constantly reference earlier ones, 65 of
-    135 iterations get at least one match that is not their own. Use
-    `python3 tools/loop/check-state-size.py --find <n>`, which resolves both shapes and lists prose
-    mentions separately. Measured by `.mtk/paths-136/probe-archive-lookup.py`.
-  * **A CHECK OVER A FILE IS NOT A CHECK OVER THE THING THE FILE RECORDS.** iter133's archive checks
-    (valid JSON, contiguous `n`, matching `doneCount`, `doneRecent` round-trip) are all satisfiable
-    by a file that is missing an iteration entirely — deleting a middle record and renumbering passes
-    every one of them. The checks that catch it have to be stated in the archive's own domain:
-    ATTRIBUTION (every entry names its iteration), COVERAGE (no gap in the range), HEAD (the newest
-    entry is the iteration state.json claims to be on). The head check is the one that would have
-    caught iter132's loss at the moment it happened.
-  * **WHEN A MUTATION HARNESS SCORES LESS THAN N/N, SUSPECT THE PREDICTION FIRST.** Stripping an
-    entry's attribution also opens a coverage gap, so two checks fire on one mutation and a
-    "exactly one message" assertion reports a false FAIL. Same shape as iter135's 6/7. Assert the
-    expected SET — every predicted message fires and nothing else does — which still proves
-    non-redundancy without pretending each mutation has exactly one consequence.
+*Moved to `tools/loop/method-notes-archive.md` at iter154 (verbatim, round trip asserted) — settled:
+`check-state-size.py --find` is committed and is what `doneArchive.howToRead` now prescribes.
+**Headlines:** **`n` in done-archive.jsonl is a LINE INDEX, not an iteration number** and has not
+matched one since line 50 (iter48 logged twice) — never read an iteration off `n` and never renumber
+to "fix" it; **the archive has two entry shapes and any reader must handle both** (strings with a
+leading `iterNNN`, objects with `{"iteration": NNN}`); **the documented `grep` lookup was wrong for
+27 of 135 iterations and its failure mode looks like a hit**, because entries cite each other in
+prose — use `python3 tools/loop/check-state-size.py --find <n>`; **a check over a file is not a check
+over the thing the file records** (valid JSON + contiguous `n` + matching count are all satisfiable
+by a file missing an iteration — ATTRIBUTION, COVERAGE and HEAD are the checks in the archive's own
+domain); and **when a mutation harness scores less than N/N, suspect the prediction first** — assert
+the expected SET of messages, since one mutation can legitimately fire two checks.*
 
 ## Two counters, and patching a script that is running (iter137)
 
@@ -455,39 +439,18 @@ control says it is not**. Open the archive for the method behind each.*
 
 ## When a rule's enforcement is one argument at one call site (iter145)
 
-Rule §9.6 has two halves that are enforced in different KINDS of way, and the kind is what decides
-whether anything can cover it. "Never runs in CI" is a computation — `PruneGuard.Refusal` — and
-`PruneGuardTests` drives it through an injected env reader, so it goes red when deleted. "Requires
-interactive confirmation" is not a computation anywhere: it is the third argument of
-`PublishCommand.cs:453`. `PruneExecutor` deletes whatever its delegate agrees to, deliberately, so
-the "no" case is testable offline — and the consequence nobody had drawn is that **every test that
-reaches the executor supplies its own stub, so not one of them has an opinion about the real one.**
-
-  * **WHEN A SEAM EXISTS TO MAKE A RULE TESTABLE, THE PRODUCTION ARGUMENT IS WHAT NOBODY TESTS.** The
-    injected-delegate pattern (`PruneConfirmation`, `DiagramRenderer`) is right, and it moves the
-    invariant out of the class the tests exercise and into the one line that wires it. Wherever this
-    repo injects a collaborator to keep a path offline-testable, ask what asserts the real argument.
-    Sibling shape to iter141's placement lesson: there the guard's CALL SITE was untested, here the
-    guard's ARGUMENT is.
-  * **A LAMBDA SHOULD BE REFUSED, NOT INSPECTED.** `(_, _) => Task.FromResult(true)` and a lambda
-    that really prompts are the same shape to any scan short of a compiler, so
-    `PruneConfirmationCoverageTests` requires the argument to be a bare identifier and reads the
-    named method's body. Cheaper than parsing, and it fails toward the reviewable option.
-  * **BUDGET THE ANALYZERS INTO THE CELL DESIGN, NOT INTO A RETRY.** Three of seven cells needed a
-    second edit purely to keep compiling, and the first run of the measurement lost BOTH cells to it:
-    swapping the call-site argument orphans the prompt (**S1144** unused private method, so delete the
-    method too — check first what else calls its helpers; `RenderPaths` had 7 other callers), and
-    deleting the guard block orphans a parameter (**S1172**, so drop the parameter and its argument).
-    A cell that does not compile reports as red and is not evidence — print the compiler line and
-    call it INCONCLUSIVE rather than counting it.
-  * **A CONTROL THAT RENAMES THE THING IS WORTH MORE THAN ONE THAT LEAVES IT ALONE.** Cell E renames
-    the prompt at both ends and must stay GREEN: that is the only cell proving the class keys on the
-    wiring rather than on the string `ConfirmPruneAsync`, which is the failure mode a source-scanning
-    test is most likely to ship with. Cell F, rewording the prompt, does the same for its message.
-  * **RUN THE FULL SUITE UNDER THE FLAGSHIP DEFECT, ONCE.** One `dotnet test` under cell B1 gives the
-    finding and the fix in a single number: 2 failed of 1384, both in the new class, nothing else —
-    which is iter142's "the control cell is the finding" without paying for a run per legacy class.
-    Read the failing test NAMES, not just the count.
+*Moved to `tools/loop/method-notes-archive.md` at iter154 (verbatim, round trip asserted) — settled:
+`PruneConfirmationCoverageTests` is committed and has gated every `--prune` call site since.
+**Headlines:** **when a seam exists to make a rule testable, the production argument is what nobody
+tests** — wherever this repo injects a collaborator to keep a path offline-testable, ask what asserts
+the real argument; **a lambda should be refused, not inspected**, because an auto-yes and a real
+prompt are the same shape to any scan short of a compiler; **budget the analyzers into the cell
+design, not into a retry** (S1144 orphaned prompt, S1172 orphaned parameter — a cell that does not
+compile is INCONCLUSIVE, not red); **a control that renames the thing is worth more than one that
+leaves it alone**, since only that cell proves the test keys on the wiring and not on a string; and
+**run the full suite under the flagship defect once** — but see iter154 below, because that bullet's
+closing line ("read the failing test NAMES, not just the count") is one of the two places this lesson
+was written down and never mechanised.*
 
 ## When the rule is "do not carry knowledge", and the knowledge is in the tree (iter146)
 
@@ -549,3 +512,34 @@ shipped **green through all 1388 tests**, and the reason generalises past this r
     target reddens `ExpectedFiles` on purpose; counting that as a catch scores F and G the same.
   * S1144 a second time (iter145, now paid twice): dropping a call orphans its private helper and the
     cell stops compiling. Delete the helper in the same cell, or the cell is not evidence.
+
+## When the verification command destroys its own evidence (iter154)
+
+The protocol's non-negotiable step is `dotnet build` + `dotnet test` green, and every iteration ran
+the suite as `dotnet test 2>&1 | tail -N` — which keeps the summary and drops the per-test failure
+lines above it. **MTP writes no artifact unless asked** (`TestResults/` is empty, every project). So
+a red run is a bare number. This iteration opened on `total: 1388, failed: 1` at HEAD before any
+write, lost the name, and went green for the next sixteen runs. **Iteration 120 hit the identical
+shape** and closed with a standing instruction "to capture the name in the same command".
+
+  * **AN INSTRUCTION THAT DEPENDS ON THE NEXT AGENT REMEMBERING IT IS NOT A FIX; PLACEMENT IS.**
+    iter120 wrote its instruction into its **done-archive entry**, which `doneArchive.howToRead`
+    tells every iteration not to read for orientation; iter145 restated it as a bullet in a section
+    about something else ("read the failing test NAMES, not just the count"). Both correct, both
+    unreachable when needed — the same failure recurred 34 iterations later and was lost the same
+    way. **If a lesson is about what to run, it belongs in the command.**
+  * **RUN `python3 tools/loop/run-suite.py`, NOT `dotnet test | tail`.** Full log + xUnit TRX into
+    `.mtk/suite-runs/` (gitignored), failing ids and assertion messages printed from the TRX,
+    artifacts dropped on green, suite's exit code mirrored; `--repeat N` is the flake hunt. Proven
+    both directions 10/10 (`.mtk/paths-154/prove-capture.py`): the red cell mutates one unique
+    assertion and must NAME it — printing "1 failed" is scored FAIL, being exactly what iters 120
+    and 154 already had — and the green cell must name nothing. Tree restored in a `finally` from
+    the text read, asserted byte-identical.
+  * **`dotnet test -- <runner args>` DIES ON THIS SDK** (*"Specifying a directory for 'dotnet test'
+    should be via '--project' or '--solution'"*). Pass MTP options with NO separator:
+    `--report-xunit-trx --report-xunit-trx-filename <name> --results-directory <dir>`. It exits
+    non-zero in ~0 s having run nothing, which reads as a red suite unless you check the duration.
+  * **THE FLAKE IS STILL UNNAMED AND THAT IS THE HONEST STATE.** 14 runs plus 2 re-runs did not
+    reproduce it (1 red in 17 today, ~6%); it is **not** the iter59 mermaid flake, which was fixed.
+    A lead, not a conclusion: both recorded occurrences were **the first suite run after a rebuild**,
+    and the suite spawns real processes. The next occurrence will name itself.

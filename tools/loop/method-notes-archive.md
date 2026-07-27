@@ -293,3 +293,70 @@ state.json **and** to GATES.md, which is exactly when a two-copy invariant break
     the `§` and `—` characters inflate it, and main() checks the token budget BEFORE the mirror, so
     the cell would go red with the wrong message. Cell K round-trips with no semantic change and
     must stay green. Assert the SPECIFIC failure message, never just a non-zero exit.
+
+## When a rule's enforcement is one argument at one call site (iter145)
+
+Rule §9.6 has two halves that are enforced in different KINDS of way, and the kind is what decides
+whether anything can cover it. "Never runs in CI" is a computation — `PruneGuard.Refusal` — and
+`PruneGuardTests` drives it through an injected env reader, so it goes red when deleted. "Requires
+interactive confirmation" is not a computation anywhere: it is the third argument of
+`PublishCommand.cs:453`. `PruneExecutor` deletes whatever its delegate agrees to, deliberately, so
+the "no" case is testable offline — and the consequence nobody had drawn is that **every test that
+reaches the executor supplies its own stub, so not one of them has an opinion about the real one.**
+
+  * **WHEN A SEAM EXISTS TO MAKE A RULE TESTABLE, THE PRODUCTION ARGUMENT IS WHAT NOBODY TESTS.** The
+    injected-delegate pattern (`PruneConfirmation`, `DiagramRenderer`) is right, and it moves the
+    invariant out of the class the tests exercise and into the one line that wires it. Wherever this
+    repo injects a collaborator to keep a path offline-testable, ask what asserts the real argument.
+    Sibling shape to iter141's placement lesson: there the guard's CALL SITE was untested, here the
+    guard's ARGUMENT is.
+  * **A LAMBDA SHOULD BE REFUSED, NOT INSPECTED.** `(_, _) => Task.FromResult(true)` and a lambda
+    that really prompts are the same shape to any scan short of a compiler, so
+    `PruneConfirmationCoverageTests` requires the argument to be a bare identifier and reads the
+    named method's body. Cheaper than parsing, and it fails toward the reviewable option.
+  * **BUDGET THE ANALYZERS INTO THE CELL DESIGN, NOT INTO A RETRY.** Three of seven cells needed a
+    second edit purely to keep compiling, and the first run of the measurement lost BOTH cells to it:
+    swapping the call-site argument orphans the prompt (**S1144** unused private method, so delete the
+    method too — check first what else calls its helpers; `RenderPaths` had 7 other callers), and
+    deleting the guard block orphans a parameter (**S1172**, so drop the parameter and its argument).
+    A cell that does not compile reports as red and is not evidence — print the compiler line and
+    call it INCONCLUSIVE rather than counting it.
+  * **A CONTROL THAT RENAMES THE THING IS WORTH MORE THAN ONE THAT LEAVES IT ALONE.** Cell E renames
+    the prompt at both ends and must stay GREEN: that is the only cell proving the class keys on the
+    wiring rather than on the string `ConfirmPruneAsync`, which is the failure mode a source-scanning
+    test is most likely to ship with. Cell F, rewording the prompt, does the same for its message.
+  * **RUN THE FULL SUITE UNDER THE FLAGSHIP DEFECT, ONCE.** One `dotnet test` under cell B1 gives the
+    finding and the fix in a single number: 2 failed of 1384, both in the new class, nothing else —
+    which is iter142's "the control cell is the finding" without paying for a run per legacy class.
+    Read the failing test NAMES, not just the count.
+
+## Reading the loop's own history back (iter136)
+
+  * **`n` IN done-archive.jsonl IS A LINE INDEX, NOT AN ITERATION NUMBER, AND HAS NOT MATCHED ONE
+    SINCE LINE 50.** iter48 logged two slices, so from n=50 onward `n = iteration + 1` — 87 of 136
+    lines. `doneCount` 136 against iteration 135 is that offset, not a miscount. Never read an
+    iteration number off `n`, and never renumber to "fix" the gap: the duplicate is a real record.
+  * **THE ARCHIVE HAS TWO ENTRY SHAPES AND ANY READER MUST HANDLE BOTH.** 107 entries are strings
+    naming themselves in a leading `iterNNN`; 29 are objects carrying `{"iteration": NNN, "slice": …}`.
+    Both are legal per `doneArchive.format`, but every instruction written for the archive assumed
+    the first.
+  * **THE DOCUMENTED LOOKUP WAS WRONG FOR 27 OF 135 ITERATIONS, AND ITS FAILURE MODE LOOKS LIKE A
+    HIT.** `grep -n 'iterNNN' done-archive.jsonl` — the exact command `doneArchive.howToRead`
+    prescribed — returned nothing for 3 (the object-shaped ones) and, for 24 more, returned only
+    lines belonging to some *other* entry: ask for iter113 and it hands back iter134's and iter135's
+    records, which cite it in prose. Because loop entries constantly reference earlier ones, 65 of
+    135 iterations get at least one match that is not their own. Use
+    `python3 tools/loop/check-state-size.py --find <n>`, which resolves both shapes and lists prose
+    mentions separately. Measured by `.mtk/paths-136/probe-archive-lookup.py`.
+  * **A CHECK OVER A FILE IS NOT A CHECK OVER THE THING THE FILE RECORDS.** iter133's archive checks
+    (valid JSON, contiguous `n`, matching `doneCount`, `doneRecent` round-trip) are all satisfiable
+    by a file that is missing an iteration entirely — deleting a middle record and renumbering passes
+    every one of them. The checks that catch it have to be stated in the archive's own domain:
+    ATTRIBUTION (every entry names its iteration), COVERAGE (no gap in the range), HEAD (the newest
+    entry is the iteration state.json claims to be on). The head check is the one that would have
+    caught iter132's loss at the moment it happened.
+  * **WHEN A MUTATION HARNESS SCORES LESS THAN N/N, SUSPECT THE PREDICTION FIRST.** Stripping an
+    entry's attribution also opens a coverage gap, so two checks fire on one mutation and a
+    "exactly one message" assertion reports a false FAIL. Same shape as iter135's 6/7. Assert the
+    expected SET — every predicted message fires and nothing else does — which still proves
+    non-redundancy without pretending each mutation has exactly one consequence.
