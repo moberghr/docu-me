@@ -19,21 +19,64 @@ namespace DocuMe.Core.Tests.Publishing;
 /// <para>
 /// The shape is the one <see cref="Confluence.RemoteBodyReadTests"/> uses for rule §9.1, and it is the
 /// same argument: the property is a statement about the whole tree, so no run of the four commands that
-/// do check the guard can demonstrate that a fifth one does. Three sets are derived from source and
-/// compared against three pinned lists — the write methods the client ships, the files that reach one,
-/// and the surfaces that hold the guard. Each comparison fails in both directions on purpose. Adding a
-/// write and listing it here is one edit; adding a write and not listing it is a red suite naming the
-/// method.
+/// do check the guard can demonstrate that a fifth one does. Five sets are derived from source and
+/// compared against pinned lists — the write methods the client ships, the files that reach one, the
+/// surfaces that hold the guard, the files that issue an HTTP write verb at all, and the spellings that
+/// would issue one invisibly. Each comparison fails in both directions on purpose. Adding a write and
+/// listing it here is one edit; adding a write and not listing it is a red suite naming the method.
+/// </para>
+/// <para>
+/// <strong>The last two were added at iter183, after auditing this class's own population rather than
+/// the tree it guards.</strong> The first paragraph promises that an eleventh write on the client fails
+/// the suite. It did not, for two spellings, because the population was defined twice over by a literal
+/// nothing asserted: the verbs were <c>Post</c>/<c>Put</c>/<c>Delete</c> and the file was
+/// <c>ConfluenceClient.cs</c>. Measured, one mutation each, full suite per cell: an eleventh public write
+/// method spelled <c>HttpMethod.Patch</c> left the suite <em>green at 1,433</em>, and so did an
+/// <c>HttpMethod.Post</c> spelling planted in <c>DashboardPublisher.cs</c>. A third cell respelled an
+/// existing write as <c>new HttpMethod("DELETE")</c> and was caught by exactly one test — fact 1's
+/// vacuous-pass floor, whose message says the scan stopped reading the client, which is true but names
+/// the instrument rather than the cause.
 /// </para>
 /// <para>
 /// What this class does <em>not</em> claim: that a listed caller is correctly guarded. It pins which
 /// surface each one sits behind so the mapping is reviewable, and the per-surface tests execute it.
+/// Those were measured in the same pass and they hold: each of <c>dashboard</c>, <c>drift --mark</c> and
+/// <c>sync --reply</c> has a test that runs the command against a protected space and asserts the run
+/// reached Confluence with no request at all, and <c>publish</c> has
+/// <see cref="PublishExecutorTests.Refuses_to_send_a_single_request_when_the_target_space_is_protected"/>.
 /// </para>
 /// </remarks>
 public sealed class WriteLockCoverageTests
 {
     /// <summary>The verbs that make a request a write. Everything else is a read.</summary>
-    private static readonly string[] Verbs = ["Post", "Put", "Delete"];
+    /// <remarks>
+    /// <c>Patch</c> is listed though the client issues none, and that is the point: this is a claim about
+    /// HTTP, not an inventory of the endpoints Confluence happens to expose today. It cost one word and
+    /// closed a measured hole — see the second paragraph of this class's remarks.
+    /// </remarks>
+    private static readonly string[] Verbs = ["Post", "Put", "Delete", "Patch"];
+
+    /// <summary>
+    /// Spellings that issue a write without naming a verb <see cref="WriteVerbs"/> can classify. None may
+    /// appear anywhere under <c>src/</c>.
+    /// </summary>
+    /// <remarks>
+    /// The verb scan keys on the literal <c>HttpMethod.&lt;verb&gt;</c>, so a request built from a
+    /// constructed method or sent through one of <c>HttpClient</c>'s verb helpers is a write no fact here
+    /// can count — including <see cref="Verbs"/>, now that it knows about <c>Patch</c>. The tree holds
+    /// none of these (the client funnels every request through a single <c>SendAsync</c> with a static
+    /// verb), which is what makes a flat refusal affordable rather than a second parser.
+    /// </remarks>
+    private static readonly string[] UnscannableSpellings =
+    [
+        "new HttpMethod(",
+        ".PostAsync(",
+        ".PutAsync(",
+        ".PatchAsync(",
+        ".DeleteAsync(",
+        ".PostAsJsonAsync(",
+        ".PutAsJsonAsync(",
+    ];
 
     /// <summary>
     /// Every <c>ConfluenceClient</c> method that issues a write verb, and the verb it issues. Ten, as
@@ -195,6 +238,85 @@ public sealed class WriteLockCoverageTests
 
         holding.ShouldBe(GuardedSurfaces.Order(StringComparer.Ordinal).ToList(), drifted);
     }
+
+    /// <summary>
+    /// The client is the only file in the tree that issues an HTTP write verb — the assertion a second
+    /// client fails.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Every_write_the_client_ships_is_one_this_class_knows_about"/> reads one file <em>by
+    /// name</em>, so a write issued from anywhere else is outside its population rather than caught by
+    /// it: measured, an <c>HttpMethod.Post</c> spelling planted in <c>DashboardPublisher.cs</c> left the
+    /// whole suite green. The lock is a property of requests, not of a filename. No floor is needed here
+    /// — an empty scan compares empty against one name and fails, which is the vacuity guard.
+    /// </remarks>
+    [Fact]
+    public void The_client_is_the_only_file_that_issues_a_write_verb()
+    {
+        var issuing = Sources()
+            .Where(file => IssuesAWriteVerb(File.ReadAllText(file)))
+            .Select(file => Path.GetFileName(file)!)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        const string moved = "The set of files issuing an HTTP write verb has changed. Every write is a request "
+            + "that can reach the production AUR space (CLAUDE.md §0.1, rule §1.4), and the lock is "
+            + "enforced upstream of the client's callers — a file issuing its own requests has no such "
+            + "upstream, and none of the three facts above can see it, because they scan the client by "
+            + "name. Route it through ConfluenceClient, or widen this class to cover it. Issuing:";
+
+        List<string> expected = [ClientFile];
+
+        issuing.ShouldBe(expected, moved);
+    }
+
+    /// <summary>
+    /// No write is spelled in a way the verb scan cannot see — the assertion an <c>HttpClient</c> verb
+    /// helper fails.
+    /// </summary>
+    /// <remarks>
+    /// The cheapest way past every fact in this class is not a new file or a new caller: it is spelling
+    /// the same request so the scan reads no verb. Respelling one existing write as
+    /// <c>new HttpMethod("DELETE")</c> was caught only by fact 1's floor, and only because it took the
+    /// count below the ten pinned methods — an <em>eleventh</em> write spelled that way would take it
+    /// nowhere and pass.
+    /// </remarks>
+    [Fact]
+    public void No_write_is_spelled_in_a_way_the_verb_scan_cannot_see()
+    {
+        var found = Sources()
+            .SelectMany(file => Hidden(File.ReadAllText(file))
+                .Select(spelling => $"`{spelling}` in {Path.GetFileName(file)}"))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        const string invisible = "A request is spelled in a way this class cannot classify as a verb, which "
+            + "makes any write behind it invisible to every fact here and to the production write lock "
+            + "they exist to make structural (CLAUDE.md §0.1, rule §1.4). Send it through "
+            + "ConfluenceClient's SendAsync with a static HttpMethod, or teach Verbs and WriteVerbs the "
+            + "spelling in the same change. Found:";
+
+        found.ShouldBeEmpty(invisible);
+
+        // Second, not first, and the order is the whole design: this floor exists only to give the empty
+        // list above a meaning. Asserted ahead of it, a respelled write trips the floor and the run
+        // reports a broken instrument where it could have named the spelling.
+        var scanned = WriteVerbs().Count;
+
+        var blind = $"The verb scan found {scanned} write(s) in {ClientFile}, fewer than the "
+            + $"{WriteMethods.Count} pinned. It has stopped reading the client, so the clean result above "
+            + "is a statement about nothing.";
+
+        scanned.ShouldBeGreaterThanOrEqualTo(WriteMethods.Count, blind);
+    }
+
+    /// <summary>Whether <paramref name="text"/> names any of <see cref="Verbs"/> as an HTTP method.</summary>
+    private static bool IssuesAWriteVerb(string text) => Verbs
+        .Any(verb => text.Contains($"HttpMethod.{verb}", StringComparison.Ordinal));
+
+    /// <summary>The unscannable spellings present in <paramref name="text"/>.</summary>
+    private static IEnumerable<string> Hidden(string text) => UnscannableSpellings
+        .Where(spelling => text.Contains(spelling, StringComparison.Ordinal));
 
     /// <summary>
     /// Every write verb in the client, with the public method enclosing it. <c>Method</c> is

@@ -86,7 +86,7 @@ def failing_from_stdout(text):
 # project dropped from the solution, a filter left in place, a runner that collected nothing. Raise
 # it when the suite legitimately grows; lowering it is a deliberate act that needs a reason in the
 # commit message, exactly like check-state-size.py's MEASURED constants.
-EXPECTED_AT_LEAST = 1433  # iter182: +1, a prune prompt that asks and discards the answer failed nothing
+EXPECTED_AT_LEAST = 1435  # iter183: +2, an 11th client write spelled HttpMethod.Patch failed nothing
 
 
 def verdict(returncode, blob):
