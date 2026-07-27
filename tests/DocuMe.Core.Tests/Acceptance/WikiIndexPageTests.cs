@@ -259,12 +259,11 @@ public sealed class WikiIndexPageTests
     [Fact]
     public void The_concepts_index_counts_the_lifecycle_stages_the_lifecycle_page_documents()
     {
-        var stages = Regex.Matches(
-                Read("docs/wiki/10-concepts/lifecycle.md"),
-                @"^## \d+\. ",
-                RegexOptions.Multiline,
-                TimeSpan.FromSeconds(1))
-            .Count;
+        var stages = Regex.Count(
+            Read("docs/wiki/10-concepts/lifecycle.md"),
+            @"^## \d+\. ",
+            RegexOptions.Multiline,
+            TimeSpan.FromSeconds(1));
 
         stages.ShouldBeGreaterThan(0, "lifecycle.md has no numbered stage headings, so the count below is vacuous.");
 

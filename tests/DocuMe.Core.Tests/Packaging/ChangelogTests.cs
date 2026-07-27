@@ -417,7 +417,7 @@ public sealed partial class ChangelogTests
         var body = readme[(start + heading.Length)..];
         var next = NextHeading().Match(body);
 
-        return TableRow().Matches(next.Success ? body[..next.Index] : body).Count;
+        return TableRow().Count(next.Success ? body[..next.Index] : body);
     }
 
     private static List<string> ScaffoldingSources()
