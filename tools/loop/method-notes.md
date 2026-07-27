@@ -319,139 +319,86 @@ was written down and never mechanised.*
     what you did, go back and correct the record you already wrote.**
 ## When a check is named after one file but guards the whole tree (iter157)
 
-  * **BEFORE WRITING A TEST FOR A GAP YOU INFERRED, GREP FOR THE ASSERTION, NOT FOR THE TEST CLASS
-    YOU EXPECT TO HOLD IT.** iter157 found `ReadmeCliContractTests.Every_option_the_README_hangs_on_a_
-    command_exists_on_that_command`, checked `SkillContractTests` for the same check over the three
-    shipped `SKILL.md` files, found nothing, and concluded the skills were unguarded. They are not:
-    **`CliReferencePageTests.Every_documented_invocation_names_a_real_command_with_real_options`
-    sweeps ~132 invocations across the whole consumer-facing tree** — README, `docs/wiki/`, every
-    `SKILL.md`, `templates/workflows/*.yml` — and validates each `--option` against the real declared
-    set, with a companion anti-vacuity test naming four of those files so the regex cannot go blind.
-    A class named after `cli.md` owns a tree-wide sweep. The near-miss was a duplicate test.
-  * **THE COROLLARY THAT FOUND THE REAL GAP: ASK WHAT DIMENSION THE EXISTING SWEEP COVERS.** The tree
-    is swept for CLI *options* a doc names. It was NOT swept for *config fields* a doc promises:
-    `PlanDataContractTests` held the two dead knobs against `configuration.md` alone, so
-    `plugin/skills/docs-refresh/SKILL.md:44` could list both dead knobs as inputs an agent reads and
-    nothing noticed. Same shape of defect, one dimension over, unguarded. The gap was not "the skills
-    are unchecked" but "checked for one kind of claim, not the other".
-  * **A DECISION'S SETTLE INSTRUCTIONS ARE A CLAIM ABOUT THE TREE, AND THEY ROT LIKE ANY OTHER.**
-    `DeadFields[0].Why`, `state.json` and the archive all said to strike the promise from §6.2 "and
-    the skill", singular, for 34 iterations. Measured: six files, two skills. Writing the surface into
-    a `Places` array pinned in both directions turns "remember to edit all six" into a failing test —
-    the general move when an instruction says *everywhere* and names three of six places.
-  * **AN EXCLUSION IS BETTER MADE STRUCTURAL THAN FILTERED.** The inventory walks `docs/wiki` rather
-    than `docs`, so the dated records under `docs/plans/` are out of scope by the shape of the walk
-    instead of by a `.Where` a later edit can drop. The control case in
-    `.mtk/paths-157/mutate-dead-knob-surface.py` proves it (mention a dead knob in an m0 plan record →
-    correctly OK-IGNORED), which is iter125's control-case rule applied to a scope decision.
-
+  * **MOVED to `tools/loop/method-notes-archive-2.md` at iter164**, verbatim and round-trip asserted,
+    to pay back the budget iter164's own section spent (the rule this file's header states). Nothing
+    was discarded, and both tests it produced are committed. **The headlines:** **grep for the
+    ASSERTION, not for the test class you expect to hold it** - `CliReferencePageTests` sweeps ~132
+    documented invocations across README, `docs/wiki/`, every `SKILL.md` and the workflow templates,
+    so a class named after `cli.md` owns a tree-wide sweep and the "gap" was nearly a duplicate test;
+    **the corollary is what found the real gap - ask what DIMENSION the existing sweep covers**, since
+    the tree was swept for CLI *options* a doc names and not for *config fields* a doc promises;
+    **a decision's settle instructions are a claim about the tree and rot like any other** (three
+    places named, six real, two of them skills - write the surface into a `Places` array pinned both
+    ways and "remember to edit all six" becomes a failing test); and **an exclusion is better made
+    structural than filtered**, so walk `docs/wiki` rather than `docs` with a `.Where` a later edit
+    can drop.
 ## A mutation that does not compile is not evidence (iter158)
 
-  * **BUILD-FAILED IS NOT CAUGHT, AND IT READS LIKE IT.** iter158's harness renamed
-    `DashboardConfig.Title` in the record to prove `ConfigFieldSurfaceTests` catches a config field
-    whose docs were left behind. The first run reported the case as failing — but it failed at
-    `dotnet build` (`PublishPipeline.cs:104` still read `.Title`), so the test under examination never
-    ran at all. In C# a rename inside `src/` is compiler-enforced across every reader, which is exactly
-    why the *docs* are the interesting half: **to mutate a rename realistically, patch the record AND
-    every reader** (here four: `PublishPipeline`, `DashboardCommand`, `DriftCommand`, and one test), so
-    the tree compiles and the only thing stale is the prose. Have the harness report `BUILD-FAILED` as
-    its own verdict, distinct from `CAUGHT` and `MISSED` — a harness that folds the two together will
-    tell you a test works when it was never invoked.
-  * **ASSERT THE RESTORE, NOT JUST THE RUN.** Each case restores in a `finally` and the harness hashes
-    every touched file before the first mutation and after the last, printing `IDENTICAL` or
-    `DIRTY — RESTORE FAILED`, then rebuilds at restored HEAD. Five files were being rewritten per case;
-    without the digest, a crash between patch and restore leaves a mutation in the tree that the next
-    `git status` blames on the increment. (iter154's lesson, applied ahead of the failure.)
-  * **THE DIMENSION QUESTION IS RE-ASKABLE, AND MOST ANSWERS COME BACK CLEAN.** iter158 measured four
-    of the dimensions iter157 listed before writing anything: `DOCUME_*` env var names (two real, and
-    the two apparent phantoms are GitHub secret names, one of them documented at its point of use
-    inside the template comment), Confluence label names, and the `§`-numbers docs cite at each other
-    (`§0` resolves to CLAUDE.md's critical rules, not to a missing PLAN.md section). Only the config
-    fields had a gap. **Probing four dimensions to ship one test is the expected ratio** — the cost of
-    a probe is a script, the cost of a test guarding a dimension that was never at risk is permanent.
-
+  * **MOVED to `tools/loop/method-notes-archive-2.md` at iter164**, verbatim and round-trip asserted.
+    Nothing was discarded. **The headlines:** **BUILD-FAILED IS NOT CAUGHT, AND IT READS LIKE IT** -
+    a harness that folds the two together will tell you a test works when it was never invoked, so
+    report it as its own verdict beside CAUGHT and MISSED; in C# a rename inside `src/` is
+    compiler-enforced across every reader, so **to mutate a rename realistically, patch the record AND
+    every reader** and leave only the prose stale, because the docs are the interesting half;
+    **assert the RESTORE, not just the run** (hash every touched file before the first mutation and
+    after the last, print IDENTICAL or DIRTY, then rebuild at restored HEAD); and **the dimension
+    question is re-askable and most answers come back clean** - four probed, one gap, and **probing
+    four dimensions to ship one test is the expected ratio**, because a probe costs a script while a
+    test guarding a dimension that was never at risk costs forever.
 ## The bookkeeping file's own invariants were the last unguarded seam (iter159)
 
-  * **WHEN ONE INSTANCE OF A PATTERN GETS A CHECKER, ENUMERATE THE OTHER INSTANCES.** `state.json` has
-    three stub-plus-archived-body splits — `gates`, `blockers`, `decisions` — and they fail identically:
-    a key present in one place and invisible in the other. `gates` got `check_gate_mirror` at iter144
-    only after `paste-rule-8-2a` sat unmirrored for **69 iterations**. The sibling fields kept the same
-    exposure for another 15. The cheapest way to find real work is not a new dimension: it is asking
-    which siblings of an already-proven defect were never checked. The prose even prescribed the
-    three-place edit (`blockers._archive`: "delete the key from both ... append a one-line verdict"),
-    which is the tell — **a multi-place edit written out in prose and enforced by nothing.**
-  * **A CHECK MUST NOT FIRE ON THE EVENT THE LOOP IS WAITING FOR.** `decisions-archive.json`'s own
-    `authoritative` field says state.json wins and the archive may be stale, so requiring a body for an
-    *answered* decision would turn Mirko's reply into a red checker. Direction (3) is therefore scoped
-    to stubs still starting with `OPEN`, and the harness carries **two must-stay-GREEN cases**
-    (`answered-body-left-stale`, `answered-body-removed`) alongside the five must-be-CAUGHT ones. When a
-    file documents its own permitted staleness, that sentence is a specification of what not to assert.
-  * **SCOPING A CHECK CREATES A VACUITY RISK, SO ASSERT THE POPULATION.** Narrowing direction (3) to
-    OPEN stubs means a broken detector inspects nothing and still prints OK. The harness reads the
-    reported count back (`10 decision stubs (7 OPEN)`) and fails on `(0 OPEN)` before running any
-    mutation — iter158's anti-vacuity rule, applied to a filter rather than to a file-tree walk.
-  * **`git checkout --` IS THE RIGHT RESTORE WHEN THE MUTATED FILES ARE CLEAN AT HEAD.** No saved copies,
-    no re-serialization drift to undo, exact by construction, and it works from a `finally` after a crash.
-    The harness still asserts the digest per case; it prints the clean `git status` of the three files
-    first, because that precondition is what makes the restore exact. **Not usable for an increment that
-    has already edited those files** — check `git status` before reaching for it.
-
-
+  * **MOVED to `tools/loop/method-notes-archive-2.md` at iter164**, verbatim and round-trip asserted.
+    Nothing was discarded, and all three checkers it produced are committed. **The headlines:**
+    **when one instance of a pattern gets a checker, ENUMERATE THE OTHER INSTANCES** - `gates` got one
+    at iter144 only after a gate sat unmirrored for 69 iterations, and its two siblings kept the same
+    exposure for another 15; **a multi-place edit written out in prose and enforced by nothing is the
+    tell**; **a check must not fire on the event the loop is waiting for**, so direction (3) is scoped
+    to stubs still reading OPEN and the harness carries must-stay-GREEN cells for an answered one;
+    **scoping a check creates a vacuity risk, so assert the population** - and read iter164 next,
+    which found that this section put that assertion in its own scratch harness rather than in the
+    check, where nothing re-ran it; and **`git checkout --` is the right restore when the mutated
+    files are clean at HEAD**, exact by construction and usable from a `finally`, but not once your
+    own increment has dirtied them (see iter160).
 ## Calibrating the size checker (moved verbatim from `state.json -> readMe` at iter160)
 
-The paragraph below stood at the top of state.json from iter129 to iter160. It was moved here under
-the rule `methodNotes.appendHere` states - durable method advice belongs in this file, not in
-state.json - when iter160's increment put state.json over its Read budget and had to pay it back.
-Its one operative sentence (truncation is not silent) stayed behind in `readMe`.
-
-> CORRECTED AT ITER129, because a later method depends on it: TRUNCATION IS NOT SILENT. The tool
-> prints "[Truncated: PARTIAL view - showing lines 1-462 of 1500 total (68900 tokens, cap 25000)]".
-> iter128 called truncation "the worse failure because it looks like success"; the real risk is an
-> agent SKIMMING PAST an explicit notice, not the tool hiding anything. That notice is also the ONLY
-> tokenizer on this machine (no tiktoken, no anthropic, no transformers), and it is how iter129
-> calibrated the size checker: build a file over the cap but under 256 KB, Read it whole, divide
-> bytes by the reported total. Markdown measured 2.604 B/tok, this file's JSON 2.368.
-
+  * **MOVED ON to `tools/loop/method-notes-archive-2.md` at iter164**, verbatim and round-trip
+    asserted - this section was itself a historical quote, the paragraph that stood at the top of
+    state.json from iter129 to iter160, and it is now two moves from where it was written. Nothing was
+    discarded. **The headlines:** **truncation is NOT silent** - the Read tool prints an explicit
+    `[Truncated: PARTIAL view - showing lines 1-462 of 1500 total (68900 tokens, cap 25000)]`, so the
+    risk is an agent skimming past the notice, not the tool hiding anything - and **that notice is the
+    only tokenizer on this machine**, which is how every bytes-per-token constant here was measured.
+    The live version of all of it is `check-state-size.py`'s docstring, its `MEASURED` table and
+    `check_calibration`, which fails when a constant drifts optimistic; read those, not a paragraph
+    about them.
 ## Mutation harnesses, iter160
 
-* **WHEN AN EARLIER ITERATION ENUMERATED A FAMILY AND CLOSED IT, CHECK WHETHER THE ENUMERATION
-  SKIPPED A LIFECYCLE HALF.** iter159 swept state.json's stub-plus-archived-body splits, counted
-  three (`gates`, `blockers`, `decisions`), checked all three and declared the seam spent. Its sweep
-  was correct and complete *for the half it looked at* - stub to **OPEN** body. The fourth pair is
-  on the **settled** side (`blockersArchive.settled` -> blockers-archive.jsonl, twinned by
-  `spikesArchive.settled` -> spikes-archive.json), and it was already broken: five tombstones, four
-  bodies. The generalisation to carry forward is open vs settled, added vs removed, live vs
-  archived - a closed enumeration is only closed for the lifecycle stage it enumerated.
-* **ASSERT BEFORE YOU MUTATE, NOT AFTER - AND THE GUARD WILL CATCH YOU, NOT JUST A FUTURE READER.**
-  iter160's migration refused its own first run: it expected the recovered blocker body to be 1806
-  characters, which was the JSON-**escaped** length printed during the investigation; the raw string
-  is 1771. Because the length check ran before the write, blockers-archive.jsonl was untouched and
-  the fix was a one-line constant. Had the assertion run after the rewrite, the archive would have
-  been in an unknown state at the moment the script reported failure.
-* **`git checkout --` IS UNUSABLE ONCE YOUR OWN INCREMENT HAS DIRTIED THE MUTATED FILES** (the
-  iter159 note, hit for real at iter160). `.mtk/paths-160/mutate-settled-bodies.py` snapshots each
-  touched file as BYTES before the first mutation, restores from that snapshot after every case, and
-  digests the whole touched set before and after to prove nothing leaked.
-
+  * **MOVED to `tools/loop/method-notes-archive-2.md` at iter164**, verbatim and round-trip asserted.
+    Nothing was discarded. **The headlines:** **when an earlier iteration enumerated a family and
+    closed it, check whether the enumeration skipped a LIFECYCLE HALF** - iter159 swept the
+    stub-to-OPEN-body splits correctly and completely, and the fourth pair was on the *settled* side,
+    already broken at five tombstones to four bodies; the generalisation is open vs settled, added vs
+    removed, live vs archived, and iters 161-164 each found another instance of it; **assert before
+    you mutate, not after** - iter160's migration refused its own first run over a 1806-vs-1771
+    character count, and because the assertion ran before the write the archive was untouched when it
+    reported failure; and **`git checkout --` is unusable once your own increment has dirtied the
+    mutated files**, so snapshot each touched file as BYTES before the first mutation and digest the
+    whole set before and after.
 ## Two checks can print BROKEN for one mutation (iter161)
 
-  * **ANCHOR A HARNESS EXPECTATION ON THE CHECK'S OWN MESSAGE TEXT, NOT ON THE MUTATED KEY'S NAME.**
-    A refinement of iter158's "a non-zero exit is not a catch". check-state-size.py's main() runs
-    EVERY check and collects problems BEFORE it evaluates any FAIL banner, so one mutation
-    legitimately trips two checks and both print their BROKEN line. iter161's "remove a gate from
-    `gates` and leave its archived body orphaned" case expected the bare string
-    `'settings-corrections'` - which check_gate_mirror also prints, for its own correct reason - so it
-    reported CAUGHT while proving nothing about check_gates_archive. Tightened to
-    "gates-archive.json holds a body 'settings-corrections'". Verdicts worth keeping distinct: CAUGHT,
-    MISSED, WRONG-CHECK, CRASH, and a separate GREEN/REGRESSION pair for the must-stay-green control.
-  * **PREFER A DECLARED EXEMPTION LIST TO A KEY-SHAPE REGEX.** check_gates_archive has to tell a gate
-    mirror from a settled-section body inside one flat JSON object. A kebab-case regex would have
-    classified a MIS-KEYED gate mirror - the exact defect the check exists to catch - as "not a gate"
-    and exempted it. So the three non-gate keys are named in GATES_ARCHIVE_NON_GATE_KEYS with a reason
-    each, and the declaration is itself checked BOTH ways: a declared name absent from the archive is
-    dead weight, and a declared name that is ALSO a live gate would exempt a real mirror forever. Both
-    are mutation cases in `.mtk/paths-161/mutate-gates-archive.py`.
-
+  * **MOVED to `tools/loop/method-notes-archive-2.md` at iter164**, verbatim and round-trip asserted,
+    in the second pass of this rotation - the first five sections left only 3,434 B of headroom, which
+    is less than one recent section, and headroom is the deliverable rather than fitting (iter162's
+    own mistake, made with 2,593 B). Nothing was discarded, and `check_gates_archive` is committed.
+    **The headlines, both of which iter164's harness leans on directly:** **anchor a harness
+    expectation on the CHECK'S OWN MESSAGE TEXT, not on the mutated key's name** - `main()` runs every
+    check and collects problems before evaluating any FAIL banner, so one mutation legitimately trips
+    two checks and both print their BROKEN line, and iter164 sharpened this into slicing stdout by
+    each check's section header (see it there: exiting non-zero attributes nothing); and **prefer a
+    DECLARED exemption list to a key-shape regex**, because a kebab-case regex would classify the
+    mis-keyed gate mirror the check exists to catch as "not a gate" - with the declaration itself
+    checked both ways. Verdicts worth keeping distinct: CAUGHT, MISSED, WRONG-CHECK, CRASH, and a
+    GREEN/REGRESSION pair for the must-stay-green control.
 ## A printed defect that exits 0, and a fixture list that rots (iter162)
 
   * **A CHECK THAT REPORTS A DEFECT AND EXITS 0 TRAINS ITS READERS TO SKIM.** This checker printed
@@ -525,3 +472,48 @@ Its one operative sentence (truncation is not silent) stayed behind in `readMe`.
     tests only get added here, so it fires when the count DROPS and needs no edit when it grows.
     Same file also stopped treating a zero exit code as proof the suite ran - an unparseable summary
     printed `total=?` beside the word PASS.
+
+## Proving a vacuity judgement instead of writing one (iter164)
+
+  * **"NON-VACUOUS BY CONSTRUCTION" IS A CLAIM, AND THREE OF FOUR WERE FALSE.** iter163 fixed the one
+    check of eight that printed a verdict over an empty population and judged four others safe in
+    prose, reasoning that their REVERSE direction fires when a population empties. Measured, one cell
+    per judgement: `check_done_archive`, `check_stub_bodies` (twice) and `check_gate_mirror` all sit
+    green or silent over their own emptied population. Only `check_gate_pointers`' finding half held
+    up, and only because iter164 gave it the population it has never had. **The move that generalises:
+    when an iteration hardens one instance of a defect and reasons the siblings safe, the cheapest
+    real work available is a cell per sibling.**
+  * **"THE CHECKER EXITED NON-ZERO" ATTRIBUTES NOTHING WHEN main() RUNS EVERY CHECK.** Sharper than
+    iter161's "two checks can print BROKEN for one mutation": here a mutation emptied
+    `check_gate_mirror`'s two populations and the script still exited 1, because
+    `check_gate_pointers` and `check_gates_archive` fired for their own correct reasons. The check
+    under test had gone silent and the run read as a pass. Fix in the harness: **slice stdout by each
+    check's own section header and ask whether THAT block holds a `BROKEN:` line**, asserting every
+    header was located before grading anything. New verdict worth keeping distinct: **WRONG-CHECK - a
+    sibling covered for it.** A net that only holds while a different net holds is decoration.
+  * **THE POPULATION THAT SILENTLY EMPTIES IS THE ONE WHOSE COUNTER THE SAME EDIT CAN REPAIR.**
+    `check_done_archive` runs six checks over done-archive.jsonl and an empty file satisfies all six
+    at once: `doneCount` 0 agrees with 0 lines, `doneRecent` is already empty, and COVERAGE and HEAD
+    both skip themselves because nothing is attributed - so the HEAD check written to catch ONE
+    missing record cannot fire when EVERY record is missing.
+  * **SCOPING A CHECK TO A PROSE PREFIX IS A ONE-KEYSTROKE VACUITY, AND ITER159 KNEW.** That iteration
+    scoped a direction to stubs starting with `OPEN`, saw the risk, and put the population assertion
+    in its own scratch harness (read the printed `(7 OPEN)` back) rather than in the check - so the
+    guard lived where nothing re-runs it. `**OPEN**` is this file's house style and one keystroke away;
+    rewriting the markers plus deleting every body left seven orphaned questions and exit 0. iter154's
+    lesson a third time: **an instruction that depends on somebody remembering it is not a fix,
+    placement is.**
+  * **A NON-EMPTY ASSERTION IS THE WRONG FIX FOR A POPULATION THAT LEGITIMATELY EMPTIES** (iter159's
+    "a check must not fire on the event the loop is waiting for", applied while choosing between five
+    populations). Only `decisions` may never be empty - it grows, because an answered decision stays a
+    tombstone. `blockers`, blockers-open.json, the OPEN subset and the pointer set each reach zero the
+    day Mirko finishes something. So the refusal goes on the one, and the drift on the others is
+    caught by a different mechanism: **flag a status marker the classifier cannot read**, which fires
+    on reworded prose and stays green when the last decision is answered.
+  * **PREDICT EACH CELL'S VERDICT IN WRITING BEFORE THE FIRST RUN.** Eleven predictions, eleven
+    matches - which is what makes "three of four judgements were false" a measurement rather than a
+    story told after the fact. A cell whose result surprises you is either a find or a broken cell,
+    and only the prediction tells you which.
+  * **ONE MORE SHAPE THIS BASH TOOL STATICALLY REFUSES:** `<->` inside a quoted argument, read as a
+    zsh numeric-range glob. It is in this checker's own section headers, so grep for a neighbouring
+    phrase instead. Redirecting to `/tmp` is refused too - write scratch output under the repo.

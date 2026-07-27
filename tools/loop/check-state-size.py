@@ -83,6 +83,21 @@ SECTION_POINTER = re.compile(r'under (?:the )?"([^"\n]+)"')
 SECTION_HEADING = re.compile(r"^## +(.+?)\s*$")
 ANY_CHECKBOX = re.compile(r"^\s*- \[([ x])\]")
 
+# How `check_stub_bodies` reads a decision stub's status, and it is deliberately not
+# `startswith("OPEN")` any more. The marker sits at the very start of the stub, optionally wrapped in
+# markdown emphasis - state.json bolds for emphasis on nearly every line, and `**OPEN**` is one
+# keystroke from `OPEN`. iter164 measured that the bare prefix test goes blind on the emphasised form
+# and takes direction (3) with it, silently: seven open decisions could lose their bodies and this
+# script still exited 0 (cell stub-bodies/open-marker-bolded-bodies-gone).
+DECISION_OPEN = re.compile(r"[*_\s]*OPEN\b")
+# The same drift, caught rather than absorbed: an OPEN word in the stub's opening clause that the
+# pattern above did NOT accept as the status marker. `\bOPEN\b` cannot match inside REOPEN - there is
+# no word boundary there - which is what keeps `formatOnEditHook`'s "DO NOT REOPEN" from reading as
+# an open decision. The window is the opening clause because that is where every marker in this field
+# sits; the longest today is `mermaidDialectGap`'s "OPEN, MIRKO'S, iter113 -" at 24 characters.
+DECISION_MARKER = re.compile(r"\bOPEN\b")
+DECISION_MARKER_WINDOW = 48
+
 READ_TOKEN_CAP = 25_000
 READ_BYTE_CEILING = 256 * 1024
 
@@ -285,6 +300,22 @@ def check_done_archive(doc):
             continue
         parsed.append((number, obj))
 
+    # (0) NOT VACUOUS (iter164), and this one needed measuring rather than reasoning about. Every
+    # check below is either per-entry or a comparison against a count the same edit can "repair", so
+    # an EMPTY archive satisfies all of them at once: doneCount 0 agrees with 0 lines, `doneRecent`
+    # is already empty, and COVERAGE and HEAD both skip themselves because `attributed` is empty -
+    # so the HEAD check that exists to catch ONE missing record cannot fire when EVERY record is
+    # missing. Measured: truncating the file and setting doneCount to 0 made this whole script exit 0
+    # (.mtk/paths-163/mutate-soft-flags.py, cell done-archive/emptied-with-count).
+    if not parsed:
+        problems.append(
+            "done-archive.jsonl holds no well-formed entries at all, so every check below is vacuous"
+            " - doneCount agrees with zero lines and the COVERAGE and HEAD checks no-op when nothing"
+            " is attributed. This archive only grows (doneArchive.howToAppend: every iteration"
+            " appends one line), so empty is never a legitimate state - recover it with"
+            " `git log -p -- tools/loop/done-archive.jsonl`, never re-create it empty"
+        )
+
     for index, (number, obj) in enumerate(parsed, start=1):
         if obj["n"] != index:
             problems.append(f"line {number} has n={obj['n']}, expected {index} (n must be 1..N, contiguous)")
@@ -388,6 +419,20 @@ def check_gate_mirror(doc):
 
     mirror = {k: v for k, v in doc.get("gates", {}).items() if k not in NOT_A_GATE}
     known = set(boxes) | set(struck) | set(anticipated)
+
+    # (0) NOT VACUOUS (iter164). All three directions below are per-item loops over `boxes` and
+    # `mirror`, so emptying BOTH satisfies every one of them. Measured: draining `gates` down to its
+    # pointer AND breaking GATES.md's checkbox shape left this check silent while two SIBLING checks
+    # went red for their own reasons (cell gate-mirror/both-sides-drained) - the tree stayed
+    # protected and this check did not, and a net that only holds while a different net holds is
+    # decoration (iter146). Neither population empties on the event the loop is waiting for: ticking
+    # every box leaves ten `- [x]` gates in `boxes`, and `gates` keeps its mirror key either way.
+    if not boxes or not mirror:
+        problems.append(
+            f"parsed {len(boxes)} checkboxes out of GATES.md against {len(mirror)} keys in `gates` -"
+            " with either at zero this check compares nothing, so what is wrong is the scan or the"
+            " field name (GATE_CHECKBOX / `gates`), not the file"
+        )
 
     # (1) THE MIRROR RULE ITSELF. Every checkbox needs a line in `gates`.
     for gate in boxes:
@@ -588,6 +633,15 @@ def check_stub_bodies(doc):
     has since answered is CORRECT BY DESIGN, and direction (3) below only asks for a body while
     the stub itself still says OPEN. The day Mirko answers a decision this check stays green with
     no edit - unlike the gate mirror, where a tick is exactly what the loop must go update.
+
+    ITER164: SCOPING DIRECTION (3) TO A PROSE PREFIX WAS ITSELF A VACUITY, AND A ONE-KEYSTROKE ONE.
+    iter159 knew the risk and put the guard in the wrong place - its harness read the printed
+    `(7 OPEN)` back and refused a `(0 OPEN)` run, so the assertion lived in a scratch script nothing
+    re-ran rather than in the check. Measured here: rewriting the seven stubs' markers as `**OPEN**`,
+    which is this file's own house style, and deleting every decision body left this script exiting 0
+    over seven orphaned questions. The prefix test is now emphasis-tolerant (DECISION_OPEN) and the
+    drift it used to absorb is a reported defect of its own, while a genuine zero-OPEN run stays green
+    and merely says so - because that is the day Mirko answers the last decision.
     """
     problems = []
     with open(os.path.join(LOOP_DIR, "blockers-open.json"), encoding="utf-8") as handle:
@@ -616,10 +670,36 @@ def check_stub_bodies(doc):
                 " - settling one means deleting the key from BOTH files"
             )
 
+    # (0) NOT VACUOUS (iter164) - and ONLY for `decisions`, which is the whole subtlety. Directions
+    # (3) and (4) are keyed lookups over `decisions` and its bodies, so draining both satisfies both:
+    # measured, that made this script exit 0 (cell stub-bodies/decision-pair-drained). `decisions`
+    # only grows, because an ANSWERED decision stays as a tombstone - `compositeAction` has read
+    # "floating-v1" since iter75 and `formatOnEditHook` says do not reopen - so empty means the field
+    # was renamed or the read is wrong. NOT ASSERTED FOR `blockers`/blockers-open.json, and not for
+    # the count of OPEN decisions either: both of those legitimately reach zero on the day the last
+    # blocker settles or the last decision is answered, and a check must never fire on the event the
+    # loop is waiting for (iter159). Emptiness is a defect for one of these populations, not three.
+    if not decisions:
+        problems.append(
+            "`decisions` has no stubs at all, so directions (3) and (4) below compare nothing"
+            " - that field only grows (an answered decision stays as a tombstone), so empty means"
+            " the field was renamed or this read is wrong, not that every decision is settled"
+        )
+
     # (3) OPEN DECISIONS HAVE A BODY. Only the open ones: see the docstring: an answered stub needs
     # no question behind it, and `compositeAction`/`formatOnEditHook` are exactly that shape today.
     for key, stub in decisions.items():
-        if not isinstance(stub, str) or not stub.startswith("OPEN"):
+        if not isinstance(stub, str):
+            continue
+        if not DECISION_OPEN.match(stub):
+            # The marker drifted out of this check's reach rather than the decision being answered.
+            if DECISION_MARKER.search(stub[:DECISION_MARKER_WINDOW]):
+                problems.append(
+                    f"decision {key!r} carries an OPEN marker in its opening clause that direction"
+                    " (3) cannot read, so it is being skipped as though it were answered - the"
+                    " marker must start the stub (emphasis is fine: `**OPEN**` matches, `still OPEN`"
+                    " does not). This is how a population empties without anybody editing a check"
+                )
             continue
         if key not in decision_bodies:
             problems.append(
@@ -648,12 +728,20 @@ def check_stub_bodies(doc):
                     f" {where} - re-adding a settled blocker is what that tombstone prevents"
                 )
 
-    open_decisions = sum(1 for v in decisions.values() if isinstance(v, str) and v.startswith("OPEN"))
+    open_decisions = sum(
+        1 for v in decisions.values() if isinstance(v, str) and DECISION_OPEN.match(v)
+    )
     print("\nstate.json stubs <-> their archived bodies (iter159):")
     print(f"  {len(stubs)} blocker stubs / {len(open_bodies)} bodies in blockers-open.json,"
           f" {len(settled)} settled tombstones")
     print(f"  {len(decisions)} decision stubs ({open_decisions} OPEN)"
           f" / {len(decision_bodies)} bodies in decisions-archive.json")
+    if not open_decisions and decisions:
+        # iter163's rule, applied to this check's one legitimately-emptiable population: say that
+        # direction (3) resolved nothing rather than letting the OK line below imply it resolved
+        # something. Zero OPEN decisions is what Mirko answering the last one looks like.
+        print("  NOTE: no decision stub reads as OPEN, so direction (3) resolved nothing this run"
+              " - either all are answered, or a marker drifted (see DECISION_OPEN).")
     for problem in problems:
         print(f"  BROKEN: {problem}")
     if not problems:
