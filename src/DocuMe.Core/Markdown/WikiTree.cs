@@ -260,6 +260,18 @@ public sealed class WikiTree
 
         var matcher = new Matcher(StringComparison.Ordinal);
         matcher.AddInclude("**/*");
+
+        // Dot-paths are tooling metadata, never wiki content — the same category as the default
+        // `_meta/**`, and excluded STRUCTURALLY rather than by default config so that a consumer
+        // who overrides `wiki.exclude` for their own reasons cannot lose it silently. Without this
+        // a `.claude/` or `.vscode/` directory dropped anywhere under the wiki root publishes as
+        // Confluence pages, and — worse — an untitled one fails Load for EVERY page, so a
+        // `.github/PULL_REQUEST_TEMPLATE.md` (untitled by design, and in scope whenever wiki.root
+        // is the repo root) would stop the whole publish. `wiki.extraPages` still re-includes one
+        // deliberately, exactly as it re-includes an excluded `_meta` page.
+        matcher.AddExclude("**/.*");
+        matcher.AddExclude("**/.*/**");
+
         foreach (var pattern in wiki.Exclude)
         {
             matcher.AddExclude(pattern);

@@ -58,6 +58,54 @@ public sealed class WikiTreeTests : IDisposable
     }
 
     [Fact]
+    public void Load_leaves_a_dot_directory_out_of_scope_so_tooling_metadata_is_never_content()
+    {
+        Write(".claude/notes.md", "# Agent Notes\n");
+        Write(".claude/analytics.json", "{}");
+        Write(".vscode/settings.json", "{}");
+        Write(".editorconfig", "root = true\n");
+
+        var tree = BuildTree();
+
+        tree.TitleFor(".claude/notes.md").ShouldBeNull();
+        tree.Pages.ShouldNotContain(page => page.Path.StartsWith('.'));
+        tree.Assets.ShouldNotContain(".claude/analytics.json");
+        tree.Assets.ShouldNotContain(".vscode/settings.json");
+        tree.Assets.ShouldNotContain(".editorconfig");
+    }
+
+    [Fact]
+    public void Load_survives_an_untitled_markdown_file_in_a_dot_directory_instead_of_failing_the_whole_tree()
+    {
+        // A repo whose wiki.root is its own root carries .github/PULL_REQUEST_TEMPLATE.md, which has
+        // no title by design. In scope it is a page with no title, and one of those fails Load for
+        // EVERY page (the errors list is whole-tree), so a file nobody wrote as content would stop
+        // the entire publish.
+        Write(".github/PULL_REQUEST_TEMPLATE.md", "- [ ] tests\n");
+        Write(".github/ISSUE_TEMPLATE/bug.md", "---\nname: Bug\n---\n");
+
+        var tree = BuildTree();
+
+        tree.Pages.Select(page => page.Path).ShouldContain("README.md");
+    }
+
+    [Fact]
+    public void Load_re_includes_a_dot_path_named_in_extra_pages()
+    {
+        // The structural exclusion is not a wall: extraPages is how a consumer publishes one
+        // deliberately, exactly as it re-includes an excluded _meta page.
+        Write(".well-known/policy.md", "# Ignored\n");
+        var config = new WikiConfig
+        {
+            ExtraPages = [new ExtraPage { Path = ".well-known/policy.md", Title = "Docs Policy" }],
+        };
+
+        var tree = BuildTree(config);
+
+        tree.TitleFor(".well-known/policy.md").ShouldBe("Docs Policy");
+    }
+
+    [Fact]
     public void Load_re_includes_an_extra_page_under_its_configured_title()
     {
         var config = new WikiConfig

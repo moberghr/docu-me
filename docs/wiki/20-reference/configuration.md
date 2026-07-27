@@ -178,3 +178,11 @@ why the first of them always reads `unknown`.
 `wiki.exclude` defaults to `["_meta/**"]`, which keeps the style guide, the gaps list and the state
 file out of Confluence. `wiki.extraPages` re-includes a single excluded file under a title of your
 choosing — the usual case being a gaps page you *do* want the team to see.
+
+Dot-paths are excluded structurally rather than by that default. Any file with a path segment
+beginning with `.` (`.claude/`, `.github/`, `.vscode/`, a bare `.editorconfig`) is tooling metadata
+rather than wiki content, so it stays out of scope even if you replace `wiki.exclude` entirely. That
+matters most when `wiki.root` is the repo root, where `docume init`'s own scaffolding lands: an
+untitled `.github/PULL_REQUEST_TEMPLATE.md` in scope would fail the whole publish, because a page
+with no title is a whole-tree error. `wiki.extraPages` re-includes a dot-path as well, on the rare
+occasion you mean to publish one.

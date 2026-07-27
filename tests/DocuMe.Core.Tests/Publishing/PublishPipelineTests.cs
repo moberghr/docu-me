@@ -81,6 +81,38 @@ public sealed class PublishPipelineTests : IDisposable
         report.UploadCount.ShouldBe(3);
     }
 
+    /// <summary>
+    /// The upload set is the REFERENCED set, never the tree's asset walk — so a file that happens to
+    /// sit under the wiki root reaches Confluence only when a page points at it.
+    /// </summary>
+    /// <remarks>
+    /// Measured at iter172 and previously asserted nowhere: the plan learns its attachments from the
+    /// converter's resolver callbacks, and <c>WikiTree.Assets</c> has no reader in <c>src/</c> at all.
+    /// That is what keeps a stray file in a consumer's wiki root out of the space, so it is an
+    /// invariant rather than an accident of the current wiring. A change that walked the assets
+    /// instead would publish whatever a consumer left lying about, and nothing else would notice.
+    /// </remarks>
+    [Fact]
+    public void An_unreferenced_asset_under_the_wiki_root_is_never_uploaded()
+    {
+        WriteBytes("images/orphan.png", [9, 9, 9]);
+        WriteBytes("guides/stray-attachment.pdf", [7, 7]);
+
+        var report = Plan(new DocumeState());
+
+        var uploaded = report.Pages
+            .SelectMany(page => page.Attachments)
+            .Select(attachment => attachment.Name)
+            .ToList();
+
+        uploaded.ShouldNotContain("images_orphan.png");
+        uploaded.ShouldNotContain("guides_stray-attachment.pdf");
+
+        // The tree still SEES them, which is the point: being in scope is not being published.
+        Tree().Assets.ShouldContain("images/orphan.png");
+        report.UploadCount.ShouldBe(3);
+    }
+
     [Fact]
     public void The_uploaded_body_carries_the_banner_and_the_hash_does_not()
     {
