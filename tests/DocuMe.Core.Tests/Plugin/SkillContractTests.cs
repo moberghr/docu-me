@@ -77,6 +77,58 @@ public sealed class SkillContractTests
         missing.ShouldBeEmpty($"Missing SKILL.md under {Directory}/<skill>/.");
     }
 
+    /// <summary>
+    /// The other direction of <see cref="Every_skill_PLAN_11_names_is_present"/>: every skill that ships is
+    /// one this class checks.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is what makes the §1.3 clause structural rather than remembered.</strong> Every other
+    /// test here iterates <c>Skills</c>, a hardcoded three, so that list — not the directory — is the
+    /// enforcement boundary. A fourth skill under <c>plugin/skills/</c> is required by rule §1.3 to state
+    /// the untrusted-input contract and by rule §0.4 to stay behind the CLI, and would be checked for
+    /// neither: it would ship green carrying no prompt-injection defense at all (CLAUDE.md §0.2, PLAN.md
+    /// §9).
+    /// </para>
+    /// <para>
+    /// Nothing else closes it. <c>PluginManifestTests</c> and <see cref="SkillsReferencePageTests"/> do
+    /// enumerate the directory, and both ask whether a skill is <em>documented</em> — in README.md and in
+    /// <c>docs/wiki/30-automation/skills.md</c> — which an author satisfies without ever stating the
+    /// clause. A documented fourth skill passes the whole suite as it stands.
+    /// </para>
+    /// <para>
+    /// Failing here rather than discovering the subjects from disk is deliberate. Adding the name to
+    /// <c>Skills</c> is the single edit that subjects a new skill to every per-skill check at once, and a
+    /// list built by enumeration could not also carry <c>BranchPrefixes</c>, which is keyed per skill and
+    /// iterated by its own keys — so the second half asserts the two lists agree.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_skill_that_ships_is_one_this_class_checks()
+    {
+        var shipped = System.IO.Directory
+            .EnumerateDirectories(Directory)
+            .Select(directory => new DirectoryInfo(directory).Name)
+            .ToList();
+
+        var unlisted = shipped
+            .Where(skill => !Skills.Contains(skill, StringComparer.Ordinal))
+            .ToList();
+
+        const string message = "plugin/skills/ ships a skill this class does not check. Add it to Skills and to "
+            + "BranchPrefixes: rule §1.3's untrusted-input clause and rule §0.4's CLI boundary are asserted "
+            + "per skill, over that list.";
+
+        unlisted.ShouldBeEmpty(message);
+
+        var unprefixed = Skills
+            .Where(skill => !BranchPrefixes.ContainsKey(skill))
+            .ToList();
+
+        unprefixed.ShouldBeEmpty(
+            "Every skill in Skills needs a BranchPrefixes entry, or its PR branch goes unchecked (§8.4).");
+    }
+
     [Fact]
     public void Every_skill_declares_a_name_matching_its_directory()
     {
