@@ -330,12 +330,16 @@ public sealed partial class CliReferencePageTests
 
         var gaps = new List<string>();
         var excused = new List<string>();
+        var escaped = new List<string>();
         var named = 0;
 
         foreach (var (path, invocations) in DocumentedInvocations())
         {
-            foreach (var (line, invocation) in invocations)
+            foreach (var (line, invocation, dropped) in invocations)
             {
+                escaped.AddRange(dropped.Select(option =>
+                    $"{path}:{line} — `{option}` (`docume {invocation}` … )"));
+
                 var tokens = invocation.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 var command = tokens[0];
 
@@ -345,10 +349,7 @@ public sealed partial class CliReferencePageTests
                     continue;
                 }
 
-                var options = tokens.Skip(1)
-                    .Where(token => token.StartsWith("--", StringComparison.Ordinal))
-                    .Select(token => token.Split('=')[0])
-                    .ToList();
+                var options = OptionsOf(invocation);
 
                 named += options.Count;
 
@@ -390,6 +391,20 @@ public sealed partial class CliReferencePageTests
             + "in for — or it is a flag that does not exist and belongs in the gaps above. Excused:";
 
         excused.ShouldBeEmpty(excusedNothing);
+
+        const string escapedNothing =
+            "Invocation()'s argument class ended a documented invocation before these flags, and it "
+            + "left behind a command that still parses — which is why nothing above objected. "
+            + "`docume drift --baseline \"$base\" --format json` read as `drift --baseline`, a real "
+            + "command with a real option, so the check ran on half the line and reported success; "
+            + "five flags in this tree escaped it that way until the class learned to read a quoted or "
+            + "angled ARGUMENT as one token. A character class deciding a population is a bound, and "
+            + "it hides better than a list: nothing is excused, nothing is listed, the flag simply "
+            + "never arrives. Either widen the class to consume the spelling below — the escaped set "
+            + "is the whole population, so a new argument syntax shows up here as itself — or reword "
+            + "the line. Escaped:";
+
+        escaped.ShouldBeEmpty(escapedNothing);
     }
 
     /// <summary>
@@ -640,11 +655,12 @@ public sealed partial class CliReferencePageTests
     /// </para>
     /// <para>
     /// The <c>&lt;</c> branch cannot fire at all through this sweep, so it is decoration in the one
-    /// direction the assertion above cannot see: <see cref="Invocation"/>'s argument class excludes
-    /// <c>&lt;</c>, so <c>docume publish --&lt;flag&gt;</c> truncates to <c>publish --</c> before it
-    /// reaches here and the bare <c>--</c> is too short for any branch — reported as a gap, under a
-    /// message naming <c>--</c>. Kept because removing it removes nothing another assertion does not
-    /// already cover, and nothing could detect its return.
+    /// direction the assertion above cannot see: <see cref="Invocation"/>'s argument class admits
+    /// <c>&lt;</c> only where it opens a whitespace-anchored placeholder ARGUMENT, so
+    /// <c>docume publish --&lt;flag&gt;</c> still truncates to <c>publish --</c> before it reaches here
+    /// and the bare <c>--</c> is too short for any branch — reported as a gap, under a message naming
+    /// <c>--</c>. Kept because removing it removes nothing another assertion does not already cover,
+    /// and nothing could detect its return.
     /// </para>
     /// </remarks>
     private static bool IsPlaceholder(string option) =>
@@ -764,9 +780,9 @@ public sealed partial class CliReferencePageTests
     /// Every <c>docume …</c> invocation in a consumer-facing file, as repo-relative path to
     /// (line, argument string).
     /// </summary>
-    private static Dictionary<string, List<(int Line, string Invocation)>> DocumentedInvocations()
+    private static Dictionary<string, List<(int Line, string Invocation, List<string> Escaped)>> DocumentedInvocations()
     {
-        var found = new Dictionary<string, List<(int, string)>>(StringComparer.Ordinal);
+        var found = new Dictionary<string, List<(int, string, List<string>)>>(StringComparer.Ordinal);
 
         foreach (var file in InstructionFiles())
         {
@@ -783,33 +799,78 @@ public sealed partial class CliReferencePageTests
     }
 
     /// <summary>
-    /// The invocations one file's lines claim about the CLI's surface. Shared with the population check
-    /// below on purpose: two definitions of "a real invocation" would drift, which is the defect shape
-    /// this whole class exists for.
+    /// The invocations one file's lines claim about the CLI's surface, each with the option tokens the
+    /// argument class dropped off its end. Shared with the population check below on purpose: two
+    /// definitions of "a real invocation" would drift, which is the defect shape this whole class
+    /// exists for.
     /// </summary>
-    private static List<(int Line, string Invocation)> KeptInvocations(string[] lines)
+    private static List<(int Line, string Invocation, List<string> Escaped)> KeptInvocations(string[] lines)
     {
-        var kept = new List<(int, string)>();
+        var kept = new List<(int, string, List<string>)>();
 
         foreach (var (line, text) in LogicalLines(lines))
         {
-            foreach (var match in Invocation().Matches(text).Cast<Match>())
-            {
-                var invocation = Normalize(match.Groups["args"].Value);
+            var claiming = Invocation().Matches(text)
+                .Cast<Match>()
+                .Select(match => (Match: match, Invocation: Normalize(match.Groups["args"].Value)))
+                .Where(hit => !ClaimsNothing(hit.Invocation))
+                .ToList();
 
-                // "docume <command>" and a bare "docume --help" claim nothing about the surface.
-                if (invocation.Length == 0
-                    || invocation[0] is '<' or '{' or '[' or '$'
-                    || invocation.StartsWith("--", StringComparison.Ordinal))
-                {
-                    continue;
-                }
+            // The denominator for the escaped set: a flag one match drops is not lost while another
+            // match on the same line hands it to the option check.
+            var reached = claiming
+                .SelectMany(hit => OptionsOf(hit.Invocation))
+                .ToHashSet(StringComparer.Ordinal);
 
-                kept.Add((line, invocation));
-            }
+            kept.AddRange(claiming.Select(hit =>
+                (line, hit.Invocation, EscapedOptions(text, hit.Match, reached))));
         }
 
         return kept;
+    }
+
+    /// <summary>"docume &lt;command&gt;" and a bare "docume --help" claim nothing about the surface.</summary>
+    private static bool ClaimsNothing(string invocation) =>
+        invocation.Length == 0
+        || invocation[0] is '<' or '{' or '[' or '$'
+        || invocation.StartsWith("--", StringComparison.Ordinal);
+
+    /// <summary>The option tokens in an invocation's arguments, with any <c>=value</c> dropped.</summary>
+    private static List<string> OptionsOf(string invocation) =>
+        invocation.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Skip(1)
+            .Where(token => token.StartsWith("--", StringComparison.Ordinal))
+            .Select(token => token.Split('=')[0])
+            .ToList();
+
+    /// <summary>
+    /// The flags the argument class left behind: everything after the capture, up to the code span
+    /// that ends the citation or the end of the line, that reads as an option name no invocation on
+    /// this line handed to the real-option check.
+    /// </summary>
+    /// <remarks>
+    /// This is what pairs <see cref="Invocation"/>'s exclusions with the tree. A truncation that ends
+    /// mid-token is invisible here and should be — <c>--offline's verdict</c> leaves <c>s verdict</c>,
+    /// no flag — so what survives is a capture that stopped between arguments while the line went on
+    /// naming flags. <c>docume publish; docume status --json</c> is not one: the second match reads
+    /// <c>--json</c>, which is why <paramref name="reached"/> spans the whole logical line.
+    /// </remarks>
+    private static List<string> EscapedOptions(string text, Match match, HashSet<string> reached)
+    {
+        var tail = text[(match.Index + match.Length)..];
+        var span = tail.IndexOf('`', StringComparison.Ordinal);
+
+        if (span >= 0)
+        {
+            tail = tail[..span];
+        }
+
+        return WhitespaceRun().Replace(tail, " ")
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(token => token.Split('=')[0])
+            .Where(token => FlagToken().IsMatch(token))
+            .Where(token => !reached.Contains(token))
+            .ToList();
     }
 
     /// <summary>
@@ -1053,8 +1114,22 @@ public sealed partial class CliReferencePageTests
     // Stops at any shell separator, a closing quote or paren, an html tag, or a backslash: the
     // workflows cite the tool inside double-quoted `echo` strings as \`docume init\`, and that
     // escaped backtick ends the citation rather than continuing the command.
-    [GeneratedRegex(@"(?:^|[\s`(""'>*-])docume (?<args>[^\n`|;&)""'<\\]*)", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 2000)]
+    //
+    // The three whitespace-anchored spans are an ARGUMENT VALUE, not a terminator, and leaving them
+    // out cost the sweep every flag after one: `docume drift --baseline "$base" --format json` was
+    // read as `drift --baseline`, a real command with a real option, so nothing was reported and
+    // `--format` was checked by nothing. Anchored to whitespace because only a quote or angle that
+    // STARTS a token is an argument — `--offline's verdict` and `--json</code>` still end the
+    // capture, which is what keeps prose and html out of it. Paired with the tree by the escaped set
+    // in Every_documented_invocation_names_a_real_command_with_real_options.
+    [GeneratedRegex(
+        @"(?:^|[\s`(""'>*-])docume (?<args>(?:[^\n`|;&)""'<\\]|(?<=\s)""[^""\n]*""|(?<=\s)'[^'\n]*'|(?<=\s)<[^>\n]*>)*)",
+        RegexOptions.ExplicitCapture,
+        matchTimeoutMilliseconds: 2000)]
     private static partial Regex Invocation();
+
+    [GeneratedRegex(@"^--[a-z0-9-]+$", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex FlagToken();
 
     // `.mjs` is here for one shipped file: templates/tools/render-mermaid.mjs, which `docume init`
     // scaffolds into a consumer repo and which names `docume publish` in its own header comments.
