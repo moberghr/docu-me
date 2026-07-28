@@ -86,7 +86,7 @@ def failing_from_stdout(text):
 # project dropped from the solution, a filter left in place, a runner that collected nothing. Raise
 # it when the suite legitimately grows; lowering it is a deliberate act that needs a reason in the
 # commit message, exactly like check-state-size.py's MEASURED constants.
-EXPECTED_AT_LEAST = 1458  # iter196: +3, ChangelogTests' declared bounds paired with what they bound
+EXPECTED_AT_LEAST = 1459  # iter197: +1, CliReferencePageTests' page-wide exemption paired with the page
 
 
 def verdict(returncode, blob):

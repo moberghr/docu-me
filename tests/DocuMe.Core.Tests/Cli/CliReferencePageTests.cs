@@ -40,6 +40,14 @@ public sealed partial class CliReferencePageTests
     /// <c>--config</c>/<c>--state</c> paragraphs cover every command that takes them, and the root
     /// adds <c>--help</c>/<c>--version</c>. Exempt from the per-table requirement, nothing else.
     /// </summary>
+    /// <remarks>
+    /// Paired with the prose it rests on by
+    /// <see cref="The_options_exempted_as_page_wide_are_real_and_documented_page_wide"/>, because an
+    /// exemption is only true while the page keeps its half of the bargain. Half of this list was
+    /// already pinned that way from the other side — <c>Packaging.ChangelogTests.Builtins</c> requires
+    /// this page to name <c>--help</c> and <c>--version</c> — and the halves nothing covered were
+    /// <c>--config</c> and <c>--state</c>: the two options this list excuses from all seven tables.
+    /// </remarks>
     private static readonly HashSet<string> PageWideOptions =
         new(["--config", "--state", "--help", "--version"], StringComparer.Ordinal);
 
@@ -245,6 +253,61 @@ public sealed partial class CliReferencePageTests
             + "without it; a reader following the page gets a parse error.";
 
         phantom.ShouldBeEmpty(because);
+    }
+
+    /// <summary>
+    /// The exemption above is the one way an option may be missing from its command's table, and it
+    /// buys that with a promise about the page: the option is documented once, page-wide, instead.
+    /// Nothing collected on that promise, so the widest exemption in this class rested on prose.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both directions were silent, measured rather than argued
+    /// (<c>.mtk/paths-197/mutate-page-wide-exemption.py</c>, 8 cells, full suite each). Deleting the
+    /// <c>--config</c> sentence from the page left the flag exempted from all seven tables and named
+    /// nowhere on a reference page published to Confluence: green. Adding <c>--dry-run</c> to the list
+    /// while deleting its row from <c>publish</c>'s table — silencing a real undocumented flag by
+    /// widening the exemption — was green too, and so was an entry for an option no command declares.
+    /// </para>
+    /// <para>
+    /// The same mutation against <c>--help</c> was CAUGHT, by
+    /// <c>Packaging.ChangelogTests.The_flags_exempted_as_built_ins_are_built_in</c>: the sibling list
+    /// covering two of these four flags was pinned to this page and this one was not. Page-wide is
+    /// scoped to the text above the first command section on purpose — a mention inside one command's
+    /// section documents that command, which is what the exemption claims not to need.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_options_exempted_as_page_wide_are_real_and_documented_page_wide()
+    {
+        var declared = ShippedCommands()
+            .SelectMany(DeclaredOptions)
+            .Concat(RootOptions())
+            .ToHashSet(StringComparer.Ordinal);
+
+        var dead = PageWideOptions
+            .Where(option => !declared.Contains(option))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        dead.ShouldBeEmpty(
+            $"[{string.Join(", ", dead)}] are exempted from every command's option table as page-wide "
+            + "options, and neither the root nor any command declares them. The exemption describes a "
+            + "surface that has moved, and it reads to a reviewer as though it still covered something.");
+
+        var preamble = PageWidePreamble();
+
+        var undocumented = PageWideOptions
+            .Where(option => !preamble.Contains($"`{option}`", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        undocumented.ShouldBeEmpty(
+            $"[{string.Join(", ", undocumented)}] are excused from every command's option table "
+            + "because docs/wiki/20-reference/cli.md documents them page-wide instead, and its "
+            + "page-wide prose does not name them. A reader of DocuMe's own reference now finds them "
+            + "in no table and in no paragraph. Restore the sentence, or drop the exemption so the "
+            + "option has to appear in each command's table like every other one.");
     }
 
     [Fact]
@@ -466,11 +529,20 @@ public sealed partial class CliReferencePageTests
     /// Alias lists (<c>-?, -h, --help</c>) contribute only their long forms; the page tables and every
     /// documented invocation use those.
     /// </summary>
-    private static HashSet<string> DeclaredOptions(string command)
+    private static HashSet<string> DeclaredOptions(string command) =>
+        ParsedOptions(Help(command), $"docume {command} --help");
+
+    /// <summary>
+    /// The root's own options. Read separately because <c>--version</c> is declared here and by no
+    /// subcommand, so a check that only asked the subcommands would call it a dead exemption.
+    /// </summary>
+    private static HashSet<string> RootOptions() => ParsedOptions(Help(), "docume --help");
+
+    private static HashSet<string> ParsedOptions(CliRun run, string invocation)
     {
         var options = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var line in Section(Help(command), "Options:"))
+        foreach (var line in Section(run, "Options:"))
         {
             // Two-or-more spaces separate the option column from its description. A wrapped
             // description line contributes nothing: none of its words start with "--".
@@ -494,9 +566,27 @@ public sealed partial class CliReferencePageTests
             }
         }
 
-        options.ShouldNotBeEmpty($"Parsed no options at all out of `docume {command} --help`.");
+        options.ShouldNotBeEmpty($"Parsed no options at all out of `{invocation}`.");
 
         return options;
+    }
+
+    /// <summary>
+    /// The page-wide prose: everything above the first command section, which is the only text on the
+    /// page that speaks for every command at once.
+    /// </summary>
+    private static string PageWidePreamble()
+    {
+        var page = File.ReadAllText(Path.Combine([RepoRoot, .. ReferencePagePath]));
+        var first = page.IndexOf("\n## `docume ", StringComparison.Ordinal);
+
+        const string because = "No \"## `docume <command>`\" heading in docs/wiki/20-reference/cli.md, "
+            + "so the whole page would count as page-wide prose and every exemption below would be "
+            + "satisfied by a mention inside a single command's section.";
+
+        first.ShouldBeGreaterThan(0, because);
+
+        return page[..first];
     }
 
     /// <summary>
