@@ -120,6 +120,107 @@ public sealed class WorkflowTemplateTests
             + "they apply).");
     }
 
+    /// <summary>
+    /// <see cref="ConfluenceFacing"/> names every template that holds a credential, and no other.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The two facts above pin <see cref="Templates"/> to the directory in both directions. Three
+    /// subsets of it then bound sweeps of their own, and nothing paired any of the three with
+    /// anything — so an entry dropped from one narrowed that sweep in silence, the remaining entries
+    /// still passing and no complement claiming the dropped one. Measured at iteration 193: removing
+    /// <c>docs-publish.yml</c> from this list left the whole suite green, and with it nothing
+    /// asserting that the template which writes every page exports either credential.
+    /// </para>
+    /// <para>
+    /// Only omission was silent. A name <em>added</em> to one of these lists is read against a file
+    /// that does not satisfy the sweep, so it fails that sweep's own assertion — measured too, by
+    /// putting <c>docs-drift-pr.yml</c> here, which
+    /// <see cref="Confluence_facing_templates_export_both_credentials"/> caught. That is why each of
+    /// the three facts is a set equality against the templates themselves rather than a floor: the
+    /// direction that needed covering is the one a floor cannot see.
+    /// </para>
+    /// <para>
+    /// <see cref="ModelDriven"/> is deliberately not given a fourth fact.
+    /// <see cref="Every_repository_a_template_checks_out_is_the_one_this_repo_is"/> already compares
+    /// it as a set against the checkouts it finds, which fails on an entry dropped or added — also
+    /// measured. A mechanism that removes nothing once another has landed must not ship.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_credential_facing_list_names_every_template_that_holds_a_credential()
+    {
+        var holding = Templates
+            .Where(name => Text(name).Contains(CredentialPrefix, StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal);
+
+        const string drifted =
+            "ConfluenceFacing bounds the sweep asserting both credential variables are exported, and "
+            + "it no longer names the same templates the files do. A name dropped from it takes that "
+            + "template out of the sweep with nothing else noticing — the credentials could then "
+            + "vanish from a publishing job and this suite would stay green (rule §1.1).";
+
+        holding.ShouldBe(ConfluenceFacing.Order(StringComparer.Ordinal), drifted);
+    }
+
+    /// <summary>
+    /// <see cref="SkillDriven"/> names every template that never invokes the tool by name, and no
+    /// other.
+    /// </summary>
+    /// <remarks>
+    /// The one of the three that is an <em>exemption</em> rather than an inventory, so it fails in
+    /// both directions and neither is theoretical. A template added to it is excused from
+    /// <see cref="Every_template_restores_the_pinned_tool_before_running_it"/>'s ordering half
+    /// silently — measured with <c>docs-publish.yml</c>, whole suite green. A template left in it
+    /// after it gains a literal <c>dotnet tool run docume</c> excuses nothing while reading as
+    /// though it does, which is the shape an exemption must never be allowed to rot into.
+    /// </remarks>
+    [Fact]
+    public void The_skill_driven_exemption_names_every_template_that_never_invokes_the_tool()
+    {
+        var silent = Templates
+            .Where(name => !Runnable(name).Any(line => line.Contains(ToolRun, StringComparison.Ordinal)))
+            .Order(StringComparer.Ordinal);
+
+        const string drifted =
+            "SkillDriven excuses its members from having to restore the pinned manifest BEFORE "
+            + "invoking the tool, on the grounds that their only invocation happens inside the skill "
+            + "they run. It no longer names the templates that is true of, so it is either excusing a "
+            + "template that does name the CLI or claiming an exemption that removes nothing (§12).";
+
+        silent.ShouldBe(SkillDriven.Order(StringComparer.Ordinal), drifted);
+    }
+
+    /// <summary>
+    /// <see cref="ConfigReaders"/> names every template that reads <c>docume.json</c>, and no other.
+    /// </summary>
+    /// <remarks>
+    /// Its <c>Job</c> half was already held — <see cref="Steps"/> throws on a job that does not
+    /// exist, and the lookup for the read step throws when that job holds none. Its <c>Template</c>
+    /// half was held by nothing, so dropping an entry left that template reading the config with
+    /// nothing holding it to the guard: measured with <c>docs-sync.yml</c> and again with
+    /// <c>docs-refresh.yml</c>, whole suite green both times.
+    /// </remarks>
+    [Fact]
+    public void The_config_reader_list_names_every_template_that_reads_the_config()
+    {
+        var reading = Templates
+            .Where(name => Runnable(name).Any(line => line.Contains(ConfigRead, StringComparison.Ordinal)))
+            .Order(StringComparer.Ordinal);
+
+        var declared = ConfigReaders
+            .Select(entry => entry.Template)
+            .Order(StringComparer.Ordinal);
+
+        const string drifted =
+            "ConfigReaders bounds the sweep asserting a template checks docume.json is there before "
+            + "jq reads it, and it no longer names the templates that read it. A template dropped "
+            + "from the list ships an unguarded read, whose failure is a bare jq error as the whole "
+            + "step log of a consumer's cron job.";
+
+        reading.ShouldBe(declared, drifted);
+    }
+
     [Fact]
     public void Every_template_is_a_yaml_workflow()
     {
