@@ -86,7 +86,7 @@ def failing_from_stdout(text):
 # project dropped from the solution, a filter left in place, a runner that collected nothing. Raise
 # it when the suite legitimately grows; lowering it is a deliberate act that needs a reason in the
 # commit message, exactly like check-state-size.py's MEASURED constants.
-EXPECTED_AT_LEAST = 1452  # iter193: +3, Templates' three unpaired subsets pinned to the templates
+EXPECTED_AT_LEAST = 1453  # iter194: +1, ToolchainPinningTests' scan bounds paired with the tree
 
 
 def verdict(returncode, blob):

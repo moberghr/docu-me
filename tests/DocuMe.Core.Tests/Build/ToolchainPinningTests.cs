@@ -64,12 +64,25 @@ public sealed partial class ToolchainPinningTests
     private const int InstructionWindow = 8;
 
     /// <summary>Directories holding workflow-shaped YAML that can install a global npm package.</summary>
+    /// <remarks>
+    /// Paired with the tree by <see cref="Every_workflow_shaped_yaml_in_the_tree_is_one_this_scan_reads"/>,
+    /// because this list is the bound on every fact in the class and was compared against nothing until
+    /// iter194: <see cref="WorkflowFiles"/> skips a root that no longer exists with a bare
+    /// <c>continue</c>, and a run step outside these three was never anybody's business.
+    /// </remarks>
     private static readonly string[] WorkflowDirectories =
     [
         Path.Combine(".github", "workflows"),
         Path.Combine("templates", "workflows"),
         "actions",
     ];
+
+    /// <summary>The prefix of this repository's own CI, as opposed to the templates it ships.</summary>
+    private const string OwnWorkflows = ".github/";
+
+    /// <summary>Build output, scratch and vendored trees: YAML there is nothing this repository runs.</summary>
+    private static readonly HashSet<string> SkippedDirectories =
+        new(StringComparer.Ordinal) { ".git", ".mtk", "bin", "obj", "node_modules" };
 
     /// <summary>
     /// Global installs that are deliberately unpinned, and why. Both are shipped templates whose
@@ -113,8 +126,25 @@ public sealed partial class ToolchainPinningTests
     [Fact]
     public void This_repositorys_own_ci_installs_no_floating_global_package()
     {
-        var floating = GlobalInstalls()
-            .Where(install => install.File.StartsWith(".github/", StringComparison.Ordinal))
+        var own = GlobalInstalls()
+            .Where(install => install.File.StartsWith(OwnWorkflows, StringComparison.Ordinal))
+            .ToList();
+
+        // ANTI-VACUITY, AND IT HAS TO BE THIS FACT'S OWN. The class's other guard counts the UNION of
+        // the three scan roots, and the two shipped templates hold that union up by themselves — so a
+        // `.github/` slice matching nothing passes here while asserting nothing whatsoever. Measured
+        // rather than argued: respelling ci.yml's step as `npm i -g …@latest`, an ordinary spelling
+        // this scan's regex does not take, left the whole suite green with a floating install sitting
+        // in this repository's own CI.
+        own.ShouldNotBeEmpty(
+            "No global install was found under " + OwnWorkflows + ". This repository has installed "
+            + "the Claude Code CLI globally in ci.yml since that job shipped, so zero matches means "
+            + "the step is spelled some way this scan does not read — `npm i -g`, a composite "
+            + "action, a setup step — and not that nothing floats. If CI has genuinely stopped "
+            + "installing global packages, delete this fact in that change rather than leaving it "
+            + "green over an empty list.");
+
+        var floating = own
             .Where(install => !install.IsPinned)
             .Select(install => $"{install.File}:{install.Line} installs {install.Package}@{install.Reference}")
             .ToList();
@@ -184,6 +214,59 @@ public sealed partial class ToolchainPinningTests
             $"FloatingByDesign exempts these because the template tells the consumer to pin the "
             + $"version, but no comment within {InstructionWindow} lines above the step mentions "
             + "pinning. Restore the instruction, or pin the install and drop the declaration.");
+    }
+
+    /// <summary>
+    /// The scan's own bounds, paired with the tree in both directions: every declared root names a
+    /// directory that exists, and every YAML in the tree that runs a step is one the scan reads.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Every fact in this class is a claim about three directories and one file extension, and
+    /// until iter194 nothing compared either against the tree.</strong> The failure is silent from both
+    /// sides. <see cref="WorkflowFiles"/> passes over a declared root that has moved with a bare
+    /// <c>continue</c>, so the class keeps its names and covers less; and a run step that lands outside
+    /// those bounds — a composite action under <c>.github/actions/</c>, a workflow written
+    /// <c>.yaml</c>, which GitHub reads and the <c>*.yml</c> enumeration does not — is invisible to a
+    /// class whose whole subject is that nothing floats anywhere.
+    /// </para>
+    /// <para>
+    /// Measured, one mutation per bound, full suite each: dropping <c>"actions"</c> from the list,
+    /// planting a floating global install in a new <c>.github/actions/</c> composite action, and
+    /// planting one in a <c>.yaml</c> workflow inside a declared root all left 1,452 tests green.
+    /// </para>
+    /// <para>
+    /// The population is YAML that <em>runs a step</em>, not every YAML file. A config the tree merely
+    /// declares — a dependabot manifest, a schema — cannot carry an <c>npm install -g</c>, so pulling it
+    /// in would make this fact fail for files no fact in the class has an opinion about.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_workflow_shaped_yaml_in_the_tree_is_one_this_scan_reads()
+    {
+        var stale = WorkflowDirectories
+            .Where(directory => !Directory.Exists(Path.Combine(RepoRoot, directory)))
+            .ToList();
+
+        stale.ShouldBeEmpty(
+            "WorkflowDirectories declares a scan root that does not exist, and WorkflowFiles skips "
+            + "one of those without a word. Every fact in this class then covers less than its name "
+            + "says. Repoint the entry, or drop it in the same change that removed the directory.");
+
+        var read = WorkflowFiles()
+            .Select(candidate => candidate.File)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var unread = RunStepYaml()
+            .Where(file => !read.Contains(file))
+            .ToList();
+
+        unread.ShouldBeEmpty(
+            "These files run steps and nothing in this class can see them: the scan reads *.yml under "
+            + string.Join(", ", WorkflowDirectories)
+            + " and nowhere else. A step free to `npm install -g` outside those bounds makes "
+            + "\"no floating global install\" a claim about three directories rather than about this "
+            + "repository. Widen the root — or the extension — in the same change that added the file.");
     }
 
     private sealed record Install(string File, int Line, string Package, string Reference)
@@ -277,6 +360,49 @@ public sealed partial class ToolchainPinningTests
                 var relative = Path.GetRelativePath(RepoRoot, path).Replace(Path.DirectorySeparatorChar, '/');
 
                 yield return (relative, File.ReadAllLines(path));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Every YAML file in the tree that runs a step, repository-relative with forward slashes so it
+    /// compares against <see cref="WorkflowFiles"/> directly. Both extensions, because GitHub reads
+    /// both and only one of them is enumerated.
+    /// </summary>
+    private static IEnumerable<string> RunStepYaml()
+    {
+        var files = new List<string>();
+
+        Walk(new DirectoryInfo(RepoRoot), string.Empty, files);
+
+        return files
+            .Where(file => file.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)
+                || file.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
+            .Where(RunsAStep);
+    }
+
+    private static bool RunsAStep(string file)
+    {
+        var path = Path.Combine(RepoRoot, file.Replace('/', Path.DirectorySeparatorChar));
+
+        return File.ReadLines(path)
+            .Select(line => line.TrimStart())
+            .Any(line => line.StartsWith("run:", StringComparison.Ordinal)
+                || line.StartsWith("- run:", StringComparison.Ordinal));
+    }
+
+    private static void Walk(DirectoryInfo directory, string prefix, List<string> files)
+    {
+        foreach (var file in directory.EnumerateFiles())
+        {
+            files.Add(prefix + file.Name);
+        }
+
+        foreach (var child in directory.EnumerateDirectories())
+        {
+            if (!SkippedDirectories.Contains(child.Name))
+            {
+                Walk(child, $"{prefix}{child.Name}/", files);
             }
         }
     }

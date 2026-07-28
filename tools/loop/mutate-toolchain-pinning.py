@@ -24,6 +24,12 @@ The cells are one per red branch, plus the two halves of the tripwire (rollForwa
 fail it independently), plus an isolation check: a floating install in a TEMPLATE must not trip the
 fact that is about this repository's OWN ci.yml, or the two facts are really one.
 
+ITER194 ADDED THREE, FOR THE SCAN'S OWN BOUNDS - and they need two things a byte edit cannot express,
+which is why `CREATED` and `MOVED` sit beside `TARGETS`: a run step has to EXIST where no scan root
+reaches it, and a declared root has to STOP existing. All three left the FULL suite green before the
+branches they name were written; the two-phase measurement is `.mtk/paths-194/mutate-scan-bounds.py`,
+8/8 pre and 8/8 post.
+
 AND THEN IT CHECKS ITSELF. This harness passed 8/8 on its first run, which in this tree is a reason
 to look rather than to celebrate - iter166's probe fabricated 18 findings before it found zero, and a
 `cell()` that could not report FAIL would print exactly the 8/8 that was printed. `self_check` below
@@ -54,6 +60,24 @@ PROPS = "Directory.Build.props"
 # declare it here is caught by the restore check rather than by a future `git diff`.
 TARGETS = [CI, RELEASE, FEEDBACK, REFRESH, SYNC, GLOBAL_JSON, PROPS]
 
+# ITER194. Two of the scan-bound branches cannot be expressed as a byte edit to a tracked file: one
+# needs a run step to EXIST somewhere the scan does not read, the other needs a declared scan root to
+# STOP existing. Declared here for the same reason TARGETS is - the restore check reads these lists,
+# so a cell that plants or moves something undeclared is caught here rather than in a later diff.
+PROBE_ACTION = os.path.join(".github", "actions", "pin-probe", "action.yml")
+CREATED = [PROBE_ACTION]
+MOVED = [("actions", "actions-moved-by-the-harness")]
+
+COMPOSITE_ACTION = """name: Pin probe
+description: Scratch composite action planted by a mutation cell; removed before this script exits.
+runs:
+  using: composite
+  steps:
+    - name: Install a linter
+      shell: bash
+      run: npm install -g some-linter@latest
+"""
+
 FILTER = "/*/*/ToolchainPinningTests/*"
 
 _snapshot = {}
@@ -65,7 +89,10 @@ def read(rel):
 
 
 def write(rel, data):
-    with open(os.path.join(REPO, rel), "wb") as handle:
+    path = os.path.join(REPO, rel)
+    # A CREATED cell plants into a directory that does not exist yet; a TARGETS restore never does.
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
         handle.write(data)
 
 
@@ -128,6 +155,29 @@ def m_no_installs_at_all():
         drop_lines(rel, "npm install -g")
 
 
+def m_own_ci_install_respelled():
+    """`npm i -g` is an ordinary spelling the scan's regex does not take, and this one floats.
+
+    ITER194, and the branch it proves is this class's own anti-vacuity guard on the `.github/` slice.
+    Before that guard existed, this mutation put a floating global install in this repository's CI
+    and left the WHOLE suite green: the class's only floor counted the union of the three scan roots,
+    which the two shipped templates hold up on their own.
+    """
+    replace(CI, "run: npm install -g @anthropic-ai/claude-code@2.1.219",
+            "run: npm i -g @anthropic-ai/claude-code@latest")
+
+
+def m_run_step_outside_the_scan():
+    """A composite action under a directory no scan root covers, carrying a floating install."""
+    write(PROBE_ACTION, COMPOSITE_ACTION.encode("utf-8"))
+
+
+def m_scan_root_moved():
+    """A declared root that names nothing. WorkflowFiles skips it with a bare `continue`."""
+    for source, destination in MOVED:
+        os.rename(os.path.join(REPO, source), os.path.join(REPO, destination))
+
+
 def m_control():
     """No mutation. The live tree must be green, or every red above proves nothing."""
 
@@ -143,11 +193,29 @@ def run_tests():
     return result.returncode, result.stdout + result.stderr
 
 
+def undo_plantings():
+    """Whatever a cell created or moved goes back, before the byte snapshot is written over it."""
+    for source, destination in MOVED:
+        moved = os.path.join(REPO, destination)
+        if os.path.exists(moved):
+            os.rename(moved, os.path.join(REPO, source))
+
+    for rel in CREATED:
+        path = os.path.join(REPO, rel)
+        if not os.path.exists(path):
+            continue
+        os.remove(path)
+        parent = os.path.dirname(path)
+        if not os.listdir(parent):
+            os.rmdir(parent)
+
+
 def cell(name, mutate, expect_red, expect=(), also_absent=()):
     try:
         mutate()
         code, output = run_tests()
     finally:
+        undo_plantings()
         for rel in TARGETS:
             write(rel, _snapshot[rel])
 
@@ -182,14 +250,33 @@ def refuse_on_a_dirty_tree():
             + "\nCommit or stash them first. Restoring from the snapshot would silently overwrite"
             " whatever is in them now."
         )
+
+    planted = [rel for rel in CREATED if os.path.exists(os.path.join(REPO, rel))]
+    planted += [dst for _, dst in MOVED if os.path.exists(os.path.join(REPO, dst))]
+    if planted:
+        return (
+            "a path a cell plants or moves to is already on disk: "
+            + ", ".join(planted)
+            + "\nAn earlier run died before its restore. Check it by hand before rerunning."
+        )
     return None
 
 
 def restored():
     """Both answers must agree: the bytes are back, AND git sees no change."""
     problems = [rel for rel in TARGETS if read(rel) != _snapshot[rel]]
+    problems += [
+        f"{rel} was planted and not removed"
+        for rel in CREATED
+        if os.path.exists(os.path.join(REPO, rel))
+    ]
+    problems += [
+        f"{src} is still moved aside"
+        for src, _ in MOVED
+        if not os.path.exists(os.path.join(REPO, src))
+    ]
     result = subprocess.run(
-        ["git", "status", "--porcelain", "--"] + TARGETS,
+        ["git", "status", "--porcelain", "--"] + TARGETS + CREATED + [src for src, _ in MOVED],
         cwd=REPO, capture_output=True, text=True, check=False,
     )
     if result.stdout.strip():
@@ -242,6 +329,15 @@ def main():
         # to filter.
         cell("no-installs-found-at-all", m_no_installs_at_all, True,
              ["It is not evidence that", "npm install -g"]),
+        # ITER194, the scan's own bounds. Each of these three left the FULL suite green before the
+        # branch it names existed (.mtk/paths-194/mutate-scan-bounds.py, 8/8 both phases).
+        cell("own-ci-install-respelled", m_own_ci_install_respelled, True,
+             ["No global install was found under"],
+             also_absent=["It is not evidence that"]),
+        cell("run-step-outside-the-scan", m_run_step_outside_the_scan, True,
+             ["run steps and nothing in this class can see them"]),
+        cell("scan-root-moved", m_scan_root_moved, True,
+             ["declares a scan root that does not exist"]),
         cell("control-live-tree-is-green", m_control, False),
     ]
 

@@ -42,7 +42,9 @@ STEPS = [
     # iter169: the first guard here over the BUILD toolchain rather than the loop's own state files.
     # It drives `dotnet test` on a filtered class, so it is the slow step (~1 min) and the only one
     # that writes to the working tree - it refuses to start unless git says its targets are clean.
-    ("iter169 toolchain pinning", "tools/loop/mutate-toolchain-pinning.py", "8/8 + self-check 3/3"),
+    # iter194 took it 8 -> 11 cells: the scan's own bounds, which is also why it now PLANTS and MOVES
+    # paths rather than only rewriting tracked bytes.
+    ("iter169 toolchain pinning", "tools/loop/mutate-toolchain-pinning.py", "11/11 + self-check 3/3"),
     # iter170: prose copies of a constant - the first check here written against a defect that was
     # already live in the tree rather than one the iteration went looking for pre-emptively.
     ("iter170 prose copies of a bytes-per-token constant",
