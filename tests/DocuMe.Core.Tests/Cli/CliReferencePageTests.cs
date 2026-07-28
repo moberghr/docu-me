@@ -74,6 +74,7 @@ public sealed partial class CliReferencePageTests
         "schema",
         ".claude/rules",
         ".claude/references",
+        "src",  // 25 of its 59 invocations are console lines and page bodies, printed at a real user.
     ];
 
     /// <summary>
@@ -96,11 +97,19 @@ public sealed partial class CliReferencePageTests
     ];
 
     /// <summary>
-    /// Directory names the repo-wide walk passes over: build output, gitignored scratch, and the node
-    /// install. None holds a tracked instruction, and <c>node_modules</c> alone would dominate the walk.
+    /// Directory names both walks pass over: build output, gitignored scratch, the node install and
+    /// python's bytecode cache. None holds a tracked instruction, and <c>node_modules</c> alone would
+    /// dominate the walk.
     /// </summary>
+    /// <remarks>
+    /// <c>__pycache__</c> is here because <see cref="InvocationCarriers"/> stopped filtering on
+    /// extension: a <c>.pyc</c> of the loop's own scripts decodes to bytes that match
+    /// <see cref="Invocation"/>, and a compiled artifact of a script is not a second instruction. That
+    /// call is paired with the tree by the binary assertion in
+    /// <see cref="Every_file_that_names_an_invocation_is_swept_or_declared_narrative"/>.
+    /// </remarks>
     private static readonly HashSet<string> SkippedDirectories =
-        new(StringComparer.Ordinal) { ".git", ".mtk", "bin", "obj", "node_modules" };
+        new(StringComparer.Ordinal) { ".git", ".mtk", "bin", "obj", "node_modules", "__pycache__" };
 
     /// <summary>
     /// One representative file per behaviour this page describes, paired with the sentence resting on
@@ -450,6 +459,14 @@ public sealed partial class CliReferencePageTests
     /// the same scan the sweep runs. <see cref="NarrativeRoots"/> is what keeps the assertion a
     /// classification rather than a demand that the whole repo be consumer-facing.
     /// </para>
+    /// <para>
+    /// That authority was itself bounded until iter199, by the very filter it was supposed to audit
+    /// (<see cref="InvocationCarriers"/> has the numbers). What it could not see was <c>src</c>: 25 of the
+    /// 59 invocations there are strings the CLI prints at a user — "run <c>docume drift --mark</c> to set
+    /// it" — so a flag renamed out from under one of them is a wrong command in front of a real reader,
+    /// and giving one a flag the CLI does not have was measured green against the whole suite. Reading
+    /// every file also means reading binaries, which the last assertion below is for.
+    /// </para>
     /// </remarks>
     [Fact]
     public void Every_file_that_names_an_invocation_is_swept_or_declared_narrative()
@@ -489,6 +506,24 @@ public sealed partial class CliReferencePageTests
             + "instruction root inside a narrative one is a subtree that does instruct.) Decoration:";
 
         Laundered().ShouldBeEmpty(laundered);
+
+        const string rebounded =
+            "Every carrier this walk found has an extension the sweep's own filter matches — which is "
+            + "exactly what it looked like while the walk applied that filter, an auditor bounded by its "
+            + "subject's bound. Either it is filtering on extension again, or the tree genuinely lost "
+            + "every other carrier, and the second has not been true since 123 of 168 were the difference.";
+
+        carriers.Count(file => Instructional().IsMatch(Path.GetExtension(file)))
+            .ShouldBeLessThan(carriers.Count, rebounded);
+
+        const string binary =
+            "A carrier is a binary file, so what matched was decoded bytes rather than a sentence someone "
+            + "wrote. It classifies under a declared root like any other path, which is why nothing above "
+            + "says a word: the walk reads every file in the tree now that it no longer filters on "
+            + "extension, and a compiled artifact that happens to embed the tool's name instructs nobody. "
+            + "Add its directory to SkippedDirectories, as __pycache__ is. Binary carriers:";
+
+        carriers.Where(IsBinary).ShouldBeEmpty(binary);
     }
 
     /// <summary>
@@ -511,10 +546,11 @@ public sealed partial class CliReferencePageTests
     /// was already caught by the floor above, so only the small branches were free.
     /// </para>
     /// <para>
-    /// Scoped to the nine declared roots rather than the whole tree on purpose: those are the paths this
-    /// class has already called consumer-facing, so a file sitting there and escaping the sweep on its
-    /// extension alone is the harm worth failing on. A carrier under an undeclared root is the sibling
-    /// check's job, and it is still bounded by this same filter — recorded, not fixed here.
+    /// Scoped to the declared roots rather than the whole tree on purpose: those are the paths this class
+    /// has already called consumer-facing, so a file sitting there and escaping the sweep on its extension
+    /// alone is the harm worth failing on. A carrier under an undeclared root is the sibling check's job,
+    /// and that check no longer shares this filter — it walks the tree extension-blind, which is what let
+    /// <c>src</c> be classified at all.
     /// </para>
     /// </remarks>
     [Fact]
@@ -729,17 +765,19 @@ public sealed partial class CliReferencePageTests
     /// Repo-relative paths of every file in the tree naming at least one invocation — the authority the
     /// population check pairs the two declared lists against.
     /// </summary>
+    /// <remarks>
+    /// Extension-blind, and the reason is that it was not. This walk used to apply
+    /// <see cref="Instructional"/> — the same filter that bounds the sweep it audits — so a carrier under
+    /// an undeclared root with an unmatched extension was invisible to both nets at once. It saw 45 of the
+    /// tree's 168 carriers when that filter came out, and the 123 it had been missing were where the CLI
+    /// prints invocations at its own user. An auditor that shares its subject's bound cannot see past it.
+    /// </remarks>
     private static List<string> InvocationCarriers()
     {
         var carriers = new List<string>();
 
         foreach (var file in WalkedFiles())
         {
-            if (!Instructional().IsMatch(Path.GetExtension(file)))
-            {
-                continue;
-            }
-
             if (KeptInvocations(File.ReadAllLines(file)).Count > 0)
             {
                 carriers.Add(Path.GetRelativePath(RepoRoot, file).Replace('\\', '/'));
@@ -777,10 +815,33 @@ public sealed partial class CliReferencePageTests
         }
     }
 
+    /// <summary>
+    /// Does any directory between <paramref name="root"/> and this file appear in
+    /// <see cref="SkippedDirectories"/>? The two walks share that list so they cannot end up reading
+    /// different trees: <c>src</c> is an instruction root and carries the <c>bin</c> and <c>obj</c> the
+    /// repo-wide walk has always pruned, which this enumeration reached until it did.
+    /// </summary>
+    private static bool UnderSkippedDirectory(string file, string root) =>
+        Path.GetRelativePath(root, file)
+            .Split(Path.DirectorySeparatorChar)
+            .SkipLast(1)
+            .Any(SkippedDirectories.Contains);
+
     /// <summary>Is this repo-relative file at or under one of the declared roots?</summary>
     private static bool Covered(string file, string[] roots) =>
         roots.Any(root => string.Equals(file, root, StringComparison.Ordinal)
             || file.StartsWith(root + "/", StringComparison.Ordinal));
+
+    /// <summary>A NUL in the first 8 KB: the cheap test for "nobody wrote this as prose".</summary>
+    private static bool IsBinary(string file)
+    {
+        using var stream = File.OpenRead(Path.Combine(RepoRoot, Native(file)));
+
+        var head = new byte[8192];
+        var read = stream.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
+
+        return Array.IndexOf(head, (byte)0, 0, read) >= 0;
+    }
 
     private static bool OnDisk(string root)
     {
@@ -862,7 +923,7 @@ public sealed partial class CliReferencePageTests
             }
 
             var files = Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
-                .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
+                .Where(file => !UnderSkippedDirectory(file, path));
 
             foreach (var file in files)
             {
@@ -946,7 +1007,9 @@ public sealed partial class CliReferencePageTests
 
     // `.mjs` is here for one shipped file: templates/tools/render-mermaid.mjs, which `docume init`
     // scaffolds into a consumer repo and which names `docume publish` in its own header comments.
-    [GeneratedRegex(@"^\.(md|ya?ml|json|mjs)$", RegexOptions.ExplicitCapture | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    // `.cs` and `.csproj` are here for the `src` root: the strings the CLI prints telling a user what to
+    // run next, and the csproj comment naming what `docume init` scaffolds.
+    [GeneratedRegex(@"^\.(md|ya?ml|json|mjs|cs|csproj)$", RegexOptions.ExplicitCapture | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Instructional();
 
     [GeneratedRegex(@"\s+", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
