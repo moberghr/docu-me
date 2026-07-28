@@ -35,9 +35,16 @@ public sealed partial class ChangelogTests
     private const string PackagingSection = "### Packaging";
 
     /// <summary>
-    /// Options every command carries for plumbing. A changelog that lists a command's real flags and skips
+    /// Options the commands carry for plumbing. A changelog that lists a command's real flags and skips
     /// these is not making a claim about them, so they do not count against an inventory.
     /// </summary>
+    /// <remarks>
+    /// Deliberately unguarded, and the one bound in this class that is: its silent direction is a SURPLUS
+    /// entry, and nothing in the tree separates plumbing from a feature flag somebody wanted excused. Every
+    /// candidate rule (declared by N commands, absent from the changelog, most-shared-flag) either misses
+    /// <c>--allow-protected-space</c>, which the inventory test below names as the hazard, or is undone by
+    /// the same edit that widens the list. Growing this array is a judgement; make it in the open.
+    /// </remarks>
     private static readonly string[] Plumbing = ["--config", "--state"];
 
     /// <summary>Targets <c>init</c> writes that the changelog names by path.</summary>
@@ -47,10 +54,10 @@ public sealed partial class ChangelogTests
     /// <summary>Files the changelog says <c>/docs-loop</c> keeps.</summary>
     private static readonly string[] LoopPaths = ["_meta/PROGRESS.md", "_meta/GAPS.md"];
 
-    /// <summary>The scaffolded targets checked against the scaffolding sources, by file name.</summary>
-    private static readonly string[] ScaffoldedNames = ["STYLE.md", "state.json", "dotnet-tools.json"];
-
-    /// <summary>The four house analyzer packs the changelog counts.</summary>
+    /// <summary>
+    /// The house analyzer packs, named so the count claim can say WHICH ones rather than only how many.
+    /// It bounds nothing: the number is read off <c>Directory.Packages.props</c>.
+    /// </summary>
     private static readonly string[] AnalyzerPacks =
         ["StyleCop.Analyzers", "Roslynator.Analyzers", "SonarAnalyzer.CSharp", "Meziantou.Analyzer"];
 
@@ -59,8 +66,9 @@ public sealed partial class ChangelogTests
 
     /// <summary>
     /// Flags System.CommandLine provides rather than <c>&lt;Command&gt;Command.cs</c> declaring them. They
-    /// are real, they are documented as real (docs/wiki/20-reference/cli.md line 14), and no
+    /// are real, they are documented as real in <c>docs/wiki/20-reference/cli.md</c>, and no
     /// <c>new Option&lt;&gt;</c> will ever be found for them — so a changelog naming one is not inventing it.
+    /// Both halves of that sentence are asserted, because this list is what excuses a flag from existing.
     /// </summary>
     private static readonly string[] Builtins = ["--help", "--version"];
 
@@ -191,6 +199,7 @@ public sealed partial class ChangelogTests
     public void A_flag_list_written_as_an_inventory_is_a_complete_inventory()
     {
         var incomplete = new List<string>();
+        var inventories = 0;
 
         foreach (var command in RegisteredCommands().Order(StringComparer.Ordinal))
         {
@@ -201,6 +210,8 @@ public sealed partial class ChangelogTests
             {
                 continue;
             }
+
+            inventories++;
 
             var named = NamedFlags(bullet);
 
@@ -223,6 +234,90 @@ public sealed partial class ChangelogTests
         // Either name every flag or write the sentence as a sample ("e.g.", "such as", "including").
         incomplete.ShouldBeEmpty(
             $"A changelog flag list reads as complete but is not: {string.Join("; ", incomplete)}.");
+
+        // Exactly one bullet qualifies today, so `Hedges` and the opener between them decide whether this
+        // test reads anything at all: one hedge word added to that bullet retires the check and nothing
+        // fails. A count of zero problems is only evidence once the denominator is asserted.
+        const string vacuous = "No CHANGELOG.md bullet reads as a complete flag inventory, so this test "
+            + "checked nothing. Either the opener wording moved or the bullet gained a hedge word.";
+
+        inventories.ShouldBeGreaterThan(0, vacuous);
+    }
+
+    [Fact]
+    public void The_analyzer_packs_this_class_names_are_the_ones_the_props_file_declares()
+    {
+        var declared = DeclaredAnalyzerPacks();
+
+        var unnamed = declared.Except(AnalyzerPacks, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        var withdrawn = AnalyzerPacks.Except(declared, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+
+        // Both directions, because the counted claim above now reads this file rather than this list. An
+        // added pack makes the changelog's number wrong; a removed one makes this list describe a tree
+        // that moved on.
+        unnamed.ShouldBeEmpty(
+            $"Directory.Packages.props declares analyzer packs this class does not name: "
+            + $"[{string.Join(", ", unnamed)}]. Name them here and restate the number in CHANGELOG.md and README.md.");
+
+        withdrawn.ShouldBeEmpty(
+            $"This class names analyzer packs Directory.Packages.props no longer declares: "
+            + $"[{string.Join(", ", withdrawn)}].");
+    }
+
+    [Fact]
+    public void Every_path_these_tests_filter_on_is_a_path_the_changelog_still_names()
+    {
+        var changelog = Changelog();
+
+        var unmentioned = ScaffoldedPaths
+            .Concat(LoopPaths)
+            .Where(path => !changelog.Contains(path, StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        // Both checks over these paths run only where the changelog names one, so a reworded sentence does
+        // not fail them — it retires them, and leaves a list describing a release note two edits ago.
+        unmentioned.ShouldBeEmpty(
+            $"CHANGELOG.md no longer names [{string.Join(", ", unmentioned)}], so nothing verifies them. "
+            + "Re-point the entry at the new wording, or drop it along with the claim it was checking.");
+    }
+
+    [Fact]
+    public void The_flags_exempted_as_built_ins_are_built_in()
+    {
+        var declared = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var command in RegisteredCommands())
+        {
+            var options = OptionsOf(command);
+
+            if (options is null)
+            {
+                continue;
+            }
+
+            declared.UnionWith(options);
+        }
+
+        var real = Builtins.Where(flag => declared.Contains(flag)).Order(StringComparer.Ordinal).ToList();
+
+        // A built-in is excused from existing because no `new Option<>` declares it. One that IS declared is
+        // an ordinary flag, and exempting it turns off the check that the changelog named it under the
+        // right command — the only check there is, since CliReferencePageTests skips CHANGELOG.md.
+        real.ShouldBeEmpty(
+            $"[{string.Join(", ", real)}] are exempted as System.CommandLine built-ins and a command "
+            + "declares them, so the exemption is hiding a real flag rather than describing a built-in one.");
+
+        var cli = File.ReadAllText(Path.Combine(RepoRoot, "docs", "wiki", "20-reference", "cli.md"));
+
+        var undocumented = Builtins
+            .Where(flag => !cli.Contains($"`{flag}`", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        undocumented.ShouldBeEmpty(
+            $"[{string.Join(", ", undocumented)}] are exempted as built-ins and "
+            + "docs/wiki/20-reference/cli.md does not document them, so nothing says they are real.");
     }
 
     [Theory]
@@ -397,9 +492,7 @@ public sealed partial class ChangelogTests
 
         if (pattern.Contains("analyzer packs", StringComparison.Ordinal))
         {
-            var props = File.ReadAllText(Path.Combine(RepoRoot, "Directory.Packages.props"));
-
-            return AnalyzerPacks.Count(pack => props.Contains($"Include=\"{pack}\"", StringComparison.Ordinal));
+            return DeclaredAnalyzerPacks().Count;
         }
 
         // init's scaffold targets. The README's step-3 table is the hand-reviewed list of them and is
@@ -431,9 +524,32 @@ public sealed partial class ChangelogTests
             .Select(File.ReadAllText)
             .ToList();
 
-        return ScaffoldedNames
+        // Derived from ScaffoldedPaths rather than written out again: a second spelling of the same three
+        // file names is a mirror, and the direction that rots is a path added above without its name here.
+        return ScaffoldedPaths
+            .Select(path => Path.GetFileName(path))
             .Where(name => text.Exists(source => source.Contains(name, StringComparison.Ordinal)))
             .ToList();
+    }
+
+    /// <summary>
+    /// Every analyzer pack <c>Directory.Packages.props</c> declares, read off the file. Counting the
+    /// <c>AnalyzerPacks</c> entries that appear there instead would bound the answer at four, so a fifth
+    /// pack could never make the changelog's number wrong — only a deletion could.
+    /// </summary>
+    private static List<string> DeclaredAnalyzerPacks()
+    {
+        var props = File.ReadAllText(Path.Combine(RepoRoot, "Directory.Packages.props"));
+
+        var packs = AnalyzerPackage()
+            .Matches(props)
+            .Select(match => match.Groups["id"].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        packs.ShouldNotBeEmpty("Directory.Packages.props declares no analyzer pack, so this scan is broken.");
+
+        return packs;
     }
 
     /// <summary>The text under <paramref name="heading"/>, up to the next heading of the same level or shallower.</summary>
@@ -485,6 +601,12 @@ public sealed partial class ChangelogTests
 
     [GeneratedRegex(@"^\| `(?<path>[^`]+)`", RegexOptions.Multiline | RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
     private static partial Regex TableRow();
+
+    [GeneratedRegex(
+        @"PackageVersion Include=""(?<id>[A-Za-z0-9.]*Analyzers?(?:\.[A-Za-z]+)?)""",
+        RegexOptions.ExplicitCapture,
+        matchTimeoutMilliseconds: 1000)]
+    private static partial Regex AnalyzerPackage();
 
     /// <summary>
     /// Walks up to the directory holding <c>DocuMe.slnx</c>: the changelog ships in the tree and has no
