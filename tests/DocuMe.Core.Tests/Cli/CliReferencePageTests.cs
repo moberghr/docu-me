@@ -223,7 +223,7 @@ public sealed partial class CliReferencePageTests
 
         foreach (var command in ShippedCommands().OrderBy(name => name, StringComparer.Ordinal))
         {
-            var tabled = TabledOptions(sections[command]);
+            var tabled = TabledOptions(sections[command]).Tabled;
 
             var undocumented = DeclaredOptions(command)
                 .Where(option => !PageWideOptions.Contains(option))
@@ -245,12 +245,16 @@ public sealed partial class CliReferencePageTests
     {
         var sections = PageSections();
         var phantom = new List<string>();
+        var unread = new List<string>();
 
         foreach (var command in ShippedCommands().OrderBy(name => name, StringComparer.Ordinal))
         {
             var declared = DeclaredOptions(command);
+            var (tabled, missed) = TabledOptions(sections[command]);
 
-            var invented = TabledOptions(sections[command])
+            unread.AddRange(missed.Select(entry => $"{command}: {entry}"));
+
+            var invented = tabled
                 .Where(option => !declared.Contains(option))
                 .OrderBy(option => option, StringComparer.Ordinal);
 
@@ -262,6 +266,19 @@ public sealed partial class CliReferencePageTests
             + "without it; a reader following the page gets a parse error.";
 
         phantom.ShouldBeEmpty(because);
+
+        const string unreadNothing =
+            "These flag names sit in the option column of a table row on "
+            + "docs/wiki/20-reference/cli.md and the row reader read none of them, so the check above "
+            + "ran on a smaller page than the one a reader gets. That direction is the silent one: an "
+            + "unread row makes the tabled set smaller, so an option the CLI does not have is not "
+            + "reported as invented — it simply never arrives, behind an assertion that reports "
+            + "success. A row pattern deciding a population is a bound and it hides better than a "
+            + "list, which is why the unread set is asserted rather than described: a new option-column "
+            + "spelling shows up here as itself. Either put the name in a code span like every other "
+            + "row, or take it out of the option column. Unread:";
+
+        unread.ShouldBeEmpty(unreadNothing);
     }
 
     /// <summary>
@@ -766,14 +783,76 @@ public sealed partial class CliReferencePageTests
         return sections;
     }
 
-    /// <summary>The options named in the leading cell of a markdown table row inside one section.</summary>
-    private static HashSet<string> TabledOptions(string section)
+    /// <summary>
+    /// The options named in the leading cell of a markdown table row inside one section, plus the flag
+    /// names sitting in such a cell that this reader did not read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The row pattern was <c>^\|\s*`</c>: one name per row, at the very start of the cell,
+    /// unemphasised, on an unindented row. It decided the population two facts quantify over, and the
+    /// two directions are not symmetric.
+    /// <see cref="Every_declared_option_is_in_its_commands_option_table"/> asks declared minus tabled,
+    /// so a row it cannot read makes that fact LOUDER and every real option is protected — which is
+    /// why all 36 rows on the live page matched it and nothing was broken.
+    /// <see cref="Every_option_the_reference_page_documents_is_one_the_command_declares"/> asks tabled
+    /// minus declared, so an unread row makes the set SMALLER and an option the CLI does not have
+    /// never arrives at the one check whose message says a reader following the page gets a parse
+    /// error.
+    /// </para>
+    /// <para>
+    /// Measured before the fix, one cell per spelling
+    /// (<c>.mtk/paths-202/mutate-table-row-reader.py</c>, 6 cells, full suite each): a phantom option
+    /// in a bold code span, one as the second flag in a shared first cell, and one with no code span
+    /// each passed all 1460 tests, while the same phantom spelt in pattern was caught. So the page is
+    /// checked, and the spelling was what escaped.
+    /// </para>
+    /// <para>
+    /// Two exclusions are kept and load-bearing. A row must OPEN with a <c>|</c>: a detector that only
+    /// needed a pipe somewhere on the line would read prose and piped examples
+    /// (<c>| `docume status --json | jq` |</c>, whose first cell the capture ends mid-span) as option
+    /// rows and invent options out of them, and a real option in a leading-pipe-less row still trips
+    /// fact 2. And a name is read only from a code span, this page's convention for that column; a
+    /// bare one is reported in the unread set instead, so it is a red either way rather than a silent
+    /// pass. The unread scan is scoped to a cell whose LEADING token is a flag, which is what an
+    /// option row is — the same piped-example cell is not one.
+    /// </para>
+    /// <para>
+    /// A reader that went blind altogether would leave the unread set empty too, and that needs no
+    /// floor of its own: fact 2 reports every declared option as undocumented the moment this set
+    /// empties, and no command's options are all page-wide — the smallest table is three rows. The
+    /// denominator is a standing assertion rather than a number to keep current.
+    /// </para>
+    /// </remarks>
+    private static (HashSet<string> Tabled, List<string> Unread) TabledOptions(string section)
     {
-        var names = TableRowOption().Matches(section)
-            .Cast<Match>()
-            .Select(match => match.Groups["name"].Value);
+        var tabled = new HashSet<string>(StringComparer.Ordinal);
+        var unread = new List<string>();
 
-        return new HashSet<string>(names, StringComparer.Ordinal);
+        foreach (var row in TableRowFirstCell().Matches(section).Cast<Match>())
+        {
+            var cell = row.Groups["first"].Value;
+
+            var spanned = SpannedOption().Matches(cell)
+                .Cast<Match>()
+                .Select(match => match.Groups["name"].Value)
+                .ToHashSet(StringComparer.Ordinal);
+
+            tabled.UnionWith(spanned);
+
+            if (!OptionCell().IsMatch(cell))
+            {
+                continue;
+            }
+
+            unread.AddRange(OptionName().Matches(cell)
+                .Cast<Match>()
+                .Select(match => match.Value)
+                .Where(name => !spanned.Contains(name))
+                .Select(name => $"`{name}` in |{cell.Trim()}|"));
+        }
+
+        return (tabled, unread);
     }
 
     /// <summary>
@@ -1108,8 +1187,25 @@ public sealed partial class CliReferencePageTests
     [GeneratedRegex(@"\n## `docume (?<name>[a-z-]+)[^`]*`\n(?<body>[\s\S]*?)(?=\n## |$)", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 2000)]
     private static partial Regex CommandSection();
 
-    [GeneratedRegex(@"^\|\s*`(?<name>--[a-z0-9-]+)", RegexOptions.ExplicitCapture | RegexOptions.Multiline, matchTimeoutMilliseconds: 1000)]
-    private static partial Regex TableRowOption();
+    // A markdown table row and its leading cell. Anchored to a row that OPENS with a pipe, tolerating
+    // indentation: see TabledOptions' remarks for why an unanchored detector invents options.
+    [GeneratedRegex(@"^[ \t]*\|(?<first>[^|\n]*)\|", RegexOptions.ExplicitCapture | RegexOptions.Multiline, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex TableRowFirstCell();
+
+    // Every code-spanned flag in a cell, not just one at its start: `**`--force`**` and
+    // `` `--from`, `--to` `` are both ordinary spellings of the option column.
+    [GeneratedRegex(@"`(?<name>--[a-z0-9][a-z0-9-]*)", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex SpannedOption();
+
+    // A flag name however it is written. The leading alphanumeric is what keeps a `|---|---|`
+    // separator row from reading as one, and PlanCommandSpecTests.OptionName spells it the same way.
+    [GeneratedRegex(@"--[a-z0-9][a-z0-9-]*", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex OptionName();
+
+    // A cell whose leading token is a flag, allowing emphasis and a code span in front of it. This is
+    // the unread scan's population: a cell that opens with anything else is not an option row.
+    [GeneratedRegex(@"^[\s*_]*`?--[a-z0-9]", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex OptionCell();
 
     // Stops at any shell separator, a closing quote or paren, an html tag, or a backslash: the
     // workflows cite the tool inside double-quoted `echo` strings as \`docume init\`, and that
