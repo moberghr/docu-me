@@ -53,7 +53,10 @@ public sealed partial class SpikeClosureTests
     /// deliberately absent — it holds the table these assertions read from, and
     /// <see cref="SpikeTableTests"/> owns it. <c>tools/loop/</c> is absent for the opposite reason:
     /// it is build-loop bookkeeping, and its handoff archive is a log of past phrasings that is
-    /// supposed to preserve them.
+    /// supposed to preserve them. Both entries here and in <see cref="ReaderFacingFiles"/> are paired
+    /// with the live tree by <see cref="Every_reader_facing_entry_reaches_the_sweep"/>: the walk below
+    /// skips a root that no longer resolves without a word, and the citation floor cannot notice,
+    /// because one root carries most of the citations in the repo.
     /// </summary>
     private static readonly string[] ReaderFacingRoots =
         [".claude/references", ".claude/rules", "docs", "plugin"];
@@ -76,6 +79,25 @@ public sealed partial class SpikeClosureTests
         "The reader-facing sweep found almost no line citing a spike, so the invariant below would "
         + "pass by scanning nothing. Either ReaderFacingRoots no longer resolves to the docs tree, "
         + "or the two citation spellings changed.";
+
+    private const string UnreachedMessage =
+        "A declared reader-facing entry no longer reaches the sweep, so the tree it names is read by "
+        + "nothing and the loss is silent: the enumerator skips a root that does not resolve and a "
+        + "file that is not there without a word. The citation floor cannot stand in for this — one "
+        + "root carries most of the citations in the repo, so blinding any other entry leaves that "
+        + "floor comfortably green. Point the entry at where the tree went, or drop it deliberately. "
+        + "Unreached: ";
+
+    private const string DroppedRootMessage =
+        "ReaderFacingRoots names fewer trees than the four it is known to carry, so this sweep's "
+        + "coverage shrank. Deleting an entry is how a stale instruction stops being read while the "
+        + "pairing above stays green by having nothing left to walk. If a tree genuinely left the "
+        + "repo, lower this floor in the same change and say which one.";
+
+    private const string DroppedFileMessage =
+        "ReaderFacingFiles names fewer documents than the five it is known to carry. Same failure as "
+        + "the roots floor, and the floors are separate on purpose: one floor over the sum would let "
+        + "an entry moved from one list to the other pay for a deletion in the other.";
 
     private const string StaleMessage =
         "A reader-facing doc still poses a spike as an open question after PLAN.md §13's row for it "
@@ -110,6 +132,33 @@ public sealed partial class SpikeClosureTests
         var citing = CitingLines();
 
         citing.Count.ShouldBeGreaterThanOrEqualTo(5, UnscannedMessage);
+    }
+
+    [Fact]
+    public void Every_reader_facing_entry_reaches_the_sweep()
+    {
+        var swept = ReaderFacingDocuments()
+            .Select(file => Path.GetRelativePath(RepoRoot, file)
+                .Replace(Path.DirectorySeparatorChar, '/'))
+            .ToList();
+
+        var unreached = ReaderFacingFiles
+            .Where(name => !swept.Contains(name, StringComparer.Ordinal))
+            .Concat(ReaderFacingRoots.Where(root => !swept.Any(
+                path => path.StartsWith(root + "/", StringComparison.Ordinal))))
+            .Order()
+            .ToList();
+
+        unreached.ShouldBeEmpty(UnreachedMessage + string.Join(", ", unreached));
+    }
+
+    [Fact]
+    public void The_reader_facing_declaration_still_names_every_tree()
+    {
+        // Anti-vacuity guard for the pairing above: it walks the declaration, so emptying the
+        // declaration turns it green by leaving it nothing to check.
+        ReaderFacingRoots.Length.ShouldBeGreaterThanOrEqualTo(4, DroppedRootMessage);
+        ReaderFacingFiles.Length.ShouldBeGreaterThanOrEqualTo(5, DroppedFileMessage);
     }
 
     [Fact]
