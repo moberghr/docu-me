@@ -45,10 +45,16 @@ public sealed partial class CliReferencePageTests
 
     /// <summary>
     /// Files that TELL SOMEONE to run the tool, so a stale flag in one costs a consumer a failed run.
-    /// Deliberately not the whole repo: PLAN.md, GATES.md, CHANGELOG.md, tasks/, docs/plans/,
-    /// docs/specs/ and tools/loop/state.json NARRATE the build, and scanning them buries the real
-    /// gaps under sentences that happen to contain the word "docume".
+    /// The someone is not always human: <c>.claude/rules/</c> and <c>.claude/references/</c> are loaded
+    /// into every agent session in this repo (CLAUDE.md, "Standards Reference"), and an agent that
+    /// follows a renamed flag out of one fails exactly the way a reader does.
     /// </summary>
+    /// <remarks>
+    /// Deliberately not the whole repo, and the complement is <see cref="NarrativeRoots"/> rather than a
+    /// sentence: scanning what narrates the build buries the real gaps under prose that happens to
+    /// contain the word "docume". Paired against the tree's own invocations, both ways, by
+    /// <see cref="Every_file_that_names_an_invocation_is_swept_or_declared_narrative"/>.
+    /// </remarks>
     private static readonly string[] InstructionRoots =
     [
         "README.md",
@@ -58,7 +64,35 @@ public sealed partial class CliReferencePageTests
         "actions",
         ".github/workflows",
         "schema",
+        ".claude/rules",
+        ".claude/references",
     ];
+
+    /// <summary>
+    /// The complement: paths that NARRATE the build rather than instruct anyone, each classified on
+    /// purpose. Not a second sweep and not a second definition of "consumer-facing" — its only job is to
+    /// account, together with <see cref="InstructionRoots"/>, for every file in the tree that names a
+    /// <c>docume</c> invocation, so a root can leave the sweep only by being written down as something
+    /// that narrates the build.
+    /// </summary>
+    private static readonly string[] NarrativeRoots =
+    [
+        "PLAN.md",       // the build spec: it declares options that are deliberately not built yet.
+        "GATES.md",      // the gate log, which quotes runs the loop is still waiting to be allowed.
+        "CHANGELOG.md",  // release notes, where a flag that USED to be spelled that way is the point.
+        "docs/plans",    // MTK plan artifacts, written before the surface they describe existed.
+        "docs/specs",    // MTK spec artifacts, the same.
+        "tasks",         // MTK's lessons and todo list: notes about building DocuMe.
+        "tools",         // the build loop's own bookkeeping, archives and method notes.
+        "tests",         // this suite, and the golden corpus whose sample prose cites the tool.
+    ];
+
+    /// <summary>
+    /// Directory names the repo-wide walk passes over: build output, gitignored scratch, and the node
+    /// install. None holds a tracked instruction, and <c>node_modules</c> alone would dominate the walk.
+    /// </summary>
+    private static readonly HashSet<string> SkippedDirectories =
+        new(StringComparer.Ordinal) { ".git", ".mtk", "bin", "obj", "node_modules" };
 
     /// <summary>
     /// One representative file per behaviour this page describes, paired with the sentence resting on
@@ -336,6 +370,65 @@ public sealed partial class CliReferencePageTests
     }
 
     /// <summary>
+    /// Every file in the tree that names an invocation is accounted for by the two declared lists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="InstructionRoots"/> is a literal that bounds which files the sweep above reads, and
+    /// nothing paired it with the tree it describes. Both directions were silent. A consumer-facing file
+    /// under a root the literal does not name was simply never read; and a root deleted from the literal
+    /// took its files out of the sweep while the <c>&gt; 100</c> floor in
+    /// <see cref="The_invocation_scan_reaches_the_files_that_carry_the_instructions"/> still held —
+    /// measured for <c>actions</c>, <c>schema</c> and <c>.github/workflows</c>, which together carry 7 of
+    /// the 146 invocations, so dropping any one of them cost nothing.
+    /// </para>
+    /// <para>
+    /// The authority is not a second literal: it is every <c>docume …</c> invocation in the tree, found by
+    /// the same scan the sweep runs. <see cref="NarrativeRoots"/> is what keeps the assertion a
+    /// classification rather than a demand that the whole repo be consumer-facing.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_file_that_names_an_invocation_is_swept_or_declared_narrative()
+    {
+        var carriers = InvocationCarriers();
+
+        // Each direction below is the other's vacuity guard. This floor covers the case none of them
+        // does: a walk that found nothing satisfies all three (iter175 — assert the denominator).
+        carriers.Count.ShouldBeGreaterThan(InstructionRoots.Length + NarrativeRoots.Length);
+
+        const string unclassified =
+            "A file names a `docume` invocation and is under neither InstructionRoots nor "
+            + "NarrativeRoots. The sweep above reads InstructionRoots and passes over everything else "
+            + "without a word, so nothing checks this file's invocations against the CLI: a flag renamed "
+            + "out from under it costs whoever follows it a failed run. Add its root to InstructionRoots "
+            + "if it instructs someone, or to NarrativeRoots with the reason. Unswept and undeclared:";
+
+        carriers
+            .Where(file => !Covered(file, InstructionRoots))
+            .Where(file => !Covered(file, NarrativeRoots))
+            .ShouldBeEmpty(unclassified);
+
+        const string vanished =
+            "A declared root is not on disk, so the list holding it describes a tree that has moved. An "
+            + "instruction root that vanished takes its files out of the sweep; a narrative one launders "
+            + "an exemption nothing needs any more. Declared but absent:";
+
+        InstructionRoots
+            .Concat(NarrativeRoots)
+            .Where(root => !OnDisk(root))
+            .ShouldBeEmpty(vanished);
+
+        const string laundered =
+            "A narrative root is at or inside an instruction root, which excuses nothing and reads to a "
+            + "reviewer as though it did: InstructionFiles() enumerates the instruction root, so those "
+            + "files are swept either way. (The reverse nesting is deliberate and allowed — an "
+            + "instruction root inside a narrative one is a subtree that does instruct.) Decoration:";
+
+        Laundered().ShouldBeEmpty(laundered);
+    }
+
+    /// <summary>
     /// The claim table is hand-listed, so it rots in two directions: a file renamed out from under a row
     /// makes that row's trial report blind for a reason that has nothing to do with the page, and a row
     /// quietly deleted shrinks the sweep without failing it.
@@ -449,34 +542,116 @@ public sealed partial class CliReferencePageTests
         foreach (var file in InstructionFiles())
         {
             var relative = Path.GetRelativePath(RepoRoot, file).Replace('\\', '/');
+            var kept = KeptInvocations(File.ReadAllLines(file));
 
-            foreach (var (line, text) in LogicalLines(File.ReadAllLines(file)))
+            if (kept.Count > 0)
             {
-                foreach (var match in Invocation().Matches(text).Cast<Match>())
-                {
-                    var invocation = Normalize(match.Groups["args"].Value);
-
-                    // "docume <command>" and a bare "docume --help" claim nothing about the surface.
-                    if (invocation.Length == 0
-                        || invocation[0] is '<' or '{' or '[' or '$'
-                        || invocation.StartsWith("--", StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    if (!found.TryGetValue(relative, out var list))
-                    {
-                        list = [];
-                        found[relative] = list;
-                    }
-
-                    list.Add((line, invocation));
-                }
+                found[relative] = kept;
             }
         }
 
         return found;
     }
+
+    /// <summary>
+    /// The invocations one file's lines claim about the CLI's surface. Shared with the population check
+    /// below on purpose: two definitions of "a real invocation" would drift, which is the defect shape
+    /// this whole class exists for.
+    /// </summary>
+    private static List<(int Line, string Invocation)> KeptInvocations(string[] lines)
+    {
+        var kept = new List<(int, string)>();
+
+        foreach (var (line, text) in LogicalLines(lines))
+        {
+            foreach (var match in Invocation().Matches(text).Cast<Match>())
+            {
+                var invocation = Normalize(match.Groups["args"].Value);
+
+                // "docume <command>" and a bare "docume --help" claim nothing about the surface.
+                if (invocation.Length == 0
+                    || invocation[0] is '<' or '{' or '[' or '$'
+                    || invocation.StartsWith("--", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                kept.Add((line, invocation));
+            }
+        }
+
+        return kept;
+    }
+
+    /// <summary>
+    /// Repo-relative paths of every file in the tree naming at least one invocation — the authority the
+    /// population check pairs the two declared lists against.
+    /// </summary>
+    private static List<string> InvocationCarriers()
+    {
+        var carriers = new List<string>();
+
+        foreach (var file in WalkedFiles())
+        {
+            if (!Instructional().IsMatch(Path.GetExtension(file)))
+            {
+                continue;
+            }
+
+            if (KeptInvocations(File.ReadAllLines(file)).Count > 0)
+            {
+                carriers.Add(Path.GetRelativePath(RepoRoot, file).Replace('\\', '/'));
+            }
+        }
+
+        return carriers;
+    }
+
+    /// <summary>
+    /// The whole tree, minus <see cref="SkippedDirectories"/>. Pruned while descending rather than
+    /// filtered afterwards: <c>node_modules</c> and <c>.git</c> are most of the files on disk.
+    /// </summary>
+    private static IEnumerable<string> WalkedFiles()
+    {
+        var pending = new Stack<string>();
+        pending.Push(RepoRoot);
+
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+
+            var descend = Directory.EnumerateDirectories(directory)
+                .Where(child => !SkippedDirectories.Contains(Path.GetFileName(child)));
+
+            foreach (var child in descend)
+            {
+                pending.Push(child);
+            }
+
+            foreach (var file in Directory.EnumerateFiles(directory))
+            {
+                yield return file;
+            }
+        }
+    }
+
+    /// <summary>Is this repo-relative file at or under one of the declared roots?</summary>
+    private static bool Covered(string file, string[] roots) =>
+        roots.Any(root => string.Equals(file, root, StringComparison.Ordinal)
+            || file.StartsWith(root + "/", StringComparison.Ordinal));
+
+    private static bool OnDisk(string root)
+    {
+        var native = Path.Combine(RepoRoot, Native(root));
+
+        return File.Exists(native) || Directory.Exists(native);
+    }
+
+    /// <summary>Narrative roots that cover files an instruction root already sweeps.</summary>
+    private static List<string> Laundered() =>
+        NarrativeRoots
+            .Where(narrative => Covered(narrative, InstructionRoots))
+            .ToList();
 
     /// <summary>Trailing shell comment dropped, and markdown/prose punctuation off the last token.</summary>
     private static string Normalize(string arguments)
