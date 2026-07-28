@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using DocuMe.Core.Feedback;
 using DocuMe.Core.Markdown;
 using DocuMe.Core.State;
@@ -34,7 +35,7 @@ namespace DocuMe.Core.Tests.Plugin;
 /// never discovers the skill in the first place.
 /// </para>
 /// </remarks>
-public sealed class SkillContractTests
+public sealed partial class SkillContractTests
 {
     /// <summary>The three skills §11 names.</summary>
     private static readonly string[] Skills = ["docs-refresh", "docs-feedback", "docs-loop"];
@@ -63,7 +64,45 @@ public sealed class SkillContractTests
     /// contract says the words "no <c>curl</c>" out loud, and a test that punished a skill for forbidding
     /// something would be the wrong assertion.
     /// </summary>
-    private static readonly string[] RestPaths = ["rest/api", "api/v2/pages", "/wiki/api"];
+    /// <remarks>
+    /// <para>
+    /// <strong>Each fragment is a family, not an endpoint, and that is what
+    /// <see cref="Every_endpoint_the_client_calls_is_one_the_REST_canary_would_catch"/> keeps true.</strong>
+    /// This list read <c>api/v2/pages</c> until iter195, which caught the one v2 endpoint family named in it
+    /// and none of the other three — a skill spelling <c>$BASE/api/v2/spaces</c>,
+    /// <c>$BASE/api/v2/footer-comments</c> or <c>$BASE/api/v2/inline-comments</c>, which is how
+    /// <c>ConfluenceClient</c> itself spells them, passed the grep. <c>rest/api</c> was already a family
+    /// prefix and covered all six v1 paths; <c>api/v2/</c> now does the same job on the other side.
+    /// </para>
+    /// <para>
+    /// <c>/wiki/api</c> is not redundant next to it and should not be tidied away: it is the only
+    /// version-agnostic net here, and it is what catches a base-prefixed call to an API version the client
+    /// does not use yet.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] RestPaths = ["rest/api", "api/v2/", "/wiki/api"];
+
+    /// <summary>
+    /// The endpoint families <c>ConfluenceClient</c> reaches Confluence through, spelled as its own path
+    /// literals spell them — relative to the <c>/wiki/</c> base, which is the spelling a skill copying a
+    /// call out of the source would use.
+    /// </summary>
+    /// <remarks>
+    /// Hand-declared and then paired both ways with the source by
+    /// <see cref="The_endpoints_this_class_declares_are_the_ones_the_client_calls"/>, so it cannot drift in
+    /// either direction: a family the client gains fails that test, and so does an extraction that has
+    /// stopped finding them, which is the failure that would otherwise turn
+    /// <see cref="Every_endpoint_the_client_calls_is_one_the_REST_canary_would_catch"/> into a vacuous pass.
+    /// </remarks>
+    private static readonly string[] ClientEndpoints =
+    [
+        "api/v2/footer-comments",
+        "api/v2/inline-comments",
+        "api/v2/pages",
+        "api/v2/spaces",
+        "rest/api/content",
+        "rest/api/user",
+    ];
 
     [Fact]
     public void Every_skill_PLAN_11_names_is_present()
@@ -233,6 +272,60 @@ public sealed class SkillContractTests
         }
     }
 
+    /// <summary>
+    /// <see cref="ClientEndpoints"/> is what <c>ConfluenceClient</c> actually calls, in both directions.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The pairing that stops <see cref="Every_endpoint_the_client_calls_is_one_the_REST_canary_would_catch"/>
+    /// passing on a list nobody has looked at since the client last grew. Read out of the source rather than
+    /// declared once, because the interesting direction is the client gaining an endpoint family: whoever
+    /// adds it has no reason to think about a grep in the plugin tests, and the grep is what stands between
+    /// a skill and an ungoverned write.
+    /// </para>
+    /// <para>
+    /// The other direction is the one that would go quiet. An extraction that matches nothing — the file
+    /// renamed, the literals restructured, the regex rotted — leaves an empty set that satisfies every
+    /// "each endpoint is caught" check ever written against it, so exactness is asserted here rather than a
+    /// floor.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_endpoints_this_class_declares_are_the_ones_the_client_calls()
+    {
+        const string message = "The endpoint families read out of ConfluenceClient.cs are not the ones "
+            + "ClientEndpoints declares. If the client gained one, add it here and check RestPaths still "
+            + "catches it; if this found nothing, the extraction has rotted and the REST canary is only as "
+            + "wide as it looks.";
+
+        Endpoints().ShouldBe(ClientEndpoints, ignoreOrder: true, customMessage: message);
+    }
+
+    /// <summary>
+    /// Every endpoint family the CLI calls is one <see cref="RestPaths"/> would notice in a SKILL.md.
+    /// </summary>
+    /// <remarks>
+    /// A floor, not a set equality, and deliberately: <see cref="RestPaths"/> is allowed to be wider than
+    /// today's client — <c>/wiki/api</c> matches no literal in the source and is there for the call the
+    /// client does not make yet. What may not happen is the canary being narrower than the surface it is
+    /// watching for, because that failure is invisible: the grep still runs, still passes, and no longer
+    /// looks at three quarters of the v2 API.
+    /// </remarks>
+    [Fact]
+    public void Every_endpoint_the_client_calls_is_one_the_REST_canary_would_catch()
+    {
+        var endpoints = Endpoints();
+
+        var uncaught = endpoints
+            .Where(endpoint => !RestPaths.Any(
+                path => endpoint.Contains(path, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        uncaught.ShouldBeEmpty(
+            "ConfluenceClient calls these, and No_skill_reaches_Confluence_around_the_CLI would not see a "
+                + "skill calling them too. Widen RestPaths to the family (rule §0.4).");
+    }
+
     [Fact]
     public void No_skill_writes_to_Confluence_from_its_own_commands()
     {
@@ -393,7 +486,9 @@ public sealed class SkillContractTests
             $"docs-loop/SKILL.md must say `{pageId}` is publish's to write, not the skill's (§5.2).");
     }
 
-    private static string Directory { get; } = Locate();
+    private static string Root { get; } = Locate();
+
+    private static string Directory { get; } = Path.Combine(Root, "plugin", "skills");
 
     private static string SkillFile(string skill) => Path.Combine(Directory, skill, "SKILL.md");
 
@@ -518,6 +613,128 @@ public sealed class SkillContractTests
     }
 
     /// <summary>
+    /// The endpoint families named by <c>ConfluenceClient</c>'s own path literals, sorted and deduplicated:
+    /// <c>api/v2/pages</c> for all six spellings that reach a page, <c>rest/api/content</c> for all five
+    /// that reach v1 content, and so on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A path literal is matched only where it <em>opens</em> a string, which is what keeps the doc comments
+    /// out: the same file writes <c>/rest/api</c> and <c>GET /api/v2/spaces</c> in prose, and prose is not a
+    /// call. Only the segment after the API prefix is kept — the rest is a page id and a query string.
+    /// </para>
+    /// <para>
+    /// That segment is often a constant rather than a word, so the constants are read out of the same file
+    /// and the placeholder is resolved through them. An unresolved one throws rather than being dropped: a
+    /// family that quietly disappears from this set is exactly the vacuous pass
+    /// <see cref="The_endpoints_this_class_declares_are_the_ones_the_client_calls"/> exists to prevent.
+    /// </para>
+    /// </remarks>
+    private static IReadOnlyList<string> Endpoints()
+    {
+        // Before the read, not after: a client that has been renamed or moved reads back as a client
+        // that calls nothing, and an empty surface is caught by every canary ever written.
+        File.Exists(ClientFile).ShouldBeTrue(
+            $"No ConfluenceClient.cs at {ClientFile}. Retarget ClientFile — until then this class cannot "
+                + "say what the CLI calls, and the REST canary is unbounded.");
+
+        var source = File.ReadAllText(ClientFile);
+        var segments = Segments(source);
+        var families = new SortedSet<string>(StringComparer.Ordinal);
+
+        foreach (Match literal in EndpointLiteral().Matches(source))
+        {
+            var api = literal.Groups["api"].Value;
+            var family = literal.Groups["family"].Value;
+
+            if (!family.StartsWith('{'))
+            {
+                families.Add($"{api}/{family}");
+                continue;
+            }
+
+            var name = family.Trim('{', '}');
+
+            segments.TryGetValue(name, out var values).ShouldBeTrue(
+                $"ConfluenceClient builds a path from `{{{name}}}` and this test cannot say what it holds, "
+                    + "so that endpoint family would be dropped silently. Name it in a `const string "
+                    + "…Segment`, or in a local assigned from ones that are.");
+
+            foreach (var value in values!)
+            {
+                families.Add($"{api}/{value}");
+            }
+        }
+
+        return [.. families];
+    }
+
+    /// <summary>
+    /// Every name <see cref="Endpoints"/> may find in a path's family position, mapped to what it can hold:
+    /// the file's <c>const string</c> declarations, plus locals assigned from them.
+    /// </summary>
+    /// <remarks>
+    /// The locals matter because one endpoint picks its segment at run time — a reply goes to the inline or
+    /// the footer collection — so its path literal names a variable and nothing else in the file resolves
+    /// it. A local whose initializer contains a string of its own is not one of these: that is a path being
+    /// built, not a segment being chosen, and reading it as an alias would fold a whole path into the
+    /// family position.
+    /// </remarks>
+    private static Dictionary<string, string[]> Segments(string source)
+    {
+        var segments = ConstantDeclaration()
+            .Matches(source)
+            .Cast<Match>()
+            .DistinctBy(match => match.Groups["name"].Value, StringComparer.Ordinal)
+            .ToDictionary(
+                match => match.Groups["name"].Value,
+                match => new[] { match.Groups["value"].Value },
+                StringComparer.Ordinal);
+
+        foreach (Match local in LocalDeclaration().Matches(source))
+        {
+            var initializer = local.Groups["initializer"].Value;
+            if (initializer.Contains('"', StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var values = segments
+                .Where(segment => initializer.Contains(segment.Key, StringComparison.Ordinal))
+                .SelectMany(segment => segment.Value)
+                .ToArray();
+
+            if (values.Length > 0)
+            {
+                segments[local.Groups["name"].Value] = values;
+            }
+        }
+
+        return segments;
+    }
+
+    /// <summary>
+    /// A Confluence path where it opens a string literal, up to the end of its first segment. Linear, and it
+    /// runs over a file in this repository, but it carries a timeout anyway (MA0009).
+    /// </summary>
+    [GeneratedRegex(
+        """\$?"(?<api>api/v2|rest/api)/(?<family>[A-Za-z0-9\-]+|\{[A-Za-z0-9_]+\})""",
+        RegexOptions.ExplicitCapture,
+        1000)]
+    private static partial Regex EndpointLiteral();
+
+    /// <summary>A <c>const string</c> declaration and its value (MA0009 timeout as above).</summary>
+    [GeneratedRegex("""const string (?<name>\w+) = "(?<value>[^"]*)";""", RegexOptions.ExplicitCapture, 1000)]
+    private static partial Regex ConstantDeclaration();
+
+    /// <summary>A <c>var</c> declaration and its initializer, up to the statement's end (MA0009).</summary>
+    [GeneratedRegex("""var (?<name>\w+) = (?<initializer>[^;\n]*);""", RegexOptions.ExplicitCapture, 1000)]
+    private static partial Regex LocalDeclaration();
+
+    private static string ClientFile { get; } =
+        Path.Combine(Root, "src", "DocuMe.Core", "Confluence", "ConfluenceClient.cs");
+
+    /// <summary>
     /// Walks up to the directory holding <c>DocuMe.slnx</c>: the skills ship in the tree, so the test
     /// reads the shipped copy rather than a build artifact of it.
     /// </summary>
@@ -529,7 +746,7 @@ public sealed class SkillContractTests
         {
             if (File.Exists(Path.Combine(directory.FullName, "DocuMe.slnx")))
             {
-                return Path.Combine(directory.FullName, "plugin", "skills");
+                return directory.FullName;
             }
         }
 
