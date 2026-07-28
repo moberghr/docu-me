@@ -329,6 +329,8 @@ public sealed partial class CliReferencePageTests
             StringComparer.Ordinal);
 
         var gaps = new List<string>();
+        var excused = new List<string>();
+        var named = 0;
 
         foreach (var (path, invocations) in DocumentedInvocations())
         {
@@ -343,9 +345,18 @@ public sealed partial class CliReferencePageTests
                     continue;
                 }
 
-                var unknown = tokens.Skip(1)
+                var options = tokens.Skip(1)
                     .Where(token => token.StartsWith("--", StringComparison.Ordinal))
                     .Select(token => token.Split('=')[0])
+                    .ToList();
+
+                named += options.Count;
+
+                excused.AddRange(options
+                    .Where(IsPlaceholder)
+                    .Select(option => $"{path}:{line} — `{option}` (`docume {invocation}`)"));
+
+                var unknown = options
                     .Where(option => !IsPlaceholder(option))
                     .Where(option => !declared[command].Contains(option));
 
@@ -358,6 +369,27 @@ public sealed partial class CliReferencePageTests
             + Environment.NewLine + string.Join(Environment.NewLine, gaps);
 
         gaps.ShouldBeEmpty(because);
+
+        // The denominator for the exemption check below, which is empty either way on a sweep that
+        // read no options at all (iter175 — assert the population, not the finding count).
+        var thin = $"The whole sweep named only {named} options across every documented invocation. "
+            + "The option scan broke — a token no longer recognised as an option, or the invocation "
+            + "regex truncating before the flags — and the exemption check below now has almost "
+            + "nothing to be true of.";
+
+        named.ShouldBeGreaterThan(40, thin);
+
+        const string excusedNothing =
+            "IsPlaceholder() let a documented option skip the real-option check above, and it was "
+            + "measured excusing NOTHING when this assertion was written — which is the only state in "
+            + "which an exemption in code that nothing pairs with the tree is safe. The uppercase "
+            + "branch excuses `--Prune` exactly as readily as `--PATH`, so a capitalised spelling of a "
+            + "real flag leaves a reader following a command the CLI cannot parse, behind a check this "
+            + "sweep promises and would never have run. Either the token below is a genuine stand-in "
+            + "for a name — then narrow the branch to the spelling you mean and record what it stands "
+            + "in for — or it is a flag that does not exist and belongs in the gaps above. Excused:";
+
+        excused.ShouldBeEmpty(excusedNothing);
     }
 
     /// <summary>
@@ -596,6 +628,25 @@ public sealed partial class CliReferencePageTests
     }
 
     /// <summary>An <c>ALL-CAPS</c> or bracketed stand-in in prose claims nothing about the surface.</summary>
+    /// <remarks>
+    /// <para>
+    /// An exemption in code rather than a list, and it was unpaired: four branches, each silently
+    /// skipping the real-option check, and nothing asked what any of them excused.
+    /// <see cref="Every_documented_invocation_names_a_real_command_with_real_options"/> now requires
+    /// them to excuse NOTHING, which is what they were measured doing — 0 of the options the sweep
+    /// names. The harm is not the dead branch, it is the reverse: <c>--Prune</c> is excused while the
+    /// CLI declares <c>--prune</c>, and a capitalised spelling of a real flag at a swept site was
+    /// green across the whole suite, as were <c>--{flag}</c> and <c>--$flag</c>.
+    /// </para>
+    /// <para>
+    /// The <c>&lt;</c> branch cannot fire at all through this sweep, so it is decoration in the one
+    /// direction the assertion above cannot see: <see cref="Invocation"/>'s argument class excludes
+    /// <c>&lt;</c>, so <c>docume publish --&lt;flag&gt;</c> truncates to <c>publish --</c> before it
+    /// reaches here and the bare <c>--</c> is too short for any branch — reported as a gap, under a
+    /// message naming <c>--</c>. Kept because removing it removes nothing another assertion does not
+    /// already cover, and nothing could detect its return.
+    /// </para>
+    /// </remarks>
     private static bool IsPlaceholder(string option) =>
         option.Length > 2 && (char.IsUpper(option[2]) || option[2] is '<' or '{' or '$');
 
