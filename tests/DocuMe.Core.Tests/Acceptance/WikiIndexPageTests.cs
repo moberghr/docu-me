@@ -31,8 +31,11 @@ public sealed class WikiIndexPageTests
     private const string RootIndex = "docs/wiki/README.md";
 
     /// <summary>
-    /// The section directories a reader can reach. <c>_meta</c> is deliberately absent: it never
-    /// publishes (<c>wiki.exclude</c>), so an index linking it would link a page Confluence has not got.
+    /// The section directories a reader can reach, and the population every per-section fact below
+    /// iterates. Paired with the wiki itself by
+    /// <see cref="Every_section_the_wiki_ships_is_one_this_class_checks"/>, so <c>_meta</c> is absent
+    /// because <c>wiki.exclude</c> keeps it out of the tree that pairing reads — not because this
+    /// sentence says it should be.
     /// </summary>
     private static readonly string[] SectionDirectories = ["10-concepts", "20-reference", "30-automation"];
 
@@ -142,6 +145,58 @@ public sealed class WikiIndexPageTests
             + "four it dropped included the API key the model-driven workflows need. Unlisted:";
 
         missing.ShouldBeEmpty(message);
+    }
+
+    /// <summary>
+    /// Every section the wiki ships is one this class checks — the assertion a fourth section
+    /// directory fails.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="SectionDirectories"/> is not a description of the wiki, it is the enforcement
+    /// boundary: <see cref="Every_index_links_every_page_beside_it"/> iterates it to decide which index
+    /// pages to read at all, so a section outside it has no index read and its pages are linked from
+    /// nowhere with nothing to say so.
+    /// </para>
+    /// <para>
+    /// Measured before this fact existed, and the shape inverts the usual one. A fourth section linked
+    /// from nowhere passed the entire suite. The same section linked properly — from the root index,
+    /// with its own index linking its page — went <em>red</em>, because
+    /// <see cref="The_root_index_links_every_section"/> compares what that page links against this
+    /// list. The net punished the careful edit and ignored the negligent one.
+    /// </para>
+    /// <para>
+    /// The set is derived through <see cref="WikiTree"/> rather than from the directories on disk, so
+    /// what counts as a section is the tool's own answer to what publishes rather than a second opinion
+    /// that can drift from it. That is also what keeps <c>_meta</c> out: <c>wiki.exclude</c> drops it,
+    /// so no filter here has to.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_section_the_wiki_ships_is_one_this_class_checks()
+    {
+        var sections = WikiTree.Load(Path.Combine(RepoRoot, "docs", "wiki"))
+            .Pages
+            .Select(page => page.Path.Split('/'))
+            .Where(segments => segments.Length > 1)
+            .Select(segments => segments[0])
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        // Vacuous-pass guard: a tree holding no page under any directory would compare two empty sets
+        // and report every section covered.
+        sections.ShouldNotBeEmpty(
+            "No page loaded from a section directory, so this comparison is not reading the wiki.");
+
+        const string message =
+            "The wiki's sections and the list this class checks have come apart. Every per-section fact "
+            + "here iterates SectionDirectories, so a section missing from it gets no index read and "
+            + "its pages go unlinked with nothing to notice; a section listed here that the wiki no "
+            + "longer has leaves the root index pointing at nothing. Add or drop the one line, and link "
+            + "the section from docs/wiki/README.md in the same change.";
+
+        sections.ShouldBe(SectionDirectories.Order(StringComparer.Ordinal).ToList(), message);
     }
 
     [Fact]
