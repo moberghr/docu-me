@@ -45,10 +45,15 @@ public sealed partial class PackageFeedTests
         new(StringComparer.Ordinal) { ".git", ".mtk", "bin", "obj", "node_modules" };
 
     /// <summary>
-    /// The trees quoting a feed for a reader rather than for a runner: this suite has to name what it
-    /// caught, and the loop's own notes record the diagnosis in prose.
+    /// Trees exempted from the walk because they quote a feed for a reader rather than for a runner.
+    /// Empty, and <see cref="Every_skipped_tree_earns_its_exemption"/> is why: it held
+    /// <c>tests/</c> and <c>tools/</c> from the day this class was written, copied from
+    /// <see cref="RepositorySlugTests"/> along with a justification that is true there and false here.
+    /// A slug is quoted wrong on purpose all over both trees; a <c>nuget.pkg.github.com</c> URL and a
+    /// <c>dotnet tool restore</c> appear in neither, so the pair suppressed nothing and hid 49 files.
+    /// A test that has to quote a broken feed re-adds its tree here and earns it in the same change.
     /// </summary>
-    private static readonly string[] SkippedTrees = ["tests/", "tools/"];
+    private static readonly string[] SkippedTrees = [];
 
     private static readonly HashSet<string> ScannedExtensions =
         new(StringComparer.OrdinalIgnoreCase) { ".md", ".yml", ".yaml", ".json", ".mjs", ".sh" };
@@ -73,14 +78,9 @@ public sealed partial class PackageFeedTests
 
         foreach (var (file, lines) in restoring)
         {
-            var restore = Array.FindIndex(lines, Runs);
-            var source = Array.FindIndex(
-                lines,
-                line => !Prose(line) && line.Contains(AddSource, StringComparison.Ordinal));
-
-            if (source < 0 || source > restore)
+            if (Unsourced(lines))
             {
-                unsourced.Add($"{file}:{restore + 1}");
+                unsourced.Add($"{file}:{Array.FindIndex(lines, Runs) + 1}");
             }
         }
 
@@ -215,16 +215,95 @@ public sealed partial class PackageFeedTests
     }
 
     /// <summary>
+    /// Every tree in <see cref="SkippedTrees"/> suppresses at least one finding this class would
+    /// otherwise report.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An exemption is a blind spot bought on purpose, and it is only worth the price if it removes
+    /// something. Nothing paired this list with the tree, so the two entries it carried could sit
+    /// there being false: they were copied from <see cref="RepositorySlugTests"/>, whose regex those
+    /// trees really do offend, but this class matches a feed URL and a restore command and iter190
+    /// measured zero of either anywhere beneath <c>tests/</c> or <c>tools/</c>.
+    /// </para>
+    /// <para>
+    /// The assertion runs one way only. It never says which trees may be exempted — a tree that
+    /// genuinely quotes a broken feed stays exempt for as long as it does — it says an exemption that
+    /// removes nothing must not exist, because that one only hides the next real offender.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_skipped_tree_earns_its_exemption()
+    {
+        var declared = DeclaredOwner();
+        var walked = WalkedFiles();
+
+        // Anti-vacuity guard: a walk that read nothing makes every tree look unearned, which fails
+        // loudly, but a walk that read nothing is also why the message below would be wrong.
+        walked.ShouldNotBeEmpty("The walk found no file at all, so no exemption can be judged.");
+
+        var unearned = SkippedTrees
+            .Where(tree => !Suppresses(tree, walked, declared))
+            .ToList();
+
+        var message = "A tree is held out of this sweep without carrying anything the sweep would "
+            + "report, so it buys no accuracy and hides every feed URL and every unsourced restore "
+            + "written under it from now on. Delete the entry, or name the file that needed it:\n  "
+            + string.Join("\n  ", unearned);
+
+        unearned.ShouldBeEmpty(message);
+    }
+
+    /// <summary>Whether exempting <paramref name="tree"/> removes a finding this class would report.</summary>
+    private static bool Suppresses(string tree, List<string> walked, string declared)
+    {
+        var inside = walked
+            .Where(file => file.StartsWith(tree, StringComparison.Ordinal))
+            .ToList();
+
+        var wrongOwner = FeedUrls(inside)
+            .Any(url => !string.Equals(url.Owner, declared, StringComparison.Ordinal));
+
+        if (wrongOwner)
+        {
+            return true;
+        }
+
+        return inside
+            .Where(Executable)
+            .Select(file => File.ReadAllLines(Path.Combine(RepoRoot, file)))
+            .Any(Unsourced);
+    }
+
+    /// <summary>Whether these lines run the pinned restore with no feed configured before it.</summary>
+    private static bool Unsourced(string[] lines)
+    {
+        var restore = Array.FindIndex(lines, Runs);
+
+        if (restore < 0)
+        {
+            return false;
+        }
+
+        var source = Array.FindIndex(
+            lines,
+            line => !Prose(line) && line.Contains(AddSource, StringComparison.Ordinal));
+
+        return source < 0 || source > restore;
+    }
+
+    /// <summary>
     /// The files a runner executes, as opposed to the ones that describe them. CHANGELOG.md, PLAN.md and
     /// the wiki all quote <c>dotnet tool restore</c> in prose, and release.yml quotes it inside the
     /// release notes it writes; none of them runs it, and a sweep that cannot tell the difference reports
     /// five findings where there are none.
     /// </summary>
-    private static IEnumerable<string> ExecutableFiles()
-        => ShippedFiles().Where(file =>
-            file.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)
+    private static IEnumerable<string> ExecutableFiles() => ShippedFiles().Where(Executable);
+
+    private static bool Executable(string file)
+        => file.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)
             || file.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
-            || file.EndsWith(".sh", StringComparison.OrdinalIgnoreCase));
+            || file.EndsWith(".sh", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Whether a line runs the restore rather than mentioning it. A yaml comment and a backticked
@@ -236,15 +315,23 @@ public sealed partial class PackageFeedTests
     private static bool Prose(string line)
         => line.TrimStart().StartsWith('#') || line.Contains('`', StringComparison.Ordinal);
 
-    /// <summary>Every authored file a consumer or a runner acts on, tests and loop notes aside.</summary>
+    /// <summary>Every authored file a consumer or a runner acts on, exempted trees aside.</summary>
     private static List<string> ShippedFiles()
+        => WalkedFiles()
+            .Where(file => !SkippedTrees.Any(tree => file.StartsWith(tree, StringComparison.Ordinal)))
+            .ToList();
+
+    /// <summary>
+    /// The same walk with <see cref="SkippedTrees"/> not yet applied, so the exemption list can be
+    /// held to removing something rather than taken at its word.
+    /// </summary>
+    private static List<string> WalkedFiles()
     {
         var files = new List<string>();
         Walk(new DirectoryInfo(RepoRoot), string.Empty, files);
 
         return files
             .Where(file => ScannedExtensions.Contains(Path.GetExtension(file)))
-            .Where(file => !SkippedTrees.Any(tree => file.StartsWith(tree, StringComparison.Ordinal)))
             .ToList();
     }
 
@@ -264,9 +351,11 @@ public sealed partial class PackageFeedTests
         }
     }
 
-    private static IEnumerable<FeedUrl> FeedUrls()
+    private static IEnumerable<FeedUrl> FeedUrls() => FeedUrls(ShippedFiles());
+
+    private static IEnumerable<FeedUrl> FeedUrls(IEnumerable<string> files)
     {
-        foreach (var file in ShippedFiles())
+        foreach (var file in files)
         {
             var lines = File.ReadAllLines(Path.Combine(RepoRoot, file));
 

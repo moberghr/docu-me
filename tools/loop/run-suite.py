@@ -86,7 +86,7 @@ def failing_from_stdout(text):
 # project dropped from the solution, a filter left in place, a runner that collected nothing. Raise
 # it when the suite legitimately grows; lowering it is a deliberate act that needs a reason in the
 # commit message, exactly like check-state-size.py's MEASURED constants.
-EXPECTED_AT_LEAST = 1443  # iter189: +2, §9.6's CI half was swept over templates/ alone
+EXPECTED_AT_LEAST = 1445  # iter190: +2, every SkippedTrees exemption must remove a finding
 
 
 def verdict(returncode, blob):

@@ -84,6 +84,54 @@ public sealed partial class RepositorySlugTests
     }
 
     /// <summary>
+    /// Every tree in <see cref="SkippedTrees"/> suppresses at least one finding this sweep would
+    /// otherwise report.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The exemption above is justified in prose — those trees quote the wrong owner on purpose — and
+    /// until iter190 nothing checked that the prose was still true, nor that a third entry added later
+    /// would be. Both are earned today: <c>tests/</c> carries eight owners that are not the declared
+    /// one and <c>tools/</c> four, <c>rule-8-2a-paste.md</c> among them.
+    /// </para>
+    /// <para>
+    /// The assertion runs one way only. It never says which trees may be exempted, only that an
+    /// exemption removing nothing must not exist — that one is a blind spot bought for no accuracy,
+    /// and the wrong slug has already shipped twice from places nobody thought to look.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_skipped_tree_earns_its_exemption()
+    {
+        var declared = DeclaredOwner();
+        var walked = WalkedFiles();
+
+        // Anti-vacuity guard: a walk that read nothing makes every tree look unearned, which fails
+        // loudly, but for a reason the message below would describe wrongly.
+        walked.ShouldNotBeEmpty("The walk found no file at all, so no exemption can be judged.");
+
+        var unearned = SkippedTrees
+            .Where(tree => !Suppresses(tree, walked, declared))
+            .ToList();
+
+        var message = "A tree is held out of this sweep without carrying a single reference the sweep "
+            + "would report, so it buys no accuracy and hides every wrong slug written under it from "
+            + "now on. Delete the entry, or name the file that needed it:\n  "
+            + string.Join("\n  ", unearned);
+
+        unearned.ShouldBeEmpty(message);
+    }
+
+    /// <summary>Whether exempting <paramref name="tree"/> removes a finding this sweep would report.</summary>
+    private static bool Suppresses(string tree, List<string> walked, string declared)
+    {
+        var inside = walked.Where(file => file.StartsWith(tree, StringComparison.Ordinal));
+
+        return References(inside)
+            .Any(reference => !string.Equals(reference.Owner, declared, StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// The classification itself, on one line each of every shape the tree carries.
     /// </summary>
     /// <remarks>
@@ -133,9 +181,11 @@ public sealed partial class RepositorySlugTests
     /// repository is telling a reader where to look, so a wrong owner in a sentence is as dead as one in
     /// a fence. The two trees that discuss the wrong spelling are excluded by path instead.
     /// </remarks>
-    private static IEnumerable<Reference> References()
+    private static IEnumerable<Reference> References() => References(ScannedFiles());
+
+    private static IEnumerable<Reference> References(IEnumerable<string> files)
     {
-        foreach (var file in ScannedFiles())
+        foreach (var file in files)
         {
             var lines = File.ReadAllLines(Path.Combine(RepoRoot, file));
 
@@ -150,13 +200,21 @@ public sealed partial class RepositorySlugTests
     }
 
     private static List<string> ScannedFiles()
+        => WalkedFiles()
+            .Where(file => !SkippedTrees.Any(tree => file.StartsWith(tree, StringComparison.Ordinal)))
+            .ToList();
+
+    /// <summary>
+    /// The same walk with <see cref="SkippedTrees"/> not yet applied, so the exemption list can be
+    /// held to removing something rather than taken at its word.
+    /// </summary>
+    private static List<string> WalkedFiles()
     {
         var files = new List<string>();
         Walk(new DirectoryInfo(RepoRoot), string.Empty, files);
 
         return files
             .Where(file => ScannedExtensions.Contains(Path.GetExtension(file)))
-            .Where(file => !SkippedTrees.Any(tree => file.StartsWith(tree, StringComparison.Ordinal)))
             .ToList();
     }
 
