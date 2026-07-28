@@ -86,7 +86,7 @@ def failing_from_stdout(text):
 # project dropped from the solution, a filter left in place, a runner that collected nothing. Raise
 # it when the suite legitimately grows; lowering it is a deliberate act that needs a reason in the
 # commit message, exactly like check-state-size.py's MEASURED constants.
-EXPECTED_AT_LEAST = 1447  # iter191: +2, every declared reader-facing entry must reach the sweep
+EXPECTED_AT_LEAST = 1449  # iter192: +2, ShippedTree.Roots paired with the tree it claims to cover
 
 
 def verdict(returncode, blob):
