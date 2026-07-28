@@ -492,6 +492,58 @@ public sealed partial class CliReferencePageTests
     }
 
     /// <summary>
+    /// The sweep reads a file only where the extension filter matches, so that pattern is an exemption:
+    /// a file it does not match leaves <c>DocumentedInvocations()</c> without a word. Nothing collected
+    /// on it, and the one check that would have —
+    /// <see cref="Every_file_that_names_an_invocation_is_swept_or_declared_narrative"/> — bounds its own
+    /// walk with the same literal, so a branch taken out of the pattern leaves both nets looking through
+    /// the same hole.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both silent directions were measured rather than argued, full suite per cell
+    /// (<c>.mtk/paths-198/mutate-extension-bound.py</c>, 6 cells, twice). Taking <c>json</c> out of the
+    /// alternation was green: <c>schema</c> is a declared instruction root, its schema is the only
+    /// <c>.json</c> carrier, and the <c>docume drift --mark</c> it names simply left the sweep. And
+    /// <c>templates/tools/render-mermaid.mjs</c> — the renderer <c>docume init</c> writes into every
+    /// consumer repo — names <c>docume publish</c> twice; giving one of those a flag the CLI does not
+    /// have was green too, because <c>.mjs</c> was not in the pattern. Dropping <c>md</c> or <c>yml</c>
+    /// was already caught by the floor above, so only the small branches were free.
+    /// </para>
+    /// <para>
+    /// Scoped to the nine declared roots rather than the whole tree on purpose: those are the paths this
+    /// class has already called consumer-facing, so a file sitting there and escaping the sweep on its
+    /// extension alone is the harm worth failing on. A carrier under an undeclared root is the sibling
+    /// check's job, and it is still bounded by this same filter — recorded, not fixed here.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_carrier_inside_a_declared_instruction_root_is_one_the_sweep_reads()
+    {
+        var (read, escaped) = RootCarriers();
+
+        // The denominator: both assertions below pass on a walk that found nothing (iter175).
+        read.Count.ShouldBeGreaterThan(InstructionRoots.Length);
+
+        const string unswept =
+            "A file inside a declared instruction root names a `docume` invocation and the sweep does "
+            + "not read it: the extension filter does not match it, so DocumentedInvocations() drops it "
+            + "and the population check that audits that sweep drops it too, both bounded by that one "
+            + "pattern. Whoever follows the invocation in this file gets no warning the day the flag is "
+            + "renamed out from under it. Add the extension to Instructional(), or move the file out of "
+            + "InstructionRoots. Unswept:";
+
+        escaped.ShouldBeEmpty(unswept);
+
+        const string drifted =
+            "The extension-blind walk of the instruction roots and the sweep itself no longer agree on "
+            + "which files carry invocations. One of the two has gone blind, and whichever it is, the "
+            + "assertion above is now measuring the other one's population instead of its own.";
+
+        read.ShouldBe(DocumentedInvocations().Keys, ignoreOrder: true, customMessage: drifted);
+    }
+
+    /// <summary>
     /// The claim table is hand-listed, so it rots in two directions: a file renamed out from under a row
     /// makes that row's trial report blind for a reason that has nothing to do with the page, and a row
     /// quietly deleted shrinks the sweep without failing it.
@@ -783,11 +835,20 @@ public sealed partial class CliReferencePageTests
         }
     }
 
-    private static IEnumerable<string> InstructionFiles()
+    /// <summary>The files the sweep reads: the declared roots, filtered by extension.</summary>
+    private static IEnumerable<string> InstructionFiles() =>
+        RootFiles().Where(file => Instructional().IsMatch(Path.GetExtension(file)));
+
+    /// <summary>
+    /// Every file under a declared instruction root, whatever its extension. The one enumeration of
+    /// those roots: the sweep above is this filtered by extension, so the check that the filter
+    /// excuses nothing cannot end up reading a different tree than the sweep does.
+    /// </summary>
+    private static IEnumerable<string> RootFiles()
     {
         foreach (var root in InstructionRoots)
         {
-            var path = Path.Combine(RepoRoot, root.Replace('/', Path.DirectorySeparatorChar));
+            var path = Path.Combine(RepoRoot, Native(root));
 
             if (File.Exists(path))
             {
@@ -801,7 +862,6 @@ public sealed partial class CliReferencePageTests
             }
 
             var files = Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
-                .Where(file => Instructional().IsMatch(Path.GetExtension(file)))
                 .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
 
             foreach (var file in files)
@@ -809,6 +869,36 @@ public sealed partial class CliReferencePageTests
                 yield return file;
             }
         }
+    }
+
+    /// <summary>
+    /// Every file inside a declared instruction root that names an invocation, split by whether the
+    /// extension filter lets the sweep read it.
+    /// </summary>
+    private static (List<string> Read, List<string> Escaped) RootCarriers()
+    {
+        var read = new List<string>();
+        var escaped = new List<string>();
+
+        foreach (var file in RootFiles())
+        {
+            if (KeptInvocations(File.ReadAllLines(file)).Count == 0)
+            {
+                continue;
+            }
+
+            var relative = Path.GetRelativePath(RepoRoot, file).Replace('\\', '/');
+
+            if (Instructional().IsMatch(Path.GetExtension(file)))
+            {
+                read.Add(relative);
+                continue;
+            }
+
+            escaped.Add(relative);
+        }
+
+        return (read, escaped);
     }
 
     /// <summary>The indented lines under a named help header, up to the first that is not one.</summary>
@@ -854,7 +944,9 @@ public sealed partial class CliReferencePageTests
     [GeneratedRegex(@"(?:^|[\s`(""'>*-])docume (?<args>[^\n`|;&)""'<\\]*)", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 2000)]
     private static partial Regex Invocation();
 
-    [GeneratedRegex(@"^\.(md|ya?ml|json)$", RegexOptions.ExplicitCapture | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    // `.mjs` is here for one shipped file: templates/tools/render-mermaid.mjs, which `docume init`
+    // scaffolds into a consumer repo and which names `docume publish` in its own header comments.
+    [GeneratedRegex(@"^\.(md|ya?ml|json|mjs)$", RegexOptions.ExplicitCapture | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Instructional();
 
     [GeneratedRegex(@"\s+", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
