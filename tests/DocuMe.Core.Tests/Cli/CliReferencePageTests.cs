@@ -75,6 +75,11 @@ public sealed partial class CliReferencePageTests
         ".claude/rules",
         ".claude/references",
         "src",  // 25 of its 59 invocations are console lines and page bodies, printed at a real user.
+
+        // The published documentation pages. Copy-pasteable install and lifecycle commands, aimed at
+        // exactly the reader this class protects, so they are swept rather than declared narrative.
+        "docs/index.html",
+        "docs/how-it-works.html",
     ];
 
     /// <summary>
@@ -1231,7 +1236,12 @@ public sealed partial class CliReferencePageTests
     // scaffolds into a consumer repo and which names `docume publish` in its own header comments.
     // `.cs` and `.csproj` are here for the `src` root: the strings the CLI prints telling a user what to
     // run next, and the csproj comment naming what `docume init` scaffolds.
-    [GeneratedRegex(@"^\.(md|ya?ml|json|mjs|cs|csproj)$", RegexOptions.ExplicitCapture | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    // `.html` is here for the two published documentation pages, whose terminal blocks carry the same
+    // install and lifecycle commands the README does. A command line inside one of them holds no inline
+    // markup, deliberately: `<span>` between the command and its flag ends Invocation()'s argument
+    // capture, and the flag after it would reach neither OptionsOf() nor EscapedOptions() — swept in
+    // name and checked by nothing.
+    [GeneratedRegex(@"^\.(md|ya?ml|json|mjs|cs|csproj|html)$", RegexOptions.ExplicitCapture | RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex Instructional();
 
     [GeneratedRegex(@"\s+", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]

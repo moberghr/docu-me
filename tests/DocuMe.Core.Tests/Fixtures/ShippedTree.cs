@@ -67,6 +67,10 @@ internal static class ShippedTree
         ["docs/plans"] = "dated implementation records. CARRIES A CLAIM, and correcting a promise must "
             + "not mean rewriting what was planned on the day.",
         ["docs/specs"] = "dated specifications, excluded for the same reason as docs/plans. CARRIES A CLAIM.",
+        ["docs/assets"] = "the stylesheet and brand SVGs the docs/*.html pages reference. Presentation "
+            + "only: it carries no prose, so it can state nothing about configuration. The pages "
+            + "themselves are outside this sweep structurally — .html and .css are not swept Extensions "
+            + "— and their claims are held by the same wiki pages they are written from.",
         ["CLAUDE.md"] = "engineering standards for agents working on DocuMe, not on a consumer's repo.",
         ["CODE_INDEX.md"] = "a generated map of this repository's own source.",
         ["GATES.md"] = "human-gate instructions for Mirko. CARRIES A CLAIM: three `confluence.*` loop "

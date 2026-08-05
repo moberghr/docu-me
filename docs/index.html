@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocuMe — A docs lifecycle for repo-based wikis · Moberg</title>
+<meta name="description" content="DocuMe keeps a Confluence wiki in step with the repository it documents. Markdown in the repo, published by a .NET tool; approval by label, feedback by comment, staleness by source globs. Every generated change arrives as a pull request.">
+<meta property="og:title" content="DocuMe · Moberg — A docs lifecycle for repo-based wikis">
+<meta property="og:description" content="Your documentation lives in the repository. Confluence is the read surface.">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="container nav-inner">
+    <a class="brand" href="index.html">
+      <img class="brand-wordmark wm-light" src="assets/logo-wordmark-dark.svg" alt="Moberg" height="20">
+      <img class="brand-wordmark wm-dark" src="assets/logo-wordmark.svg" alt="Moberg" height="20">
+      <span class="brand-sep">·</span>
+      <span class="brand-product">DocuMe</span>
+    </a>
+    <div class="nav-links">
+      <a href="#lifecycle">Lifecycle</a>
+      <a href="#converter">Converter</a>
+      <a href="#automation">Automation</a>
+      <a href="#install">Install</a>
+      <a href="how-it-works.html">Reference</a>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">◐</button>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container">
+    <div class="hero-eyebrow animate"><span class="dot"></span> Serious engineering, infinite possibilities</div>
+    <h1 class="animate" style="--i:1">Your documentation lives in the repository.<br><em>Confluence is the read surface.</em></h1>
+    <p class="hero-sub animate" style="--i:2">
+      DocuMe publishes repo markdown to Confluence Cloud, records which pages a human approved, revokes
+      that approval when the content changes, brings reviewers' comments back as pull requests, and tells
+      you which pages went stale when the code they describe moved.
+    </p>
+    <div class="hero-actions animate" style="--i:3">
+      <a class="btn btn--primary" href="#install">Get started</a>
+      <a class="btn btn--secondary" href="how-it-works.html">Read the reference</a>
+    </div>
+    <div class="hero-stats animate" style="--i:4">
+      <span>7 commands</span>
+      <span>3 Claude skills</span>
+      <span>6 workflow templates</span>
+      <span>28 golden conversion cases</span>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+  <div class="terminal animate" style="--i:5">
+    <div class="terminal-bar"><i></i><i></i><i></i><span class="label">the quickstart, end to end</span></div>
+<pre><code><span class="k-dim"># once per repository</span>
+<span class="k-green">$</span> docume init --space DOCS --base-url https://acme.atlassian.net/wiki
+
+<span class="k-dim"># every page converted; failures and degradations reported; nothing written</span>
+<span class="k-green">$</span> docume convert docs/wiki
+
+<span class="k-dim"># the whole plan: created / updated / skipped / orphaned</span>
+<span class="k-green">$</span> docume publish --dry-run
+
+<span class="k-dim"># publish, then let the lifecycle run</span>
+<span class="k-green">$</span> docume publish
+
+<span class="k-dim"># approvals back into state.json; then label the pages whose code moved</span>
+<span class="k-green">$</span> docume sync --labels
+<span class="k-green">$</span> docume drift --mark
+
+<span class="k-dim"># what is published, what drifted, whether this repo can publish at all</span>
+<span class="k-green">$</span> docume status</code></pre>
+  </div>
+</div>
+
+<section class="section" id="problem">
+  <div class="container">
+    <div class="sec-head"><span class="sec-num">01</span> The problem</div>
+    <h2>A wiki nobody trusts is worse than no wiki.</h2>
+    <p class="lede">
+      Three failures do the damage, and none of them announces itself. Documentation drifts from the code
+      silently. Nobody can tell which pages were ever read by a human. And a reviewer's correction dies in a
+      comment thread that no engineer subscribes to.
+    </p>
+
+    <div class="grid grid--3">
+      <div class="card">
+        <span class="card-num">01</span>
+        <h3>Drift is invisible</h3>
+        <p>
+          A page describing a service that was refactored last quarter looks exactly like a page that is
+          still true. Nothing in the wiki knows what code a page came from, so nothing can notice when that
+          code moves.
+        </p>
+      </div>
+      <div class="card">
+        <span class="card-num">02</span>
+        <h3>Approval is folklore</h3>
+        <p>
+          "Someone reviewed this" is a thing people remember, not a thing the system records. And when the
+          page is edited afterwards, the memory survives the edit.
+        </p>
+      </div>
+      <div class="card">
+        <span class="card-num">03</span>
+        <h3>Feedback has nowhere to go</h3>
+        <p>
+          A reviewer who spots an error comments on the page. The page is not the source, so the comment has
+          to be carried into the repo by hand, by someone who saw it. Usually nobody does.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section--alt anchor-target" id="lifecycle">
+  <div class="container">
+    <div class="sec-head"><span class="sec-num">02</span> The lifecycle</div>
+    <h2>Five stages, three kinds of actor.</h2>
+    <p class="lede">
+      A model generates and rewrites and opens pull requests. A human approves and comments in Confluence.
+      The CLI carries each gesture between the repo and the space. The split is the design: no model ever
+      calls the Confluence API, so nothing a model does can change a page there.
+    </p>
+
+    <div class="flow">
+      <div class="flow-step">
+        <span class="n">01</span>
+        <h4>Generate</h4>
+        <p><code>/docs-loop</code> reads the code, writes one page per run, cites every claim.</p>
+        <span class="flow-actor">Model → PR</span>
+      </div>
+      <div class="flow-step">
+        <span class="n">02</span>
+        <h4>Publish</h4>
+        <p><code>docume publish</code> converts the tree and writes the pages that changed.</p>
+        <span class="flow-actor">CLI → Confluence</span>
+      </div>
+      <div class="flow-step">
+        <span class="n">03</span>
+        <h4>Approve</h4>
+        <p>A reviewer adds the <code>approved</code> label. <code>sync --labels</code> records it.</p>
+        <span class="flow-actor">Human → label</span>
+      </div>
+      <div class="flow-step">
+        <span class="n">04</span>
+        <h4>Feedback</h4>
+        <p>A comment becomes an inbox item, verified against the code, answered or declined.</p>
+        <span class="flow-actor">Human → comment</span>
+      </div>
+      <div class="flow-step">
+        <span class="n">05</span>
+        <h4>Refresh</h4>
+        <p><code>/docs-refresh</code> rewrites the pages whose sources moved, and the loop closes.</p>
+        <span class="flow-actor">Model → PR</span>
+      </div>
+    </div>
+
+    <div style="margin-top:44px" class="grid grid--2">
+      <div class="card card--hero">
+        <span class="card-label">The one-way rule</span>
+        <h3>The repo is the source of truth</h3>
+        <p>
+          A page edited by hand in Confluence is overwritten the next time its markdown changes, and DocuMe
+          never reads a page body back as content. That is the design, not a limitation: everything that
+          reaches a page went through a pull request first.
+        </p>
+        <p style="margin-top:12px">
+          Everything a reviewer adds that is <strong>not</strong> body text — labels, comments — travels the
+          other way and lands in the repo as state or as an inbox item.
+        </p>
+      </div>
+      <div class="card">
+        <span class="card-label">Two consequences, stated up front</span>
+        <ul class="clean">
+          <li><code>publish --prune</code> deletes pages whose markdown is gone. It asks first, needs a terminal, and refuses to run in CI.</li>
+          <li>A space DocuMe writes into should hold nothing but DocuMe's output. Start with a fresh empty space.</li>
+          <li>Machine edits are free: the injected banner is excluded from the content hash, so a new publish date never costs an approval.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="tiers">
+  <div class="container">
+    <div class="sec-head"><span class="sec-num">03</span> Two tiers</div>
+    <h2>Deterministic where it must be, generative where it helps.</h2>
+    <p class="lede">
+      The boundary is enforced, not advisory: only the CLI holds credentials, and every skill's output is a
+      pull request a human reads before anything publishes.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Tier</th><th>What it is</th><th>What it may do</th><th>Reaches Confluence</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>docume</code></td>
+            <td>A .NET 10 CLI, distributed as a <code>dotnet tool</code></td>
+            <td>Deterministic work: convert, publish, sync, diff, report. No model in the loop.</td>
+            <td><span class="badge badge--blue">Yes — the only thing that does</span></td>
+          </tr>
+          <tr>
+            <td>DocuMe plugin</td>
+            <td>Three Claude Code skills</td>
+            <td>Judgement: writing a page, deciding whether a reviewer is right, rewriting a page whose code moved.</td>
+            <td><span class="badge badge--neutral">Never — output is a PR</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <span class="callout-title">Where repo-specific knowledge lives</span>
+      Not in either tier. Your domain list, tone, audience and page structure live in the consumer repo, in
+      <code>docume.json</code> and <code>docs/wiki/_meta/STYLE.md</code>, which every skill reads at start.
+      That is what lets one tool serve many repositories without carrying assumptions about any of them.
+    </div>
+  </div>
+</section>
+
+<section class="section section--alt anchor-target" id="approval">
+  <div class="container">
+    <div class="sec-head"><span class="sec-num">04</span> Approval and drift</div>
+    <h2>Two independent questions, tracked two different ways.</h2>
+    <p class="lede">
+      A page can be approved and drifted at the same time. That combination is exactly the one worth
+      finding: somebody signed off on a description that is no longer true.
+    </p>
+
+    <div class="grid grid--2">
+      <div class="card">
+        <span class="card-label">Approval</span>
+        <h3>Has a human read this page?</h3>
+        <p>
+          Answered by a label a reviewer adds in Confluence, recorded into <code>state.json</code> against the
+          page version it was approved at. Invalidated by a content change: DocuMe removes the label, archives
+          the approval to <code>history</code>, and moves the page to <code>needs-review</code>.
+        </p>
+        <p style="margin-top:12px">
+          The hash is taken over the converted body <strong>before</strong> the banner is injected, so editing
+          a sentence invalidates and a new publish date does not. Reparenting does not either: where a page
+          hangs is not what a reviewer approved.
+        </p>
+      </div>
+      <div class="card">
+        <span class="card-label">Drift</span>
+        <h3>Has the code this page describes moved?</h3>
+        <p>
+          Answered by diffing two revisions against each page's <code>sources</code> globs. The baseline is the
+          commit the wiki content was last <em>generated</em> against, not the commit it was last published
+          from — using the publish sha would report zero drift on any repo that publishes on every merge.
+        </p>
+        <p style="margin-top:12px">
+          Marking is labels and a dashboard row, never a page-body edit. Editing bodies to add a staleness
+          banner would bump every page version and revoke every approval in the space on the first nightly run.
+        </p>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:24px">
+      <span class="callout-title">An honest field</span>
+      <code>approvedBy</code> reads <code>unknown</code> by design. Confluence Cloud exposes no label author
+      anywhere the API can reach it, and filling the field with the account DocuMe authenticates as would put
+      a fabricated approver into an audit trail. The label itself is the gesture that counts.
+    </div>
+  </div>
+</section>
+
+<section class="section anchor-target" id="converter">
+  <div class="container">
+    <div class="sec-head"><span class="sec-num">05</span> The converter</div>
+    <h2>Fail loud, or publish a page that quietly lost a section.</h2>
+    <p class="lede">
+      A custom Markdig renderer emits Confluence storage format directly. Not markdown → HTML → regex:
+      storage format is not HTML, and every layer of that pipeline loses something the next one cannot
+      recover.
+    </p>
+
+    <div class="grid grid--3">
+      <div class="card">
+        <span class="card-num">Converts</span>
+        <h3>Silent</h3>
+        <p>
+          The overwhelming majority. Headings, GFM tables, code macros with language mapping, GitHub alert
+          panels, task lists, internal links resolved by title, images with widths, mermaid rendered to SVG
+          attachments.
+        </p>
+      </div>
+      <div class="card">
+        <span class="card-num">Degrades</span>
+        <h3>Converts, and says so</h3>
+        <p>
+          Seven named codes, each reported per page with the dialect that triggered it. Storage format
+          cannot express the construct, so the alternative to a warning is a quiet difference between the
+          markdown and the page.
+        </p>
+      </div>
+      <div class="card">
+        <span class="card-num">Fails</span>
+        <h3>The page does not convert</h3>
+        <p>
+          Reserved for constructs where guessing would publish something wrong: an unknown diagram dialect,
+          raw inline HTML, an unrecognized fence attribute. Better a red build than a silent hole.
+        </p>
+      </div>
+    </div>
+
+    <div class="grid grid--2" style="margin-top:24px">
+      <div class="card card--elevated">
+        <span class="card-label">The contract</span>
+        <h3>28 hand-reviewed golden cases</h3>
+        <p>
+          Each case is a markdown file and the storage format it must produce, reviewed by hand once and
+          asserted forever. A golden is never regenerated to make a failing test pass — the diff goes to a
+          human, because a converter that rewrites its own expectations has no contract at all.
+        </p>
+      </div>
+      <div class="card card--elevated">
+        <span class="card-label">Dogfooding</span>
+        <h3>DocuMe's own wiki clears the strict bar</h3>
+        <p>
+          Zero failures and zero degradations, with no accepted losses. A tool that documents itself using
+          constructs it converts badly is not making a good argument. The suite fails when someone edits a
+          page past that bar.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section--alt anchor-target" id="automation">
+  <div class="container">
+    <div class="sec-head"><span class="sec-num">06</span> Automation</div>
+    <h2>Six workflows, and every one of them writes through a pull request.</h2>
+    <p class="lede">
+      Scaffolded by <code>docume init</code>. Each adds the package feed, runs <code>dotnet tool restore</code>
+      and then the CLI through the repo-local manifest, so a workflow and a laptop run the same pinned version.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Workflow</th><th>Fires on</th><th>Does</th><th>Credentials</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>docs-publish.yml</code></td>
+            <td>push to the default branch, wiki paths</td>
+            <td>Publishes what changed since the last published sha, then refreshes the dashboard</td>
+            <td><span class="badge badge--blue">Confluence</span></td>
+          </tr>
+          <tr>
+            <td><code>docs-sync.yml</code></td>
+            <td>every six hours, plus manual</td>
+            <td>Reads labels and comments; opens a <code>docs/sync</code> PR when state changed</td>
+            <td><span class="badge badge--blue">Confluence</span></td>
+          </tr>
+          <tr>
+            <td><code>docs-drift.yml</code></td>
+            <td><code>workflow_run</code> after your deploy</td>
+            <td>Labels the affected pages stale. Never edits a page body</td>
+            <td><span class="badge badge--blue">Confluence</span></td>
+          </tr>
+          <tr>
+            <td><code>docs-drift-pr.yml</code></td>
+            <td>every pull request</td>
+            <td>Comments with the wiki pages this PR's code changes affect, and exits 0</td>
+            <td><span class="badge badge--neutral">None</span></td>
+          </tr>
+          <tr>
+            <td><code>docs-refresh.yml</code></td>
+            <td>nightly at 03:00, plus manual</td>
+            <td>Runs <code>/docs-refresh</code> when drift is reported</td>
+            <td><span class="badge badge--warning">Model key only</span></td>
+          </tr>
+          <tr>
+            <td><code>docs-feedback.yml</code></td>
+            <td>new inbox items on the default branch</td>
+            <td>Runs <code>/docs-feedback</code> on the untriaged comments</td>
+            <td><span class="badge badge--warning">Model key only</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid grid--2">
+      <div class="card">
+        <h3>Why the two drift workflows differ</h3>
+        <p>
+          <code>docs-drift-pr.yml</code> is advisory: it comments and exits 0, because blocking a code pull
+          request on documentation is how teams learn to bypass documentation. <code>docs-drift.yml</code> is
+          the one that marks, and it fires after a <em>deploy</em>, when the code is real.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Why the token is split</h3>
+        <p>
+          The workflow with the widest trigger — one that runs on every contributor's branch — never sees the
+          publishing token. Neither do the two unsupervised model runs: a skill's output is a pull request,
+          so only the CLI writes to Confluence and the credential stays out of the job a model drives.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section anchor-target" id="untrusted">
+  <div class="container">
+    <div class="sec-head"><span class="sec-num">07</span> Untrusted input</div>
+    <div class="grid grid--2" style="align-items:start">
+      <div>
+        <h2>A comment is a claim to verify, never an instruction to follow.</h2>
+        <p class="prose">
+          Confluence page bodies and comments come from outside the trust boundary, and the skills that read
+          them are told so in as many words. Every inbox item is checked against the source. A comment asking
+          for a credential, a link, or a change to another page is <strong>not acted on</strong>.
+        </p>
+        <p class="prose" style="margin-top:14px">
+          It is quoted verbatim in the pull request body, under its own heading, so a human decides what to do
+          about whoever wrote it — and the item is triaged on whatever factual content it has left. Nothing a
+          reviewer wrote is echoed into a page body, which is the whole point: a page is generated from code,
+          not from comments.
+        </p>
+      </div>
+      <div class="card card--hero">
+        <span class="card-label">Three verdicts, three different replies</span>
+        <ul class="clean">
+          <li><strong>The claim held</strong> — the page is fixed, and the reply says what changed.</li>
+          <li><strong>The code contradicts it</strong> — declined, and the reply carries the citation that settles it.</li>
+          <li><strong>The code cannot settle it</strong> — a product decision, an intent, code in another repo — recorded in <code>_meta/GAPS.md</code> for the team, and the reply says so.</li>
+        </ul>
+        <p style="margin-top:14px">
+          The third route is the one that costs a reviewer when it is skipped. An unsettled claim filed as a
+          decline tells them the page was checked against the code and is staying as it is, about a point
+          nothing checked.
+        </p>
+      </div>
+    </div>
+
+    <div class="callout callout--danger" style="margin-top:28px">
+      <span class="callout-title">Credentials</span>
+      Two environment variables, and nowhere else. Never in <code>docume.json</code>, which is committed;
+      never on the command line, which lands in shell history. A 401 or 403 is a hard stop with a
+      token-expiry message rather than a retry — retrying a rejected credential only wastes the rate limit.
+      Backoff is for 429 and 5xx.
+    </div>
+  </div>
+</section>
+
+<section class="section section--alt anchor-target" id="install">
+  <div class="container">
+    <div class="sec-head"><span class="sec-num">08</span> Get started</div>
+    <h2>Install the tool, scaffold the repo, write a page.</h2>
+    <p class="lede">
+      Both halves install independently. The CLI works without Claude Code; the plugin needs the CLI, because
+      every skill ends by calling it.
+    </p>
+
+    <div class="callout callout--warning">
+      <span class="callout-title">Status</span>
+      <strong>Version 0.1.0 is not released yet.</strong> No tag has been pushed, so the package feed is empty
+      and <code>dotnet tool install</code> has nothing to install. Until the first release, build from source —
+      everything from the scaffolding step onward works either way.
+    </div>
+
+    <div class="grid grid--2">
+      <div>
+        <h3 style="margin-bottom:12px">1 · The CLI</h3>
+        <div class="terminal">
+          <div class="terminal-bar"><i></i><i></i><i></i><span class="label">shell</span></div>
+<pre><code><span class="k-dim"># the feed authenticates every read,</span>
+<span class="k-dim"># including public packages</span>
+<span class="k-green">$</span> dotnet nuget add source \
+    https://nuget.pkg.github.com/moberghr/index.json \
+    <span class="k-blue">--name</span> moberg-github \
+    <span class="k-blue">--username</span> &lt;your-github-username&gt; \
+    <span class="k-blue">--password</span> &lt;a PAT with read:packages&gt; \
+    <span class="k-blue">--store-password-in-clear-text</span>
+
+<span class="k-green">$</span> dotnet tool install <span class="k-blue">--global</span> DocuMe.Cli
+<span class="k-green">$</span> docume --version</code></pre>
+        </div>
+      </div>
+      <div>
+        <h3 style="margin-bottom:12px">2 · The Claude Code plugin</h3>
+        <div class="terminal">
+          <div class="terminal-bar"><i></i><i></i><i></i><span class="label">claude code</span></div>
+<pre><code><span class="k-dim"># the repository is its own marketplace</span>
+<span class="k-green">&gt;</span> /plugin marketplace add moberghr/docu-me
+<span class="k-green">&gt;</span> /plugin install docume@docume</code></pre>
+        </div>
+        <h3 style="margin:24px 0 12px">3 · Scaffold and publish</h3>
+        <div class="terminal">
+          <div class="terminal-bar"><i></i><i></i><i></i><span class="label">from your repo root</span></div>
+<pre><code><span class="k-green">$</span> docume init --space DOCS --base-url https://acme.atlassian.net/wiki
+
+<span class="k-green">$</span> export DOCUME_CONFLUENCE_EMAIL=<span class="k-yellow">"you@acme.com"</span>
+<span class="k-green">$</span> export DOCUME_CONFLUENCE_TOKEN=<span class="k-yellow">"&lt;api token&gt;"</span>
+
+<span class="k-green">$</span> docume publish --dry-run</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid--3" style="margin-top:28px">
+      <div class="stat">
+        <div class="stat-value">13</div>
+        <div class="stat-label">targets <code>init</code> scaffolds — config, wiki skeleton, six workflows, the version pin, the render script</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">0</div>
+        <div class="stat-label">files it overwrites. <code>init</code> is idempotent; the two files it shares with you are merged, and every skip is reported</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">10.0.100</div>
+        <div class="stat-label">the .NET SDK floor. Node 20+ is needed only if your pages contain mermaid diagrams</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section anchor-target" id="status">
+  <div class="container">
+    <div class="sec-head"><span class="sec-num">09</span> Where it stands</div>
+    <h2>Feature-complete through M6. Adoption and a second target come next.</h2>
+    <p class="lede">
+      DocuMe is built against a milestone plan, and the plan is in the repository. This is where the work
+      actually is, not where it is hoped to be.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Milestone</th><th>Scope</th><th>State</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>M0 – M6</td>
+            <td>Solution and config, the converter and its golden corpus, the Confluence client and publish pipeline, labels and approval, comments and replies, drift and the dashboard, the plugin and the release workflow</td>
+            <td><span class="badge badge--success">Built, green</span></td>
+          </tr>
+          <tr>
+            <td>M7a</td>
+            <td>The publication-target seam: a target discriminator in config, capability declaration with loud refusals, interfaces at the five reader and executor boundaries. No second implementation</td>
+            <td><span class="badge badge--neutral">Planned</span></td>
+          </tr>
+          <tr>
+            <td>M7</td>
+            <td>Adoption on a real wiki: <code>init --adopt</code>, state migration, <code>sources</code> across the existing pages, workflows installed, team onboarding</td>
+            <td><span class="badge badge--neutral">Planned</span></td>
+          </tr>
+          <tr>
+            <td>M8</td>
+            <td>A GitHub-native target: PR review as the approval gesture, PR comments and labelled issues into the same inbox, <code>_meta/STATUS.md</code> as the reader surface, no Confluence credentials at all</td>
+            <td><span class="badge badge--neutral">Specified</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <span class="callout-title">What M8 changes, and what it does not</span>
+      Confluence supplies four capabilities and only the first is storage: the page store, the approval
+      gesture, the feedback channel, and the reader surface. The repo already provides the store, so a
+      repo-native mode is an <em>interaction surface</em>, not a second database. It changes no planner —
+      every planner is already a pure function over state plus an observation — and it inverts one accepted
+      loss: a PR review has an author, so <code>approvedBy</code> stops reading <code>unknown</code>.
+    </div>
+  </div>
+</section>
+
+<section class="section section--alt">
+  <div class="container">
+    <div class="sec-head"><span class="sec-num">10</span> Common questions</div>
+    <div class="grid grid--2">
+      <div class="card">
+        <h3>Can I keep editing pages in Confluence?</h3>
+        <p>
+          No, and the tool will not pretend otherwise. A hand edit survives until the page's markdown changes,
+          then it is gone. If a page needs to be editable in Confluence, it does not belong in a DocuMe space.
+        </p>
+      </div>
+      <div class="card">
+        <h3>What happens to an approval when I fix a typo?</h3>
+        <p>
+          It is revoked, the previous approval is archived to history, and the page moves to
+          <code>needs-review</code>. Approval tracks content, and a typo fix is a content change. Banner
+          refreshes, dashboard runs and reparenting are not.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Do I need Claude Code?</h3>
+        <p>
+          Not for the CLI half, which is the whole publish, sync, drift and dashboard story. The plugin is
+          what writes and rewrites pages; without it you write the markdown yourself and everything else
+          works the same.
+        </p>
+      </div>
+      <div class="card">
+        <h3>What if a page uses markdown Confluence cannot express?</h3>
+        <p>
+          It degrades with a named code and a report, or it fails the page outright. Which of the two depends
+          on whether guessing would publish something wrong. <code>docume convert</code> tells you before a
+          publish run does.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Do the diagrams need Node?</h3>
+        <p>
+          Only if you use mermaid. Fences are rendered to SVG and uploaded as attachments, named from a hash
+          of the diagram source, so an unrelated edit elsewhere on the page never renames the attachment.
+          Six diagram families render; anything else fails its page rather than publishing a broken image.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Can two repositories publish to one space?</h3>
+        <p>
+          They can, but orphan detection is per repo: <code>publish --prune</code> reads pages it has state
+          for. Give each repository its own space, or its own subtree, and prune after a full publish rather
+          than alongside a partial one.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container" style="text-align:center">
+    <h2 style="margin:0 auto 18px">Documentation that a build can fail on.</h2>
+    <p class="lede" style="margin:0 auto 30px">
+      Every claim on this page is asserted somewhere in the suite. That is the argument.
+    </p>
+    <div class="hero-actions" style="justify-content:center">
+      <a class="btn btn--primary" href="how-it-works.html">Read the reference</a>
+      <a class="btn btn--secondary" href="https://github.com/moberghr/docu-me">View on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container footer-inner">
+    <div>
+      <img class="footer-wordmark" src="assets/logo-wordmark.svg" alt="Moberg" height="18">
+      <div class="footer-tagline">Serious engineering, infinite possibilities · Reykjavík + Zagreb</div>
+    </div>
+    <div class="footer-links">
+      <a href="index.html">Overview</a>
+      <a href="how-it-works.html">Reference</a>
+      <a href="https://github.com/moberghr/docu-me">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var stored = null;
+
+    try { stored = localStorage.getItem('docume-theme'); } catch (error) { stored = null; }
+
+    // Light is the default in every context. Dark is only ever an explicit choice.
+    root.dataset.theme = stored === 'dark' ? 'dark' : 'light';
+
+    var toggle = document.getElementById('theme-toggle');
+
+    toggle.addEventListener('click', function () {
+      var next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      root.dataset.theme = next;
+      try { localStorage.setItem('docume-theme', next); } catch (error) { /* private mode */ }
+    });
+  })();
+</script>
+
+</body>
+</html>

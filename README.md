@@ -1,14 +1,39 @@
+<div align="center">
+
+<img src="docs/assets/logo-wordmark-dark.svg" alt="Moberg" height="22">
+
 # DocuMe
 
-A docs-lifecycle toolkit for repo-based wikis published to Confluence Cloud:
-**generate → publish → approve → feedback → refresh**.
+**Your documentation lives in the repository. Confluence is the read surface.**
 
-Your documentation is markdown in your repository. DocuMe publishes it to Confluence, records which pages a
-human approved, invalidates that approval when the content changes, brings reviewers' Confluence comments
-back as pull requests, and tells you which pages went stale when the code they describe moved.
+![.NET 10](https://img.shields.io/badge/.NET-10.0-430cda?style=flat-square)
+![dotnet tool](https://img.shields.io/badge/dotnet%20tool-docume-430cda?style=flat-square)
+![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-430cda?style=flat-square)
+![v0.1.0 unreleased](https://img.shields.io/badge/v0.1.0-unreleased-717A80?style=flat-square)
 
-**The repo is the source of truth.** Hand edits made in Confluence are overwritten on the next publish. That
-is the design, not a limitation: everything that reaches a page went through a pull request first.
+[Quickstart](#quickstart) · [Lifecycle](#the-lifecycle-after-the-first-publish) · [Commands](#commands) · [Skills](#skills) · [Docs pages](docs/index.html) · [Changelog](CHANGELOG.md)
+
+</div>
+
+---
+
+A docs-lifecycle toolkit for repo-based wikis published to Confluence Cloud. Markdown lives in your
+repository. DocuMe publishes it, records which pages a human approved, invalidates that approval when the
+content changes, brings reviewers' Confluence comments back as pull requests, and tells you which pages
+went stale when the code they describe moved.
+
+```mermaid
+flowchart LR
+  generate["generate<br/>/docs-loop"] --> publish["publish<br/>docume publish"]
+  publish --> approve["approve<br/>label in Confluence"]
+  approve --> feedback["feedback<br/>comment in Confluence"]
+  feedback --> refresh["refresh<br/>/docs-refresh"]
+  refresh --> publish
+```
+
+> [!IMPORTANT]
+> **The repo is the source of truth.** Hand edits made in Confluence are overwritten on the next publish.
+> That is the design, not a limitation: everything that reaches a page went through a pull request first.
 
 ## Two tiers
 
@@ -23,6 +48,8 @@ lives in your repo, in `docume.json` and `docs/wiki/_meta/STYLE.md`, which every
 ---
 
 ## Quickstart
+
+Seven steps, in order. Steps 0–4 are setup you do once; 5–7 are the loop you run from then on.
 
 ### 0. Prerequisites
 
@@ -53,6 +80,7 @@ dotnet tool install --global DocuMe.Cli
 docume --version
 ```
 
+> [!NOTE]
 > **Not published yet.** No `v0.1.0` tag has been pushed, so the feed is empty and the two lines above
 > have nothing to install. Until the first release, build from source: see
 > [Working on DocuMe itself](#working-on-docume-itself). Everything from step 3 on works either way.
@@ -125,8 +153,9 @@ the job's own `GITHUB_TOKEN` — which can read the package from a repository in
 cannot from another one. Without a feed the restore fails on the first docs job with NuGet's own wording,
 which never mentions DocuMe.
 
-**Never put either credential in `docume.json`.** That file is committed. DocuMe reads credentials from the
-environment and from nowhere else.
+> [!WARNING]
+> **Never put either credential in `docume.json`.** That file is committed. DocuMe reads credentials from
+> the environment and from nowhere else.
 
 ### 5. Write pages
 
@@ -192,8 +221,9 @@ unchanged are skipped.
 | **Refresh** | `/docs-refresh` rewrites the stale pages and opens `docs/refresh-<date>`. |
 | **Report** | `docume dashboard` regenerates a "Documentation Status" page in Confluence; `docume status` prints the same data in your terminal. |
 
-Every skill reads a Confluence comment as a **claim to verify against the code**, never as an instruction to
-follow. A comment body is untrusted input.
+> [!CAUTION]
+> Every skill reads a Confluence comment as a **claim to verify against the code**, never as an instruction
+> to follow. A comment body is untrusted input, and nothing a reviewer wrote is echoed into a page body.
 
 ## Commands
 
@@ -210,6 +240,9 @@ follow. A comment body is untrusted input.
 `--help` on any of them is the current truth. Every command exits non-zero on failure, and a 401 or 403 from
 Confluence is a hard stop with a token-expiry message rather than a retry.
 
+Three of the seven can write to Confluence — `publish`, `dashboard`, and `sync --reply` — and `drift --mark`
+writes labels. Everything else is read-only.
+
 ## Skills
 
 | Skill | What it does |
@@ -219,7 +252,23 @@ Confluence is a hard stop with a token-expiry message rather than a retry.
 | `/docs-feedback` | Verifies a reviewer's comment against the code; opens `docs/feedback-<date>` or declines with a citation. |
 
 All three end by putting `docume status --json` in the PR body, so the state of the wiki is visible in the
-pull request a reviewer is already reading.
+pull request a reviewer is already reading. All three also have the other ending, the one a nightly job has
+most nights: they stop without a branch, a commit or a pull request. An empty PR costs a reviewer more than
+it tells them.
+
+## Documentation
+
+| Where | What is in it |
+|---|---|
+| [`docs/index.html`](docs/index.html) | The overview page: the problem, the lifecycle, the two tiers, the install story |
+| [`docs/how-it-works.html`](docs/how-it-works.html) | Every command with its options, the config surface, the conversion contract, the workflows |
+| [`docs/wiki/`](docs/wiki/README.md) | DocuMe's own wiki, generated and published by DocuMe |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed, per release |
+| [`PLAN.md`](PLAN.md) | The build spec, milestone by milestone |
+| [`plugin/README.md`](plugin/README.md) | The plugin's own conventions |
+
+The two HTML pages are self-contained and open straight from disk; they are also what GitHub Pages would
+serve from `docs/`.
 
 ## Working on DocuMe itself
 
@@ -249,5 +298,10 @@ commit before the tag: `Directory.Build.props`, `plugin/.claude-plugin/plugin.js
 step refuses the release if any of the three disagrees with the tag, and the release notes carry the
 marketplace entry with `ref` already filled in.
 
-See [`CHANGELOG.md`](CHANGELOG.md) for what changed, [`PLAN.md`](PLAN.md) for the build spec, and
-[`plugin/README.md`](plugin/README.md) for the plugin's own conventions.
+---
+
+<div align="center">
+
+**Moberg** — Serious engineering, infinite possibilities · Reykjavík + Zagreb
+
+</div>

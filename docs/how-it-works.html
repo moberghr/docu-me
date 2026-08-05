@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocuMe reference — every command, field and contract · Moberg</title>
+<meta name="description" content="The DocuMe reference: all seven CLI commands with their options, the docume.json and state.json surface, the markdown-to-storage-format conversion contract, the approval state machine, the three Claude skills and the six scaffolded workflows.">
+<meta property="og:title" content="DocuMe reference · Moberg">
+<meta property="og:description" content="Every command, every config field, the conversion contract, the workflows.">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="container nav-inner">
+    <a class="brand" href="index.html">
+      <img class="brand-wordmark wm-light" src="assets/logo-wordmark-dark.svg" alt="Moberg" height="20">
+      <img class="brand-wordmark wm-dark" src="assets/logo-wordmark.svg" alt="Moberg" height="20">
+      <span class="brand-sep">·</span>
+      <span class="brand-product">DocuMe</span>
+    </a>
+    <div class="nav-links">
+      <a href="index.html">Overview</a>
+      <a href="how-it-works.html" class="is-current">Reference</a>
+      <a href="https://github.com/moberghr/docu-me">GitHub</a>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle colour theme">◐</button>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" style="padding:64px 0 28px">
+  <div class="container">
+    <div class="hero-eyebrow"><span class="dot"></span> Reference</div>
+    <h1>Every command,<br><em>field and contract</em>.</h1>
+    <p class="hero-sub">
+      What DocuMe does, in the detail you need when something behaves unexpectedly. Read the
+      <a href="index.html">overview</a> first if you have not met the lifecycle yet.
+    </p>
+  </div>
+</header>
+
+<div class="container section section--tight">
+  <div class="layout">
+
+    <aside class="toc">
+      <div class="toc-title">Contents</div>
+      <ol>
+        <li><a href="#commands">The commands</a></li>
+        <li><a href="#writes">What writes where</a></li>
+        <li><a href="#config">Configuration</a></li>
+        <li><a href="#state">State and frontmatter</a></li>
+        <li><a href="#conversion">The conversion contract</a></li>
+        <li><a href="#mermaid">Mermaid</a></li>
+        <li><a href="#approval">The approval machine</a></li>
+        <li><a href="#skills">The skills</a></li>
+        <li><a href="#workflows">The workflows</a></li>
+        <li><a href="#action">The composite action</a></li>
+        <li><a href="#security">The security model</a></li>
+      </ol>
+    </aside>
+
+    <main>
+
+      <!-- 01 -->
+      <section class="anchor-target" id="commands" style="margin-bottom:72px">
+        <div class="sec-head"><span class="sec-num">01</span> The commands <span class="sec-count">seven</span></div>
+        <h2>Seven commands, and only four can write.</h2>
+        <p class="prose" style="margin-bottom:24px">
+          The root command carries nothing but <code>--help</code> and <code>--version</code>; every option
+          below belongs to one command. A bare invocation prints the command list rather than exiting
+          silently.
+        </p>
+
+        <div class="callout">
+          <span class="callout-title">Running the pinned tool</span>
+          <code>dotnet tool run</code> keeps <code>-?</code>, <code>-h</code> and <code>--help</code> for
+          itself, so <code>dotnet tool run docume --help</code> prints the SDK's help and never reaches
+          DocuMe. Put <code>--</code> ahead of the arguments to forward them through:
+          <code>dotnet tool run docume -- drift --help</code>. <code>--version</code> is not one of the
+          wrapper's options and needs no <code>--</code>.
+        </div>
+
+        <p class="prose" style="margin-bottom:24px">
+          Every command that reads <code>docume.json</code> takes <code>--config</code> (default
+          <code>docume.json</code>), and its directory is the repo root that the wiki root and every
+          <code>sources</code> glob resolve against. Every command that reads state takes <code>--state</code>,
+          defaulting to the state file inside the wiki root.
+        </p>
+
+        <h3 style="margin:32px 0 10px"><code>docume init</code></h3>
+        <p class="prose" style="margin-bottom:14px">
+          Scaffolds a consumer repo: <code>docume.json</code>, the wiki skeleton with its style guide, the
+          mermaid renderer, the six workflow templates, a tool manifest, a <code>.gitignore</code> entry.
+          Thirteen targets, and it is idempotent — an existing file is never overwritten, and every skip is
+          reported.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Option</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td><code>--space</code></td><td>Confluence space key written into <code>docume.json</code></td></tr>
+              <tr><td><code>--base-url</code></td><td>Confluence wiki base URL written into <code>docume.json</code></td></tr>
+              <tr><td><code>--adopt</code></td><td>Build the state file from the wiki this repo already has, one entry per page, page ids seeded from frontmatter</td></tr>
+              <tr><td><code>--legacy-map</code></td><td>Path to a JSON <em>page path → page id</em> map from whatever published the wiki before. Requires <code>--adopt</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin:32px 0 10px"><code>docume convert &lt;wiki-root&gt;</code></h3>
+        <p class="prose" style="margin-bottom:14px">
+          Converts every page and reports what happened, grouped by construct and by dialect. No credentials,
+          no network, nothing written — not even the storage format it renders. Exit code 0 means the corpus
+          clears the acceptance bar. This is the right pre-flight for CI on a pull request that touches the
+          wiki.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Option</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td><code>--accept &lt;code&gt;</code></td><td>Treat a diagnostic code as an accepted loss: still reported, counted as a note instead of a warning. Repeatable</td></tr>
+              <tr><td><code>--render-mermaid</code></td><td>Also render every diagram through Node and report the ones that fail. Off by default: one process per diagram</td></tr>
+              <tr><td><code>--renderer &lt;path&gt;</code></td><td>Path to the render script. Defaults to <code>tools/render-mermaid.mjs</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin:32px 0 10px"><code>docume publish</code></h3>
+        <p class="prose" style="margin-bottom:14px">
+          Converts the wiki and publishes it: link map, mermaid attachments, storage-format conversion,
+          content hashing, upsert, approval banner, open-comment guard, approval invalidation, orphan report,
+          and a child-order pass that makes Confluence match the source tree. Parents before children.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Option</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td><code>--dry-run</code></td><td>Plan and print, write nothing</td></tr>
+              <tr><td><code>--tree</code></td><td>Also print the page tree the run would build</td></tr>
+              <tr><td><code>--force</code></td><td>Republish every page even when nothing changed, re-uploading attachments</td></tr>
+              <tr><td><code>--changed-since &lt;sha&gt;</code></td><td>Write only the pages touched since a commit, including pages whose images changed. The whole tree is still loaded, converted and checked for orphans</td></tr>
+              <tr><td><code>--page &lt;path&gt;</code></td><td>Write only these pages. Repeatable; a path not in the tree is an error</td></tr>
+              <tr><td><code>--prune</code></td><td>Delete orphan pages after publishing. Asks first, needs a terminal, refuses to run in CI</td></tr>
+              <tr><td><code>--no-reorder</code></td><td>Skip the pass that puts each parent's children in source-tree order</td></tr>
+              <tr><td><code>--block-on-open-comments</code></td><td>Leave a page alone and exit non-zero when it has unresolved inline comments a body rewrite could strand. Default is to publish and warn</td></tr>
+              <tr><td><code>--no-comment-check</code></td><td>Skip that read entirely</td></tr>
+              <tr><td><code>--notify-reviewers</code></td><td>Post a footer comment asking for a re-review on every page whose approval the run revoked. One comment per revoked approval, so it reaches each page's watchers</td></tr>
+              <tr><td><code>--allow-protected-space</code></td><td>Write into a write-locked space, for one run</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout--danger">
+          <span class="callout-title">The one destructive option</span>
+          An orphan is a state entry whose markdown file is gone — which is also what a renamed file looks
+          like before its new path is published. Prune after a successful <em>full</em> publish, never
+          alongside a partial one.
+        </div>
+
+        <h3 style="margin:32px 0 10px"><code>docume sync</code></h3>
+        <p class="prose" style="margin-bottom:14px">
+          Reads labels and comments out of Confluence and reconciles them into the repo. Passing neither half
+          runs both read halves. Committing the result is the caller's job; in CI that means a
+          <code>docs/sync</code> pull request, so a human sees state changes before they land.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Option</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td><code>--labels</code></td><td>Reconcile the <code>approved</code> and <code>stale</code> labels into state</td></tr>
+              <tr><td><code>--comments</code></td><td>Ingest page comments into the feedback inbox, behind a per-page cursor</td></tr>
+              <tr><td><code>--reply</code></td><td>Post a reply under every triaged inbox item and resolve the inline comments it answers. The only half that writes to Confluence</td></tr>
+              <tr><td><code>--output-dir</code></td><td>Where to write inbox items. Defaults to the feedback inbox under the wiki's <code>_meta</code></td></tr>
+              <tr><td><code>--dry-run</code></td><td>Report what would change and write none of it</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin:32px 0 10px"><code>docume drift</code></h3>
+        <p class="prose" style="margin-bottom:14px">
+          Reports which pages derive from code changed between two revisions, with the matching pattern and
+          files named so a reader can judge the report rather than trust it.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Option</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td><code>--baseline &lt;rev&gt;</code></td><td>Revision to diff from. Defaults to the recorded generation baseline</td></tr>
+              <tr><td><code>--head &lt;rev&gt;</code></td><td>Revision to diff to. Defaults to <code>HEAD</code></td></tr>
+              <tr><td><code>--format &lt;shape&gt;</code></td><td><code>table</code>, <code>json</code>, or <code>github-comment</code>. <code>json</code> prints nothing else</td></tr>
+              <tr><td><code>--fail-on-drift</code></td><td>Exit 1 when any page is affected. Without it the command is advisory and exits 0</td></tr>
+              <tr><td><code>--mark</code></td><td>Add the <code>stale</code> label to affected pages, set the state flag, refresh the dashboard</td></tr>
+              <tr><td><code>--dry-run</code></td><td>With <code>--mark</code>: report what would be labelled, write nothing. Needs no credentials</td></tr>
+              <tr><td><code>--allow-protected-space</code></td><td>With <code>--mark</code>: label pages in a write-locked space, for one run</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin:32px 0 10px"><code>docume dashboard</code></h3>
+        <p class="prose" style="margin-bottom:14px">
+          Regenerates the status page from state plus the live labels. The labels are reconciled in memory
+          here; <code>sync --labels</code> is what writes them into state.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Option</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td><code>--title</code></td><td>Title of the dashboard page. Defaults to the configured title</td></tr>
+              <tr><td><code>--dry-run</code></td><td>Print the storage format it would publish and write nothing</td></tr>
+              <tr><td><code>--allow-protected-space</code></td><td>Publish the dashboard into a write-locked space, for one run</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin:32px 0 10px"><code>docume status</code></h3>
+        <p class="prose" style="margin-bottom:14px">
+          Reports what is published, what drifted, and whether this repo is set up to publish at all.
+          <code>status --json</code> is what every skill appends to its pull-request body, so a reviewer sees
+          the state of the space next to the diff.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Option</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td><code>--json</code></td><td>Print the report as JSON and nothing else, for a pull-request body or a CI step</td></tr>
+              <tr><td><code>--offline</code></td><td>Skip the single Confluence request — the token and space probe</td></tr>
+              <tr><td><code>--fail-on-drift</code></td><td>Exit non-zero when the published wiki differs from the repo</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 02 -->
+      <section class="anchor-target" id="writes" style="margin-bottom:72px">
+        <div class="sec-head"><span class="sec-num">02</span> What writes where</div>
+        <h2>Four write paths, all of them gated.</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Command</th><th>Writes to Confluence</th><th>Writes to the repo</th></tr></thead>
+            <tbody>
+              <tr><td><code>init</code></td><td>no</td><td>the scaffolded files</td></tr>
+              <tr><td><code>convert</code></td><td>no</td><td>nothing</td></tr>
+              <tr><td><code>publish</code></td><td>pages, attachments, labels</td><td>the state file</td></tr>
+              <tr><td><code>sync</code></td><td>only with <code>--reply</code></td><td>the state file, the feedback inbox</td></tr>
+              <tr><td><code>drift</code></td><td>only with <code>--mark</code></td><td>the state file, with <code>--mark</code></td></tr>
+              <tr><td><code>dashboard</code></td><td>the dashboard page</td><td>nothing</td></tr>
+              <tr><td><code>status</code></td><td>no</td><td>nothing</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="prose">
+          Every write path in that table is gated on the protected-spaces list: name a space there and
+          <code>publish</code>, <code>dashboard</code>, <code>drift --mark</code> and <code>sync --reply</code>
+          all refuse it. The first three carry <code>--allow-protected-space</code> to lift the refusal for one
+          run without editing the list.
+        </p>
+        <p class="prose" style="margin-top:14px">
+          <code>sync --reply</code> deliberately does not. A reply is a comment posted into a space this repo
+          was told to stay out of, so there is no per-run override, and its read halves report the lock instead
+          of refusing.
+        </p>
+      </section>
+
+      <!-- 03 -->
+      <section class="anchor-target" id="config" style="margin-bottom:72px">
+        <div class="sec-head"><span class="sec-num">03</span> Configuration</div>
+        <h2>One file, committed, and therefore free of secrets.</h2>
+        <p class="prose" style="margin-bottom:24px">
+          <code>docume.json</code> lives at the repo root. Three fields are required and validated on load:
+          the Confluence base URL, the space key, and the wiki root. <code>init</code> writes a working file
+          with all three set.
+        </p>
+
+        <div class="terminal" style="margin-bottom:24px">
+          <div class="terminal-bar"><i></i><i></i><i></i><span class="label">docume.json — an example, not a list of defaults</span></div>
+<pre><code>{
+  <span class="k-blue">"$schema"</span>: <span class="k-yellow">"https://raw.githubusercontent.com/moberghr/docu-me/main/schema/docume.schema.json"</span>,
+  <span class="k-blue">"confluence"</span>: {
+    <span class="k-blue">"baseUrl"</span>: <span class="k-yellow">"https://example.atlassian.net/wiki"</span>,
+    <span class="k-blue">"spaceKey"</span>: <span class="k-yellow">"DOCS"</span>,
+    <span class="k-blue">"spaceId"</span>: <span class="k-yellow">"2431647748"</span>,
+    <span class="k-blue">"rootPageId"</span>: <span class="k-yellow">"4512153602"</span>,
+    <span class="k-blue">"protectedSpaces"</span>: [<span class="k-yellow">"PROD"</span>]
+  },
+  <span class="k-blue">"wiki"</span>: {
+    <span class="k-blue">"root"</span>: <span class="k-yellow">"docs/wiki"</span>,
+    <span class="k-blue">"exclude"</span>: [<span class="k-yellow">"_meta/**"</span>],
+    <span class="k-blue">"extraPages"</span>: [
+      { <span class="k-blue">"path"</span>: <span class="k-yellow">"_meta/GAPS.md"</span>, <span class="k-blue">"title"</span>: <span class="k-yellow">"Open Questions for the Team"</span> }
+    ],
+    <span class="k-blue">"homePage"</span>: <span class="k-yellow">"README.md"</span>
+  },
+  <span class="k-blue">"labels"</span>: { <span class="k-blue">"approved"</span>: <span class="k-yellow">"approved"</span>, <span class="k-blue">"stale"</span>: <span class="k-yellow">"stale"</span> },
+  <span class="k-blue">"dashboard"</span>: { <span class="k-blue">"title"</span>: <span class="k-yellow">"Documentation Status"</span> },
+  <span class="k-blue">"mermaid"</span>: { <span class="k-blue">"renderer"</span>: <span class="k-yellow">"tools/render-mermaid.mjs"</span> }
+}</code></pre>
+        </div>
+
+        <p class="prose" style="margin-bottom:20px">
+          Four of those values are illustrations, and the real default for each is empty:
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Field</th><th>Actual default</th><th>What the example shows instead</th></tr></thead>
+            <tbody>
+              <tr><td>space id</td><td>absent — resolved from the space key on first use</td><td>a numeric id</td></tr>
+              <tr><td>root page id</td><td>absent — publish under the space root</td><td>a numeric id</td></tr>
+              <tr><td>protected spaces</td><td><code>[]</code> — <strong>no space is write-locked</strong></td><td>one locked space</td></tr>
+              <tr><td>extra pages</td><td><code>[]</code></td><td>one re-included file</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="grid grid--2">
+          <div class="card">
+            <h3>The home page names every index</h3>
+            <p>
+              Not only the root. <code>a/b/page.md</code> hangs under <code>a/b/README.md</code>, which hangs
+              under <code>a/README.md</code>. A directory with no index page is skipped rather than
+              synthesized: its children hang from the nearest index above it, because inventing a page no
+              author wrote would break the one-way rule.
+            </p>
+          </div>
+          <div class="card">
+            <h3>The write lock starts empty</h3>
+            <p>
+              A fresh <code>init</code> locks nothing. A listed space is refused, and the only way past it is
+              <code>--allow-protected-space</code> for a single run. There is no config value that grants it
+              permanently, so removing a lock is a reviewed commit rather than a flag somebody stops reading.
+            </p>
+          </div>
+        </div>
+
+        <div class="callout callout--warning" style="margin-top:24px">
+          <span class="callout-title">The schema line is the only check on a misspelled key</span>
+          The loader binds the keys it recognizes and drops the rest without a word. Write
+          <code>protectedSpace</code> for <code>protectedSpaces</code> and the write lock is simply off, on
+          every run, with nothing printed. The schema sets <code>additionalProperties: false</code> on every
+          object, so a schema-aware editor flags the typo as you type it. That is the only place a misspelled
+          key is ever reported.
+        </div>
+
+        <div class="callout">
+          <span class="callout-title">Two fields are inert in this version</span>
+          A default-branch setting and a repo blob URL both load, validate and round-trip like every other
+          field, and no command reads either one. They are documented rather than removed because both are
+          declared in the build plan and one has a specified behaviour, so building them and dropping them are
+          both still open. The suite fails if either field acquires a reader while the docs still call it inert.
+        </div>
+      </section>
+
+      <!-- 04 -->
+      <section class="anchor-target" id="state" style="margin-bottom:72px">
+        <div class="sec-head"><span class="sec-num">04</span> State and frontmatter</div>
+        <h2>Three files, three owners, all three committed.</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>File</th><th>Owner</th><th>Committed</th></tr></thead>
+            <tbody>
+              <tr><td><code>docume.json</code></td><td>humans</td><td>yes</td></tr>
+              <tr><td>page frontmatter</td><td>whoever writes the page</td><td>yes</td></tr>
+              <tr><td><code>_meta/state.json</code></td><td>the tool</td><td>yes</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="prose" style="margin-bottom:24px">
+          State is committed on purpose. It carries page ids, content hashes and approvals, so publishing from
+          a different machine or a CI runner has to produce the same plan as publishing from a laptop.
+        </p>
+
+        <h3 style="margin:0 0 10px">Page frontmatter</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Key</th><th>Required</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td><code>sources</code></td><td>no, but drift needs it</td><td>Code paths the page derives from, as globs relative to the repo root</td></tr>
+              <tr><td><code>title</code></td><td>no</td><td>Overrides the title. Defaults to the first H1, which is dropped from the body because Confluence renders the page title itself</td></tr>
+              <tr><td><code>pageId</code></td><td>no</td><td>Set by publish. Pre-seed it to adopt a page that already exists in Confluence</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="prose" style="margin-bottom:24px">
+          Frontmatter is stripped before conversion, so none of it appears in the published body or in the
+          content hash. Titles must be unique across the space, because a relative <code>.md</code> link
+          converts to a Confluence link <em>by title</em>: two pages claiming one title fail the whole load
+          with both paths named, rather than publishing a tree with an ambiguous link in it.
+        </p>
+
+        <h3 style="margin:0 0 10px">The two shas answer different questions</h3>
+        <div class="grid grid--2">
+          <div class="card">
+            <h4>Generation baseline</h4>
+            <p>
+              The commit the wiki content was last <em>generated</em> against. Drift measures from here. No CLI
+              command writes it — the generation pass does, which is <code>/docs-loop</code> or
+              <code>/docs-refresh</code>.
+            </p>
+          </div>
+          <div class="card">
+            <h4>Last published sha</h4>
+            <p>
+              The commit of the last publish run, written by <code>publish</code>, and what
+              <code>--changed-since</code> reads. Using it as the drift baseline would report zero drift on any
+              repo that publishes on every merge — which is every repo that has automated this properly.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 05 -->
+      <section class="anchor-target" id="conversion" style="margin-bottom:72px">
+        <div class="sec-head"><span class="sec-num">05</span> The conversion contract</div>
+        <h2>What converts, what degrades, what stops the run.</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Markdown</th><th>Confluence</th></tr></thead>
+            <tbody>
+              <tr><td>Headings h1–h4</td><td><code>&lt;h1&gt;</code>–<code>&lt;h4&gt;</code>, with the page's leading h1 dropped — Confluence renders the title itself</td></tr>
+              <tr><td>GFM tables</td><td><code>&lt;table&gt;</code> with a header row</td></tr>
+              <tr><td>Fenced code blocks</td><td>The code macro, with the language mapped where Confluence knows it</td></tr>
+              <tr><td>GitHub alerts</td><td>Panel macros: NOTE and IMPORTANT to info, TIP to tip, WARNING to note, CAUTION to warning</td></tr>
+              <tr><td>Mermaid fences</td><td>Rendered to SVG, attached to the page, referenced as an image</td></tr>
+              <tr><td>Relative <code>.md</code> links</td><td>A Confluence page link, resolved by the linked page's title</td></tr>
+              <tr><td>External links</td><td>A plain anchor</td></tr>
+              <tr><td><code>[TOC]</code> alone on a line</td><td>The table-of-contents macro</td></tr>
+              <tr><td>Images</td><td>Attachment plus image tag; a width attribute becomes the rendered width</td></tr>
+              <tr><td>Task lists</td><td>The native task-list macro</td></tr>
+              <tr><td>Inline code, bold, italic, strikethrough, blockquotes, rules, nested lists</td><td>Native markup</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin:32px 0 10px">The seven degradation codes</h3>
+        <p class="prose" style="margin-bottom:18px">
+          A degradation converts, with something lost, and says so. Each is reported per page with the dialect
+          that triggered it, and each can be promoted to a note with <code>--accept</code> — which keeps the
+          count and the breakdown in the report rather than hiding them.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Code</th><th>What is lost</th></tr></thead>
+            <tbody>
+              <tr><td><code>unknown-fence-language</code></td><td>Highlighting for a language outside the brush map, which takes both Atlassian's documented list and a Prism component id. Being documented is not enough on its own</td></tr>
+              <tr><td><code>mixed-task-list</code></td><td>A list mixing task and plain items falls back to a plain list, echoing the literal <code>[x]</code> text</td></tr>
+              <tr><td><code>same-page-anchor-link</code></td><td>The destination. An anchor link within one page publishes as its plain link text</td></tr>
+              <tr><td><code>table-alignment-dropped</code></td><td>Centered or right column alignment, reported once per column. An explicitly left column publishes the way GitHub renders it and stays silent</td></tr>
+              <tr><td><code>ordered-list-start-dropped</code></td><td>A list starting at something other than 1</td></tr>
+              <tr><td><code>alert-type-collapsed</code></td><td>The emphasis on <code>[!IMPORTANT]</code>, which shares the info panel with <code>[!NOTE]</code></td></tr>
+              <tr><td><code>task-list-numbering-dropped</code></td><td>An ordered task list, which the macro cannot number</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin:32px 0 10px">Code fence attributes</h3>
+        <p class="prose" style="margin-bottom:14px">
+          Fence attributes are space-separated with no <code>=</code> anywhere. <code>title</code> takes the
+          rest of the line, unquoted; <code>collapse</code>, <code>nocollapse</code>, <code>linenumbers</code>
+          and a bare positive integer for <code>firstline</code> are the other four.
+        </p>
+        <div class="callout callout--warning">
+          <span class="callout-title">An unrecognized attribute fails the page loud</span>
+          Including the <code>title=Foo</code> spelling, which is a different tool's syntax. That asymmetry
+          against the language token is deliberate: an unknown language costs syntax highlighting and is
+          reported as a degradation, while a silently dropped attribute publishes a page the author did not
+          ask for.
+        </div>
+      </section>
+
+      <!-- 06 -->
+      <section class="anchor-target" id="mermaid" style="margin-bottom:72px">
+        <div class="sec-head"><span class="sec-num">06</span> Mermaid</div>
+        <h2>Six diagram families render. Everything else fails its page.</h2>
+        <p class="prose" style="margin-bottom:22px">
+          A mermaid fence is rendered to SVG through Node and uploaded as an attachment, named from a hash of
+          the diagram source. That naming is a pure function of the source, so an unrelated edit elsewhere on
+          the page never renames the attachment and never churns the content hash.
+        </p>
+        <p class="prose" style="margin-bottom:22px">
+          Rendering happens at publish. <code>convert</code> counts diagrams without starting a process unless
+          <code>--render-mermaid</code> is passed, which is what makes a conversion check cheap enough to run
+          on every pull request.
+        </p>
+
+        <div class="card card--hero" style="margin-bottom:24px">
+          <span class="card-label">The whole set the parser dispatches on</span>
+          <p>
+            <code>graph</code> / <code>flowchart</code> · <code>sequenceDiagram</code> ·
+            <code>classDiagram</code> · <code>erDiagram</code> · <code>stateDiagram</code> /
+            <code>stateDiagram-v2</code> · <code>xychart-beta</code>
+          </p>
+          <p style="margin-top:12px">
+            The renderer is a reimplementation of mermaid rather than mermaid itself, so it accepts a subset.
+            Anything outside this list fails on its header line before a single node is read.
+          </p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Header</th><th>Why it fails</th></tr></thead>
+            <tbody>
+              <tr><td><code>pie</code></td><td>The renderer does not implement pie charts, nor sixteen other diagram types outside the six families</td></tr>
+              <tr><td><code>graph TD;</code></td><td>A trailing semicolon, and only on <code>graph</code>, <code>flowchart</code> and <code>stateDiagram</code>. <code>sequenceDiagram;</code> and <code>classDiagram;</code> render, and <code>graph TD</code> renders</td></tr>
+              <tr><td>YAML frontmatter</td><td>The renderer does not read it. A mermaid <code>title:</code> or <code>config:</code> block fails <em>every</em> diagram type, including the six that otherwise work</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="prose">
+          That second row is uneven for a reason worth knowing before you read the error twice: the semicolon
+          is tolerated exactly where the diagram type is detected by its own name, and dropped where the header
+          also has to carry a direction. Every rejection reports the same
+          <code>Invalid mermaid header</code> message, which tells you the header was not recognised and never
+          why.
+        </p>
+      </section>
+
+      <!-- 07 -->
+      <section class="anchor-target" id="approval" style="margin-bottom:72px">
+        <div class="sec-head"><span class="sec-num">07</span> The approval machine</div>
+        <h2>A label in, a state transition out.</h2>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td><code>status</code></td><td><code>approved</code> or <code>needs-review</code></td></tr>
+              <tr><td><code>approvedBy</code></td><td>Always <code>unknown</code> — Confluence Cloud exposes no label author anywhere the API can reach</td></tr>
+              <tr><td><code>approvedAt</code></td><td>When a sync run saw the label at the approved version. Restamped if the page reaches a new version with the label still on, and the stamp it displaces goes to history</td></tr>
+              <tr><td><code>approvedVersion</code></td><td>The Confluence page version the approval applies to</td></tr>
+              <tr><td><code>history</code></td><td>Every prior approval. One is archived when an approval is invalidated, and also when a still-valid approval is re-recorded at a newer version</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin:0 0 14px">What invalidates an approval</h3>
+        <p class="prose" style="margin-bottom:18px">
+          Two things, and they run through the same transition. <strong>A republish whose content hash
+          changed</strong> — DocuMe removes the label, moves the approval into history and sets the status to
+          <code>needs-review</code>. And <strong>a reviewer taking the label off</strong> — the sync run reads
+          "label absent, state says approved" as a revocation and applies the identical transition, with no
+          label for DocuMe to remove because the reviewer already removed it.
+        </p>
+
+        <div class="grid grid--2">
+          <div class="card">
+            <span class="card-label">Invalidates</span>
+            <ul class="clean">
+              <li>Editing one sentence of the markdown</li>
+              <li>Editing a mermaid diagram — its attachment name derives from the source, so the body changes too</li>
+              <li>A reviewer removing the label</li>
+            </ul>
+          </div>
+          <div class="card">
+            <span class="card-label">Does not</span>
+            <ul class="clean">
+              <li>A new publish date in the banner — the hash excludes it</li>
+              <li>A dashboard refresh</li>
+              <li>Reparenting: where a page hangs is not what a reviewer approved</li>
+              <li><code>--force</code> on its own. It re-uploads everything, but an unchanged hash means unchanged content</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout callout--warning" style="margin-top:24px">
+          <span class="callout-title">The one case worth knowing</span>
+          Attachment bytes sit outside the hash entirely. A hand-placed image whose bytes change is re-uploaded
+          <strong>with the approval left standing</strong>, because the body still says the same thing. It is
+          the only case where an approved page visibly changes without a re-review.
+        </div>
+
+        <div class="callout">
+          <span class="callout-title">The dashboard is deliberately not tracked</span>
+          <code>docume dashboard</code> publishes one page listing every page with its approval state,
+          staleness and last publish. It is generated from state plus the live labels, and it is kept out of
+          state itself: a page DocuMe publishes but does not own would otherwise look like an orphan to
+          <code>publish --prune</code> and be deleted.
+        </div>
+      </section>
+
+      <!-- 08 -->
+      <section class="anchor-target" id="skills" style="margin-bottom:72px">
+        <div class="sec-head"><span class="sec-num">08</span> The skills <span class="sec-count">three</span></div>
+        <h2>Three skills, one ending — a pull request.</h2>
+        <p class="prose" style="margin-bottom:24px">
+          None of them calls the Confluence API. All three also have the other ending, the one a nightly job
+          has most nights, and it is not a failure: they stop without a branch, a commit or a pull request. An
+          empty PR costs a reviewer more than it tells them.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Skill</th><th>Use it when</th><th>Opens nothing when</th><th>Branch</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><code>/docs-loop</code></td>
+                <td>A wiki is being built from scratch, a page that should exist does not, or a recorded gap is being asked for</td>
+                <td>no unit is <code>todo</code> in the progress file</td>
+                <td><code>docs/loop-&lt;date&gt;</code></td>
+              </tr>
+              <tr>
+                <td><code>/docs-refresh</code></td>
+                <td>Drift was reported: a stale label, a drift comment, the nightly cron. Also a change you just made on a branch</td>
+                <td>the drift report says nothing drifted</td>
+                <td><code>docs/refresh-&lt;date&gt;</code></td>
+              </tr>
+              <tr>
+                <td><code>/docs-feedback</code></td>
+                <td>Inbox items are waiting after a comment sync, or somebody asks you to deal with the comments</td>
+                <td>no inbox item is untriaged</td>
+                <td><code>docs/feedback-&lt;date&gt;</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="prose" style="margin-bottom:24px">
+          The boundaries are worth stating because they overlap in the obvious wrong way:
+          <code>/docs-loop</code> writes pages that do not exist, <code>/docs-refresh</code> rewrites pages
+          whose code moved, <code>/docs-feedback</code> answers a reviewer. A refresh that finds a missing page
+          records a gap rather than writing it.
+        </p>
+
+        <div class="callout">
+          <span class="callout-title">Why two skills stamp the baseline differently</span>
+          No CLI command writes the generation baseline — the generation pass owns it, and the two skills stamp
+          it to different values on purpose. <code>/docs-loop</code> sets it to the <strong>oldest</strong>
+          generation sha still recorded, so drift measures from the point the content was written; today's
+          <code>HEAD</code> after one page would silently retire every drift the earlier pages accumulated.
+          <code>/docs-refresh</code> stamps <code>HEAD</code>, because that run really did regenerate everything
+          drifted, and leaving the field alone would report the same pages again tomorrow night.
+        </div>
+
+        <div class="callout callout--warning">
+          <span class="callout-title">Installing</span>
+          The plugin half is two slash commands inside Claude Code, not shell commands. The CLI is a separate
+          install and the skills need it: they invoke the pinned tool through the repo-local manifest that
+          <code>docume init</code> writes. A repo that has not run <code>init</code> gets a missing-command
+          error from the SDK, not a DocuMe message — the DocuMe one comes a step later, once the tool restores
+          and the config is what is missing.
+        </div>
+      </section>
+
+      <!-- 09 -->
+      <section class="anchor-target" id="workflows" style="margin-bottom:72px">
+        <div class="sec-head"><span class="sec-num">09</span> The workflows <span class="sec-count">six</span></div>
+        <h2>Everything writes through a pull request.</h2>
+        <p class="prose" style="margin-bottom:22px">
+          Four of the six change the repo, and none of them pushes to the default branch. The publish and sync
+          jobs commit the machine-owned state file to a shared <code>docs/sync</code> branch, opening that pull
+          request when it is not already open; the refresh and feedback jobs push a dated branch of their own.
+          That is also why the publish workflow is the <em>only</em> one that writes page bodies: it runs on the
+          default branch, after the review.
+        </p>
+
+        <div class="callout" style="margin-bottom:24px">
+          <span class="callout-title">Why every template adds a package feed</span>
+          <code>DocuMe.Cli</code> is published to GitHub Packages rather than nuget.org, and GitHub Packages
+          authenticates every read including a public package. A restore with no feed configured resolves the
+          pin against nuget.org alone and fails. Each template reads a packages-token secret and falls back to
+          the workflow's own <code>GITHUB_TOKEN</code>, which is enough from a repository in the same
+          organisation as the package; from another org, add the secret holding a PAT with
+          <code>read:packages</code>.
+        </div>
+
+        <h3 style="margin:0 0 14px">Which jobs hold which secrets</h3>
+        <div class="grid grid--3">
+          <div class="card">
+            <span class="card-label">Confluence credentials</span>
+            <h4>publish · drift · sync</h4>
+            <p>The three that talk to Confluence, and only those three.</p>
+          </div>
+          <div class="card">
+            <span class="card-label">Model key only</span>
+            <h4>refresh · feedback</h4>
+            <p>
+              The unsupervised model runs. A skill's output is a pull request, so only the CLI writes to
+              Confluence and the publishing token stays out of the job a model drives.
+            </p>
+          </div>
+          <div class="card">
+            <span class="card-label">Neither</span>
+            <h4>drift-pr</h4>
+            <p>
+              Runs on every contributor's branch, and its report is a <code>git diff</code> plus a glob match.
+              The workflow with the widest trigger never sees the publishing token.
+            </p>
+          </div>
+        </div>
+
+        <div class="callout callout--warning" style="margin-top:24px">
+          <span class="callout-title">A green run that did nothing looks like a green run that worked</span>
+          That is a live risk in exactly the two workflows a model drives, because the skill is what decides
+          whether to push at all. Both check the remote for their own branch family before and after, and
+          annotate the run with which branch they pushed: a refresh run that pushed nothing says so out loud.
+          Both also bound the model step with a timeout — on the default output format the CLI prints nothing
+          until it exits, so a hung run leaves an empty step log and, without a timeout, holds the runner for
+          six hours before anything says so.
+        </div>
+      </section>
+
+      <!-- 10 -->
+      <section class="anchor-target" id="action" style="margin-bottom:72px">
+        <div class="sec-head"><span class="sec-num">10</span> The composite action</div>
+        <h2>Three setup lines you do not have to get right a seventh time.</h2>
+        <p class="prose" style="margin-bottom:22px">
+          Every template opens the same way — install the SDK, add the package feed, restore the pinned tool.
+          A composite action wraps all of it, for a docs job you write yourself.
+        </p>
+
+        <div class="terminal" style="margin-bottom:24px">
+          <div class="terminal-bar"><i></i><i></i><i></i><span class="label">a docs job of your own</span></div>
+<pre><code><span class="k-blue">jobs</span>:
+  <span class="k-blue">publish</span>:
+    <span class="k-blue">runs-on</span>: ubuntu-latest
+    <span class="k-blue">env</span>:
+      <span class="k-blue">DOCUME_CONFLUENCE_EMAIL</span>: <span class="k-yellow">${{ secrets.DOCUME_CONFLUENCE_EMAIL }}</span>
+      <span class="k-blue">DOCUME_CONFLUENCE_TOKEN</span>: <span class="k-yellow">${{ secrets.DOCUME_CONFLUENCE_TOKEN }}</span>
+    <span class="k-blue">steps</span>:
+      - <span class="k-blue">uses</span>: actions/checkout@v4
+      - <span class="k-blue">uses</span>: moberghr/docu-me/actions@v0
+        <span class="k-blue">with</span>:
+          <span class="k-blue">args</span>: publish --dry-run
+          <span class="k-blue">packages-token</span>: <span class="k-yellow">${{ secrets.GITHUB_TOKEN }}</span></code></pre>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Input</th><th>Required</th><th>Does</th></tr></thead>
+            <tbody>
+              <tr><td><code>args</code></td><td>yes</td><td>Everything after <code>docume</code>, as one string</td></tr>
+              <tr><td><code>packages-token</code></td><td>no</td><td>Token for the GitHub Packages feed, empty by default</td></tr>
+              <tr><td><code>dotnet-version</code></td><td>no</td><td>SDK to install, <code>10.0.x</code> by default</td></tr>
+              <tr><td><code>mermaid</code></td><td>no</td><td>Diagram renderer, <code>auto</code> by default</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <ul class="clean">
+          <li><strong>It names no DocuMe version.</strong> It restores your tool manifest rather than installing anything, so the CLI it runs is the one your repo pinned and a DocuMe release cannot change the version your CI runs.</li>
+          <li><strong><code>packages-token</code> is optional in the schema and needed in practice.</strong> A composite action cannot read secrets for itself, so the feed has to be handed to it; leave it empty only when your repo names that feed in a committed <code>NuGet.config</code>.</li>
+          <li><strong><code>mermaid: auto</code> pays only when it must.</strong> Node and the renderer are installed when <code>args</code> invokes <code>publish</code>, or <code>convert --render-mermaid</code>, and skipped otherwise — a <code>drift</code> or a <code>sync</code> pays for no toolchain.</li>
+          <li><strong><code>args</code> is split on whitespace.</strong> No single argument can carry a space of its own, so a run that needs one belongs in a plain <code>run:</code> step calling the tool directly.</li>
+          <li><strong>The ref is a floating major tag</strong>, force-moved by the last step of each release. Pin an exact release instead if you would rather nothing moved under you.</li>
+        </ul>
+      </section>
+
+      <!-- 11 -->
+      <section class="anchor-target" id="security" style="margin-bottom:24px">
+        <div class="sec-head"><span class="sec-num">11</span> The security model</div>
+        <h2>Four rules, and each one is enforced somewhere.</h2>
+
+        <div class="grid grid--2">
+          <div class="card">
+            <span class="card-num">01</span>
+            <h3>Credentials come from the environment</h3>
+            <p>
+              Two variables, and nowhere else — not <code>docume.json</code>, which is committed, and not the
+              command line, which lands in shell history. The suite fails on a token literal in a shipped file.
+            </p>
+          </div>
+          <div class="card">
+            <span class="card-num">02</span>
+            <h3>Auth failures are a hard stop</h3>
+            <p>
+              401 and 403 stop the run with a token-expiry message instead of retrying. Retrying a rejected
+              credential only wastes the rate limit. Retry with backoff is for 429 and 5xx.
+            </p>
+          </div>
+          <div class="card">
+            <span class="card-num">03</span>
+            <h3>Page bodies and comments are untrusted</h3>
+            <p>
+              Every skill states it in its own system contract: a comment is a claim to verify against the
+              code, never an instruction. Nothing a reviewer wrote is echoed into a page body.
+            </p>
+          </div>
+          <div class="card">
+            <span class="card-num">04</span>
+            <h3>A human reviews every docs change</h3>
+            <p>
+              CI jobs run with read-only repo access and PR-only writes. The generative tier cannot publish;
+              the deterministic tier only publishes what already merged.
+            </p>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<section class="section section--alt">
+  <div class="container" style="text-align:center">
+    <h2 style="margin:0 auto 18px">That is the whole surface.</h2>
+    <p class="lede" style="margin:0 auto 30px">
+      Anything not on this page is in the repository — the build spec, the changelog, and DocuMe's own wiki,
+      generated and published by DocuMe.
+    </p>
+    <div class="hero-actions" style="justify-content:center">
+      <a class="btn btn--primary" href="index.html">Back to the overview</a>
+      <a class="btn btn--secondary" href="https://github.com/moberghr/docu-me">View on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container footer-inner">
+    <div>
+      <img class="footer-wordmark" src="assets/logo-wordmark.svg" alt="Moberg" height="18">
+      <div class="footer-tagline">Serious engineering, infinite possibilities · Reykjavík + Zagreb</div>
+    </div>
+    <div class="footer-links">
+      <a href="index.html">Overview</a>
+      <a href="how-it-works.html">Reference</a>
+      <a href="https://github.com/moberghr/docu-me">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var stored = null;
+
+    try { stored = localStorage.getItem('docume-theme'); } catch (error) { stored = null; }
+
+    // Light is the default in every context. Dark is only ever an explicit choice.
+    root.dataset.theme = stored === 'dark' ? 'dark' : 'light';
+
+    document.getElementById('theme-toggle').addEventListener('click', function () {
+      var next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      root.dataset.theme = next;
+      try { localStorage.setItem('docume-theme', next); } catch (error) { /* private mode */ }
+    });
+
+    // Mark the section the reader is in, so the contents list tracks the scroll.
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+    var sections = links
+      .map(function (link) { return document.querySelector(link.getAttribute('href')); })
+      .filter(Boolean);
+
+    if (!('IntersectionObserver' in window) || sections.length === 0) {
+      return;
+    }
+
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) {
+          return;
+        }
+
+        links.forEach(function (link) {
+          link.classList.toggle('is-active', link.getAttribute('href') === '#' + entry.target.id);
+        });
+      });
+    }, { rootMargin: '-84px 0px -70% 0px' });
+
+    sections.forEach(function (section) { observer.observe(section); });
+  })();
+</script>
+
+</body>
+</html>
