@@ -23,7 +23,9 @@
 - **Two tiers.** Deterministic tier = CLI, runs on every deploy/cron, no LLM, cheap. Generative tier = Claude skills, always outputs **PRs for human review**, never writes to Confluence directly.
 - **One tool, many repos.** All repo-specific knowledge lives in the consumer repo (`docume.json`, `_meta/STYLE.md`, frontmatter); the tool and skills are generic.
 
-**Non-goals (v1):** Jira feedback channel (deferred by decision 2026-07-24); Confluence→repo round-tripping of hand edits; docs hosting; support for wikis other than Confluence Cloud (design the client behind an interface, but build Cloud only).
+**Non-goals (v1):** Jira feedback channel (deferred by decision 2026-07-24); Confluence→repo round-tripping of hand edits; docs hosting; third-party wiki vendors other than Confluence Cloud (Notion, SharePoint, MediaWiki).
+
+*(Amended 2026-08-05: this row used to end "support for wikis other than Confluence Cloud (design the client behind an interface, but build Cloud only)", which described an interface nobody wrote and filed a second **publication target** under wiki vendors. Vendors stay out; a repo-native lifecycle arrives at M8 and needs none, since the first principle above already puts the store in the repo. Spec: `.claude/references/publication-targets.md`; full note in the decision log.)*
 
 **Locked decisions (Mirko, 2026-07-24):** CLI in .NET · regeneration both local and CI · Jira deferred · single `approved` label.
 
@@ -415,7 +417,12 @@ Run once in the new repo: **`/mtk:setup-bootstrap`** (tech stack: dotnet). Then 
 | **M6** | §11, §12 | Generic `docs-loop` skill (extracted from AurServices), plugin.json, marketplace entry, release workflow, README/quickstart, full `init` templates | Fresh empty repo: full install story works end-to-end from README alone | M |
 | **M7** | Aur adoption | `docume init --adopt` on AurServices: docume.json, state migration from `_meta/confluence-map.json`, frontmatter `sources` added across 79 pages (scripted + docs-loop pass), workflows installed, GAPS.md published as "Open Questions", team onboarding note | Full lifecycle live on AUR space; first real approval + first real feedback round-trip | M |
 
-Dependencies: M1→M2→M3→M4/M5 (4 and 5 parallel) →M6→M7. First externally visible win: end of M2 — *(corrected iter151: this used to read "(the Aur wiki is finally live in Confluence)", which the M2 row above had already contradicted since 2026-07-25. The Aur bulk publish moved to M7, so M2's visible win is DocuMe's own docs plus the golden corpus in the sandbox space, and the Aur wiki goes live at M7 with §15's first item.)*
+| **M7a** | `publication-targets.md` | The target seam only: target discriminator in config + target-conditional validation, capability declaration + loud refusals, interfaces at the five reader/executor boundaries. No second implementation | Behaviour-preserving: every Confluence-mode test stays green **without being edited** | S |
+| **M8** | `publication-targets.md` | GitHub-native target: PR-review approval against `contentHash`, PR + issue comments into the §5.4 inbox, `_meta/STATUS.md`, repo-mode workflow templates, S8/S9 answered | A repo with no Confluence credentials runs generate → approve → feedback → stale → refresh end to end | M |
+
+**M7a lands before M7** (Mirko, 2026-08-05). "Refactor first" is usually the wrong call, so the reason is worth stating: M7 writes `--adopt` against a real consumer, and code written against a concrete `ConfluenceClient` is code M8 has to revisit. Only the seam comes early — an interface with one caller is still a guess about the second, so M7a adds no implementation.
+
+Dependencies: M1→M2→M3→M4/M5 (4 and 5 parallel) →M6→M7a→M7→M8. First externally visible win: end of M2 — *(corrected iter151: this used to read "(the Aur wiki is finally live in Confluence)", which the M2 row above had already contradicted since 2026-07-25. The Aur bulk publish moved to M7, so M2's visible win is DocuMe's own docs plus the golden corpus in the sandbox space, and the Aur wiki goes live at M7 with §15's first item.)*
 
 ## 15. Definition of done (v1.0)
 
