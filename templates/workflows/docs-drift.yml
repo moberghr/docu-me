@@ -18,6 +18,12 @@ on:
 # The state write this job makes is deliberately thrown away — see the note on the drift step.
 permissions:
   contents: read
+  # `dotnet tool restore` below reads DocuMe.Cli from GitHub Packages, which authenticates every
+  # read. An explicit `permissions:` block sets every scope it does not name to none, so without
+  # this line GITHUB_TOKEN arrives with no package access at all and the restore dies on a bare
+  # "403 (Forbidden)" naming neither the feed nor the scope. Necessary, and not sufficient — see
+  # the note on the feed step for the grant it still needs.
+  packages: read
 
 jobs:
   mark:
@@ -46,10 +52,15 @@ jobs:
       # nuget.org alone and fails with NuGet's own wording, which names neither DocuMe nor the feed it
       # should have looked in. That failure is a consumer's FIRST docs job, on their first push.
       #
-      # EDIT BEFORE USE only in two cases. `secrets.GITHUB_TOKEN` is enough from a repository in the same
-      # organisation as the package; from another org, add a `DOCUME_PACKAGES_TOKEN` secret holding a PAT
-      # with `read:packages`. And if this repo commits a NuGet.config containing <clear />, add the feed
-      # there instead — a repo-level clear discards the source this step writes at the user level.
+      # EDIT BEFORE USE. `secrets.GITHUB_TOKEN` is NOT sufficient on its own, and being in the same
+      # organisation does not change that: a GitHub Packages package is scoped to the repository that
+      # PUBLISHED it, so a token minted for this repo is refused with 403 no matter what scopes it holds.
+      # Fix it at the package: Packages -> DocuMe.Cli -> Manage Actions access -> add this repository with
+      # read, and the same for DocuMe.Core. The alternative is a `DOCUME_PACKAGES_TOKEN` secret holding a
+      # PAT with `read:packages`, which the expression below prefers when present — a long-lived
+      # credential to own and rotate, where the grant is neither. And if this repo commits a NuGet.config
+      # containing <clear />, add the feed there instead — a repo-level clear discards the source this
+      # step writes at the user level.
       - name: Configure the DocuMe package feed
         env:
           FEED_USER: ${{ github.actor }}

@@ -44,6 +44,12 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  # `dotnet tool restore` below reads DocuMe.Cli from GitHub Packages, which authenticates every
+  # read. An explicit `permissions:` block sets every scope it does not name to none, so without
+  # this line GITHUB_TOKEN arrives with no package access at all and the restore dies on a bare
+  # "403 (Forbidden)" naming neither the feed nor the scope. Necessary, and not sufficient — see
+  # the note on the feed step for the grant it still needs.
+  packages: read
 
 jobs:
   feedback:
@@ -51,8 +57,18 @@ jobs:
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      BRANCHES_BEFORE: ${{ runner.temp }}/docume-feedback-branches
     steps:
+      # The `runner` context is available from step level down and NOT in a job-level `env:`, where
+      # ${{ runner.temp }} does not resolve empty — GitHub rejects the whole file. The symptom points
+      # nowhere near the cause: a 0 s run attributed to the PUSH event, on a workflow whose triggers do
+      # not include push, saying only "This run likely failed because of a workflow file issue" with no
+      # annotation and no line number. $RUNNER_TEMP is the environment variable of the same directory
+      # and is readable in every step, so the paths stay defined once and stay out of the workspace.
+      - name: Resolve scratch paths
+        run: |
+          set -euo pipefail
+          echo "BRANCHES_BEFORE=$RUNNER_TEMP/docume-feedback-branches" >> "$GITHUB_ENV"
+
       # No fetch-depth: 0, unlike docs-refresh.yml. That job diffs from an arbitrary older baseline; this
       # one verifies claims against the code as it is now, which the skill is explicitly told to read at
       # HEAD rather than from a diff. A shallow clone is the whole of what it needs.
@@ -67,10 +83,15 @@ jobs:
       # nuget.org alone and fails with NuGet's own wording, which names neither DocuMe nor the feed it
       # should have looked in. That failure is a consumer's FIRST docs job, on their first push.
       #
-      # EDIT BEFORE USE only in two cases. `secrets.GITHUB_TOKEN` is enough from a repository in the same
-      # organisation as the package; from another org, add a `DOCUME_PACKAGES_TOKEN` secret holding a PAT
-      # with `read:packages`. And if this repo commits a NuGet.config containing <clear />, add the feed
-      # there instead — a repo-level clear discards the source this step writes at the user level.
+      # EDIT BEFORE USE. `secrets.GITHUB_TOKEN` is NOT sufficient on its own, and being in the same
+      # organisation does not change that: a GitHub Packages package is scoped to the repository that
+      # PUBLISHED it, so a token minted for this repo is refused with 403 no matter what scopes it holds.
+      # Fix it at the package: Packages -> DocuMe.Cli -> Manage Actions access -> add this repository with
+      # read, and the same for DocuMe.Core. The alternative is a `DOCUME_PACKAGES_TOKEN` secret holding a
+      # PAT with `read:packages`, which the expression below prefers when present — a long-lived
+      # credential to own and rotate, where the grant is neither. And if this repo commits a NuGet.config
+      # containing <clear />, add the feed there instead — a repo-level clear discards the source this
+      # step writes at the user level.
       - name: Configure the DocuMe package feed
         env:
           FEED_USER: ${{ github.actor }}

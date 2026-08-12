@@ -8,7 +8,46 @@ One version covers everything: the `DocuMe.Cli` and `DocuMe.Core` packages and t
 ship off a single `vX.Y.Z` tag, so a heading here describes all three. The version at the top of this file
 is the one `Directory.Build.props` declares, whether or not its tag has been pushed yet.
 
-## [0.1.0] - unreleased
+## [0.1.1] - 2026-08-12
+
+The first release met its first consumer repo and half the CI it scaffolds did not run. Both bugs are in
+`templates/workflows/`, the one part of DocuMe its own CI cannot exercise: those files only ever execute in a
+consumer's repository. Both are now covered by tests that read the shipped templates.
+
+### Fixed
+
+- **Three templates were rejected by GitHub outright.** `docs-drift-pr`, `docs-feedback` and `docs-refresh`
+  each set a scratch path in a job-level `env:` using `${{ runner.temp }}`. That context is available from
+  step level down and not in `jobs.<id>.env`, and GitHub's response is to refuse the whole file. The symptom
+  names nothing useful: a 0-second run attributed to the `push` event — on workflows whose triggers are
+  `pull_request` and `schedule` and do not include push — reporting only "This run likely failed because of a
+  workflow file issue", with no annotation and no line number. Each now resolves its paths in a first step
+  through `$GITHUB_ENV`, so they stay defined once and stay out of the workspace.
+- **No template granted `packages: read`, so no docs job could restore the CLI.** All six declare an explicit
+  `permissions:` block, and an explicit block denies every scope it does not name. `dotnet tool restore`
+  therefore reached GitHub Packages with no package access at all and died on `Unhandled exception: Response
+  status code does not indicate success: 403 (Forbidden)`, which names neither the feed, nor the scope, nor
+  DocuMe.
+- **The advice for that 403 pointed at the wrong remedy.** The templates, the composite action and the README
+  all said `GITHUB_TOKEN` "is enough from a repository in the same organisation as the package", offering a
+  PAT for the cross-organisation case. A GitHub Packages package is scoped to the repository that *published*
+  it, so no other repository's `GITHUB_TOKEN` can read it, same organisation or not. The remedy is a grant on
+  the package — Packages → DocuMe.Cli → Manage Actions access — with the PAT as an alternative rather than
+  the cure. Corrected wherever it was stated, `docs/wiki/30-automation/` included.
+- **`DogfoodWikiTests` reded on any machine that had run the Playwright MCP server.** Its repo walk reads the
+  filesystem, so the `.playwright-mcp/` directory that server leaves behind arrived as an undeclared
+  top-level directory and failed `Every_top_level_directory_is_declared_shipped_or_not` — while CI, where it
+  does not exist, stayed green. Added to the walk's skip list, and to `.gitignore`, which is worth doing and
+  is not what fixes it.
+
+### Added
+
+- `WorkflowTemplateTests.No_template_reads_the_runner_context` and
+  `Every_template_grants_the_packages_scope_its_restore_needs`: the two assertions that would have caught the
+  above. `Every_template_is_a_yaml_workflow` could not, and that is not a gap in it — both files were valid
+  YAML and invalid GitHub.
+
+## [0.1.0] - 2026-08-12
 
 First release. Everything below is new, so it is grouped by what it does rather than by added/changed.
 

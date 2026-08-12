@@ -9,7 +9,7 @@
 ![.NET 10](https://img.shields.io/badge/.NET-10.0-430cda?style=flat-square)
 ![dotnet tool](https://img.shields.io/badge/dotnet%20tool-docume-430cda?style=flat-square)
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-430cda?style=flat-square)
-![v0.1.0 unreleased](https://img.shields.io/badge/v0.1.0-unreleased-717A80?style=flat-square)
+![v0.1.1](https://img.shields.io/badge/v0.1.1-released-430cda?style=flat-square)
 
 [Quickstart](#quickstart) · [Lifecycle](#the-lifecycle-after-the-first-publish) · [Commands](#commands) · [Skills](#skills) · [Docs pages](docs/index.html) · [Changelog](CHANGELOG.md)
 
@@ -80,10 +80,13 @@ dotnet tool install --global DocuMe.Cli
 docume --version
 ```
 
-> [!NOTE]
-> **Not published yet.** No `v0.1.0` tag has been pushed, so the feed is empty and the two lines above
-> have nothing to install. Until the first release, build from source: see
-> [Working on DocuMe itself](#working-on-docume-itself). Everything from step 3 on works either way.
+> [!WARNING]
+> **A token is not the whole of it.** The feed authenticates, and the package is also *scoped to this
+> repository*: a `GITHUB_TOKEN` minted for your repo is refused with `403` no matter what scopes it holds,
+> and being in the same organisation does not change that. For CI, either grant your repo read on the
+> package (Packages → DocuMe.Cli → Manage Actions access, and again for DocuMe.Core) or give it a
+> `DOCUME_PACKAGES_TOKEN` secret. The scaffolded workflows also need `packages: read`, which they now
+> declare — v0.1.0's did not, and every docs job in a consumer repo failed on that 403.
 
 Per-repository pinning is the other half of this and it is what `init` scaffolds in step 3: a
 `.config/dotnet-tools.json` naming the exact version, restored with `dotnet tool restore`. That is how the
@@ -91,7 +94,7 @@ workflows get the CLI, and it is why two repos can sit on different DocuMe versi
 
 The feed has to be added on the runner too, for the same reason it has to be added here, and the
 scaffolded workflows do it themselves — they read a `DOCUME_PACKAGES_TOKEN` secret and fall back to the
-job's own `GITHUB_TOKEN`. See step 4.
+job's own `GITHUB_TOKEN`, which works only once the package grants that repository read. See step 4.
 
 ### 2. Install the Claude Code plugin
 

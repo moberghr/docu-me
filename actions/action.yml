@@ -33,11 +33,18 @@ inputs:
     description: >-
       Token for the GitHub Packages feed DocuMe.Cli is published to (PLAN.md §12). GitHub Packages
       authenticates every read, including a public package, so without it the restore below sees
-      nuget.org alone and cannot find the pinned tool. The calling workflow's own GITHUB_TOKEN is
-      enough from a repository in the same organisation as the package; from another org, a PAT with
-      `read:packages`. A composite action cannot read `secrets` itself, which is why this is an input
-      rather than something the action could have arranged on its own. Leave it empty only when the
-      repo configures the feed another way, e.g. a committed NuGet.config.
+      nuget.org alone and cannot find the pinned tool. A composite action cannot read `secrets` itself,
+      which is why this is an input rather than something the action could have arranged on its own.
+      Leave it empty only when the repo configures the feed another way, e.g. a committed NuGet.config.
+
+      TWO THINGS THE CALLING WORKFLOW MUST ALSO DO. Both fail as a bare "403 (Forbidden)" naming neither
+      the feed nor the cause, so neither is discoverable from the error. It must grant `packages: read`,
+      because an explicit `permissions:` block denies every scope it does not name. And the package has
+      to be readable BY that repository: a GitHub Packages package is scoped to the repository that
+      published it, so being in the same organisation is not sufficient, whatever token is passed here.
+      Either grant the consumer repo read on the package (Packages -> DocuMe.Cli -> Manage Actions
+      access, and the same for DocuMe.Core), or pass a PAT with `read:packages` here, which carries its
+      own identity rather than the repository's.
     required: false
     default: ''
   mermaid:

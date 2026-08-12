@@ -19,5 +19,5 @@ skill can be wrong and the worst case is a bad pull request that a human decline
 writes reaches Confluence until someone merges it and the publish workflow runs.
 
 `docume init` scaffolds all six into `.github/workflows/`. Each carries an `EDIT BEFORE USE` header for
-what it cannot guess: your default branch, your wiki root, the name of your deploy workflow, a
-cross-organisation packages token, `ANTHROPIC_API_KEY`, and the release to pin the plugin to.
+what it cannot guess: your default branch, your wiki root, the name of your deploy workflow,
+read access to the DocuMe.Cli package, `ANTHROPIC_API_KEY`, and the release to pin the plugin to.

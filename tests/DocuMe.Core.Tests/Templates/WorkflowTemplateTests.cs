@@ -245,6 +245,96 @@ public sealed class WorkflowTemplateTests
         }
     }
 
+    /// <summary>
+    /// No template reads the <c>runner</c> context, which does not exist in the one place three of them
+    /// used it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The context is available from step level down and NOT in <c>jobs.&lt;id&gt;.env</c>. A
+    /// <c>${{ runner.temp }}</c> there does not resolve to an empty string, which would at least fail
+    /// somewhere near the mistake: GitHub rejects the entire file. docs-drift-pr, docs-feedback and
+    /// docs-refresh all shipped that way in v0.1.0, so half the scaffolded CI was dead on arrival in
+    /// every consumer repo.
+    /// </para>
+    /// <para>
+    /// THE SYMPTOM IS WHY THIS IS A TEST. The run fails in 0 s, attributed to the <c>push</c> event — on
+    /// workflows whose triggers are <c>pull_request</c> and <c>schedule</c> and do not include push at all
+    /// — carrying "This run likely failed because of a workflow file issue", no annotation, and no line
+    /// number. Nothing in it names a context, a key, or a file position.
+    /// <see cref="Every_template_is_a_yaml_workflow"/> cannot catch it either, and that is not a gap in
+    /// that test: the file is valid YAML. It is invalid GitHub.
+    /// </para>
+    /// <para>
+    /// Banned outright rather than only inside <c>env:</c>, which would be the narrower true rule. The
+    /// three templates that never had the bug take their scratch paths from the <c>$RUNNER_TEMP</c>
+    /// environment variable, readable in every step and naming the same directory, so the whole family
+    /// already has one idiom and this keeps it. A narrower assertion would have to decide which scopes are
+    /// safe, and be re-derived by whoever next moves a path between them.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void No_template_reads_the_runner_context()
+    {
+        foreach (var name in Templates)
+        {
+            foreach (var line in Runnable(name))
+            {
+                line.Contains("runner.", StringComparison.Ordinal).ShouldBeFalse(
+                    $"{name} reads the `runner` context. It does not exist in a job-level `env:`, and "
+                    + "GitHub rejects the whole file rather than resolving it empty — as a 0s run "
+                    + "attributed to `push`, with no annotation naming the line. Use the $RUNNER_TEMP "
+                    + $"environment variable in a step instead: {line.Trim()}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Every template grants the <c>packages: read</c> its <c>dotnet tool restore</c> cannot work without.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each of these files declares an explicit <c>permissions:</c> block, and an explicit block sets every
+    /// scope it does not name to <c>none</c>. All six named <c>contents</c> and <c>pull-requests</c> and
+    /// none named <c>packages</c>, so GITHUB_TOKEN reached the feed with no package access whatever and
+    /// <see cref="Every_template_restores_the_pinned_tool_before_running_it"/>'s restore died on
+    /// <c>Unhandled exception: Response status code does not indicate success: 403 (Forbidden)</c> —
+    /// which names neither the feed, nor the scope, nor DocuMe.
+    /// </para>
+    /// <para>
+    /// Necessary and not sufficient, and the insufficiency is worth recording next to the assertion so the
+    /// next reader does not conclude the grant is redundant: a GitHub Packages package is scoped to the
+    /// repository that published it, so a consumer repo also has to be granted read on the package itself.
+    /// That half cannot be tested from here — it is state in another repository's settings — which is
+    /// exactly why the feed step's comment now carries it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_template_grants_the_packages_scope_its_restore_needs()
+    {
+        foreach (var name in Templates)
+        {
+            var root = Root(name);
+
+            Keys(root).ShouldContain(
+                "permissions",
+                $"{name} declares no `permissions:` block, so this assertion is about nothing.");
+
+            var permissions = Mapping(root, "permissions");
+
+            var denied =
+                $"{name} restores DocuMe.Cli from GitHub Packages but grants no `packages` scope. An "
+                + "explicit `permissions:` block denies every scope it does not name, so the restore "
+                + "fails on a bare 403 that names neither the feed nor the scope.";
+
+            Keys(permissions).ShouldContain("packages", denied);
+
+            Scalar(permissions.Children.Single(child => IsKey(child.Key, "packages")).Value).ShouldBe(
+                "read",
+                $"{name}: the restore reads the feed and never writes to it, so `packages` is `read`.");
+        }
+    }
+
     [Fact]
     public void Every_template_restores_the_pinned_tool_before_running_it()
     {

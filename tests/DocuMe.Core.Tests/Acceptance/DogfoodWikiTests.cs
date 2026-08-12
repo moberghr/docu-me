@@ -29,8 +29,17 @@ namespace DocuMe.Core.Tests.Acceptance;
 public sealed class DogfoodWikiTests
 {
     /// <summary>Directory names that hold no source and would dominate the repo walk.</summary>
+    /// <remarks>
+    /// <c>.playwright-mcp</c> is here for a reason the others are not. It is console logs and page
+    /// snapshots, written into whatever directory the Playwright MCP server is pointed at, so it appears in
+    /// a working tree without anyone adding it — and this walk reads the filesystem, not git. It therefore
+    /// reded <see cref="Every_top_level_directory_is_declared_shipped_or_not"/> for every developer who had
+    /// run that server here, on a suite that stayed green in CI, where the directory does not exist.
+    /// Ignoring it in <c>.gitignore</c> is worth doing and is NOT what fixes this: nothing in this file
+    /// reads that.
+    /// </remarks>
     private static readonly HashSet<string> SkippedDirectories =
-        new(StringComparer.Ordinal) { ".git", ".mtk", "bin", "obj", "node_modules" };
+        new(StringComparer.Ordinal) { ".git", ".mtk", ".playwright-mcp", "bin", "obj", "node_modules" };
 
     /// <summary>
     /// What a consumer receives: the marketplace this repo is, the tool, the plugin, the files

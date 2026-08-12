@@ -50,7 +50,12 @@ public sealed class WikiIndexPageTests
         ("default branch", "your default branch", "your default branch"),
         ("wiki root", "`paths:` your wiki root", "your wiki root"),
         ("deploy workflow name", "your deploy workflow", "the name of your deploy workflow"),
-        ("packages token", "EDIT BEFORE USE only in two cases", "packages token"),
+
+        // Was ("packages token", "EDIT BEFORE USE only in two cases", "packages token"), which named the
+        // wrong remedy: a PAT reads as the fix for a cross-org edge case, when in fact NO repository's
+        // GITHUB_TOKEN can read a package published by another repository, same org or not. The edit a
+        // consumer actually has to make is a grant on the package.
+        ("package access", "Manage Actions access", "read access to the DocuMe.Cli package"),
         ("model api key", "ANTHROPIC_API_KEY must exist as a repository secret", "`ANTHROPIC_API_KEY`"),
         ("plugin ref", "pin `ref:` to the DocuMe release", "pin the plugin to"),
     ];
