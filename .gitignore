@@ -17,3 +17,9 @@ node_modules/
 # Written whenever a probe imports tools/loop/check-state-size.py as a module (iter137's group D).
 __pycache__/
 
+# Playwright MCP's console logs and page snapshots, written into the directory the server is pointed
+# at. Untracked junk, not source. Ignoring it does NOT keep it out of DogfoodWikiTests' repo walk,
+# which enumerates the filesystem and filters on SkippedDirectories rather than reading this file —
+# so a local Playwright run still reds `Every_top_level_directory_is_declared_shipped_or_not`.
+.playwright-mcp/
+
