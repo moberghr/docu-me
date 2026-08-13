@@ -1,0 +1,91 @@
+{
+  "slug": "agent-rail-selection",
+  "date": "2026-08-13",
+  "scope": "new-feature",
+  "baseline_area": "scaffolding",
+  "change_manifest": [
+    { "path": "tests/DocuMe.Core.Tests/Fixtures/ShippedTree.cs", "action": "modify", "purpose": "B0 baseline unblock approved at the gate: AGENTS.md declared OutsideTheQuestion", "mechanical": false },
+    { "path": "tests/DocuMe.Core.Tests/Acceptance/DogfoodWikiTests.cs", "action": "modify", "purpose": "B0 baseline unblock approved at the gate: .codex/ declared an unshipped root", "mechanical": false },
+    { "path": "templates/workflows/docs-refresh.claude.yml", "action": "create", "purpose": "rename of docs-refresh.yml; bytes unchanged", "mechanical": true },
+    { "path": "templates/workflows/docs-feedback.claude.yml", "action": "create", "purpose": "rename of docs-feedback.yml; bytes unchanged", "mechanical": true },
+    { "path": "templates/workflows/docs-refresh.yml", "action": "delete", "purpose": "renamed to the .claude. infix", "mechanical": true },
+    { "path": "templates/workflows/docs-feedback.yml", "action": "delete", "purpose": "renamed to the .claude. infix", "mechanical": true },
+    { "path": "templates/workflows/docs-refresh.copilot.yml", "action": "create", "purpose": "Copilot CLI spelling of the nightly refresh job", "mechanical": false },
+    { "path": "templates/workflows/docs-feedback.copilot.yml", "action": "create", "purpose": "Copilot CLI spelling of the comment-triage job", "mechanical": false },
+    { "path": "src/DocuMe.Core/Scaffolding/BundledTemplates.cs", "action": "modify", "purpose": "parse the rail infix, expose per-rail lists, throw on an unrecognised infix", "mechanical": false },
+    { "path": "src/DocuMe.Core/Scaffolding/ProjectScaffolder.cs", "action": "modify", "purpose": "resolve the rail, scaffold one variant under the bare name, emit the contradiction note", "mechanical": false },
+    { "path": "src/DocuMe.Core/Config/AgentRail.cs", "action": "create", "purpose": "the rail enum; manifest refinement during B1 — the approved design needs the type to live somewhere and DocumeConfig.cs was the placeholder", "mechanical": false },
+    { "path": "src/DocuMe.Core/Config/DocumeConfig.cs", "action": "modify", "purpose": "agent property", "mechanical": false },
+    { "path": "src/DocuMe.Cli/Commands/InitCommand.cs", "action": "modify", "purpose": "--agent option, value validation, pass-through", "mechanical": false },
+    { "path": "schema/docume.schema.json", "action": "modify", "purpose": "agent enum claude|copilot", "mechanical": false },
+    { "path": "docs/wiki/20-reference/cli.md", "action": "modify", "purpose": "--agent row in init's option table", "mechanical": false },
+    { "path": "docs/wiki/20-reference/configuration.md", "action": "modify", "purpose": "agent key", "mechanical": false },
+    { "path": "docs/wiki/20-reference/workflows.md", "action": "modify", "purpose": "document the two rails", "mechanical": false },
+    { "path": "README.md", "action": "modify", "purpose": "one line in the init section", "mechanical": false },
+    { "path": "tests/DocuMe.Core.Tests/Scaffolding/ProjectScaffolderTests.cs", "action": "modify", "purpose": "SC1-SC5, SC7; teach anti-fork and add-a-file assertions the rail infix", "mechanical": false },
+    { "path": "tests/DocuMe.Core.Tests/Templates/WorkflowTemplateTests.cs", "action": "modify", "purpose": "SC6; model-driven assertions across both rails", "mechanical": false },
+    { "path": "tests/DocuMe.Core.Tests/Templates/WorkflowShellTests.cs", "action": "modify", "purpose": "SC6; Copilot drift gate", "mechanical": false },
+    { "path": "tests/DocuMe.Core.Tests/Templates/WorkflowsReferencePageTests.cs", "action": "modify", "purpose": "reference page covers both rails", "mechanical": false },
+    { "path": "tests/DocuMe.Core.Tests/Config/ConfigSchemaTests.cs", "action": "modify", "purpose": "SC3; agent accepted, bad value rejected", "mechanical": false },
+    { "path": "tests/DocuMe.Core.Tests/Config/ConfigReferencePageTests.cs", "action": "modify", "purpose": "SC8", "mechanical": false },
+    { "path": "tests/DocuMe.Core.Tests/Cli/CliReferencePageTests.cs", "action": "modify", "purpose": "SC8; --agent row", "mechanical": false },
+    { "path": "tests/DocuMe.Core.Tests/Packaging/ReadmeCliContractTests.cs", "action": "modify", "purpose": "README contract", "mechanical": false },
+    { "path": "tests/DocuMe.Core.Tests/Scaffolding/WikiAdopterTests.cs", "action": "modify", "purpose": "doc-comment cref follows Scaffold's new signature; no assertion change", "mechanical": true }
+  ],
+  "public_contracts": [
+    { "kind": "cli-flag", "signature": "docume init --agent <claude|copilot>", "change": "new", "surface": "internal-tooling" },
+    { "kind": "method", "signature": "DocuMe.Core.Scaffolding.ProjectScaffolder.Scaffold(string, string?, string?, bool, string?, string?)", "change": "modified", "surface": "external" },
+    { "kind": "event", "signature": "docume.json \"agent\": \"claude\"|\"copilot\"", "change": "new", "surface": "external" }
+  ],
+  "success_criteria": [
+    { "id": "SC1", "description": "init --agent copilot scaffolds the Copilot spelling of both model workflows and nothing of the Claude one", "verification": "ProjectScaffolderTests", "evidence_channel": "test-run", "observable": ".github/workflows/docs-refresh.yml byte-equals templates/workflows/docs-refresh.copilot.yml and no .claude.yml/.copilot.yml exists under .github/workflows/" },
+    { "id": "SC2", "description": "init --agent claude and bare init are byte-identical to today's output", "verification": "ProjectScaffolderTests", "evidence_channel": "test-run", "observable": "all six scaffolded workflow files byte-equal the pre-change baseline" },
+    { "id": "SC3", "description": "the rail round-trips through docume.json", "verification": "ProjectScaffolderTests, ConfigSchemaTests", "evidence_channel": "test-run", "observable": "docume.json contains \"agent\": \"copilot\" after init --agent copilot, and a second bare init reports both model workflows skipped" },
+    { "id": "SC4", "description": "a contradicting re-run is non-destructive and names the fix", "verification": "ProjectScaffolderTests", "evidence_channel": "test-run", "observable": "both model workflows return ScaffoldAction.Skipped with a non-null note naming both files, and on-disk bytes are unchanged" },
+    { "id": "SC5", "description": "the four rail-agnostic workflows are unaffected on both rails", "verification": "ProjectScaffolderTests", "evidence_channel": "test-run", "observable": "the four scaffolded files byte-equal their bare-named templates under either --agent value" },
+    { "id": "SC6", "description": "both Copilot templates are valid, gated workflows", "verification": "WorkflowTemplateTests, WorkflowShellTests", "evidence_channel": "test-run", "observable": "each parses as YAML, gates its model step on hasDrift or untriaged-count, and contains no --allow-all-tools" },
+    { "id": "SC7", "description": "the glob's add-a-file-and-it-ships property survives", "verification": "ProjectScaffolderTests", "evidence_channel": "test-run", "observable": "a rail-agnostic .yml added to templates/workflows/ is scaffolded with no scaffolder edit" },
+    { "id": "SC8", "description": "--agent and agent are documented where the suite already polices docs", "verification": "CliReferencePageTests, ConfigReferencePageTests", "evidence_channel": "test-run", "observable": "--agent appears in init's option table in cli.md and agent appears in configuration.md" }
+  ],
+  "test_manifest": [
+    { "path": "tests/DocuMe.Core.Tests/Scaffolding/ProjectScaffolderTests.cs", "covers": ["SC1", "SC2", "SC3", "SC4", "SC5", "SC7"] },
+    { "path": "tests/DocuMe.Core.Tests/Templates/WorkflowTemplateTests.cs", "covers": ["SC6"] },
+    { "path": "tests/DocuMe.Core.Tests/Templates/WorkflowShellTests.cs", "covers": ["SC6"] },
+    { "path": "tests/DocuMe.Core.Tests/Config/ConfigSchemaTests.cs", "covers": ["SC3"] },
+    { "path": "tests/DocuMe.Core.Tests/Config/ConfigReferencePageTests.cs", "covers": ["SC8"] },
+    { "path": "tests/DocuMe.Core.Tests/Cli/CliReferencePageTests.cs", "covers": ["SC8"] }
+  ],
+  "out_of_scope": [
+    "installing either workflow into moberghr/inventhor",
+    "any change to the three SKILL.md bodies",
+    "porting docs-loop (it has no workflow template)",
+    ".claude/analytics.json",
+    "tools/loop/done-archive.jsonl",
+    "tools/loop/run-suite.py",
+    "tools/loop/state.json",
+    "tests/golden/.claude/",
+    ".codex/",
+    "AGENTS.md"
+  ],
+  "security_impact": "secrets-change",
+  "delta": {
+    "adds": ["docume init --agent", "docume.json agent key", "copilot rail templates"],
+    "modifies": ["BundledTemplates rail parsing", "ProjectScaffolder rail selection"],
+    "removes": []
+  },
+  "assumptions": [
+    "[CITED:https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-programmatic-reference] Copilot CLI supports -p, --model, --allow-tool, --no-ask-user, --share, --secret-env-vars; token precedence COPILOT_GITHUB_TOKEN -> GH_TOKEN -> GITHUB_TOKEN",
+    "[CITED:https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills] Copilot CLI reads SKILL.md from .github/skills, .claude/skills, .agents/skills and invokes by /name",
+    "[VERIFIED:src/DocuMe.Core/Scaffolding/ProjectScaffolder.cs:461] Copy already returns Skipped for an existing file, so the non-destructive floor needs no new code",
+    "[VERIFIED:src/DocuMe.Core/Scaffolding/ProjectScaffolder.cs:145] init already reads back the config it just wrote, so the rail read-back point exists",
+    "[ASSUMED] --secret-env-vars accepts repetition and bare --allow-tool write is valid without a path filter; neither is stated in the GitHub docs",
+    "[ASSUMED] the docs-feedback skill's prompt-injection clause (rule §1.3) holds under a Copilot-driven run; this ships the rail, it does not prove the clause"
+  ],
+  "risks": [
+    "[VERIFIED:tests/DocuMe.Core.Tests/Scaffolding/ProjectScaffolderTests.cs:142] the anti-fork assertion maps template filename 1:1 onto scaffolded filename; the infix breaks that mapping by design and the test must learn the rail rather than be weakened",
+    "[VERIFIED:templates/workflows/docs-refresh.yml:64] a ${{ runner.temp }} in a job-level env: is rejected by GitHub with a 0s run and no annotation; this shipped broken once in v0.1.0",
+    "trap: a typo'd rail infix would scaffold a second nightly job racing one concurrency group, so an unrecognised infix throws at load rather than passing through",
+    "[VERIFIED:dotnet test] baseline is red before this change: ShippedTreeCoverageTests and DogfoodWikiTests fail on AGENTS.md and .codex/, created 2026-08-13 11:59:21 by the Codex plugin setup; blocking under §8.3",
+    "dirty-worktree: tests/DocuMe.Core.Tests/Cli/CliReferencePageTests.cs is both uncommitted (iteration-203 work) and in the change manifest — Phase 2.9 collision"
+  ]
+}

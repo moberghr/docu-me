@@ -1,0 +1,363 @@
+# DocuMe — nightly documentation refresh via headless Copilot CLI (PLAN.md §10, third bullet; §11).
+#
+# This is the Copilot rail of docs-refresh.yml. Everything that decides WHETHER to run a model is
+# identical to the Claude variant and deliberately so: the baseline read, the drift precheck, the jq
+# guards, the branch confirmation. Only the five steps that run the model differ. Diff the two files and
+# the difference should be exactly that; if it is more, one of them has drifted.
+#
+# What it does: asks `docume drift` which wiki pages derive from code that changed since the wiki was last
+# generated, and if any did, runs the `/docs-refresh` skill to rewrite them and open a
+# `docs/refresh-<date>` PR. Merging that PR is what republishes them, through docs-publish.yml.
+#
+# COST. The Claude variant carries a measured datapoint (one page, one changed source file, Opus 5: 24
+# turns, 168 s, $1.31). That number does NOT transfer to this file and no substitute is offered, because
+# metering here is premium requests against a Copilot seat rather than tokens against an API key, and the
+# rate a headless Actions run draws them at is a question for your org's plan. Measure one night before
+# you budget a month. What does transfer is the shape: the drift precheck below skips the model entirely
+# when nothing drifted, and cost scales with the diff rather than with the size of the wiki.
+#
+# It holds NO Confluence credentials, like docs-drift-pr.yml and for the same reason. Everything this job
+# runs is local: the drift report is a diff, `docume status --offline` skips its one request, and
+# publishing is a separate workflow behind a human's merge. The unsupervised model run never has the
+# publishing token in its environment (rule §0.4: skills output PRs, only the CLI writes to Confluence).
+#
+# EDIT BEFORE USE:
+#   * COPILOT_GITHUB_TOKEN must exist as a repository secret. Read the comment on it before you assume
+#     the built-in GITHUB_TOKEN will do. This is the single most likely first failure.
+#   * The plugin step must point at the DocuMe plugin your team installs — see the comment on it.
+#   * The --allow-tool list on the model step is the other thing to expect to iterate on.
+#   * `cron:` is UTC.
+name: docs-refresh
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: docume-refresh
+  cancel-in-progress: false
+
+# The skill pushes a branch and opens a PR; it never pushes to the default branch (§10, rule §1.5).
+permissions:
+  contents: write
+  pull-requests: write
+  # `dotnet tool restore` below reads DocuMe.Cli from GitHub Packages, which authenticates every
+  # read. An explicit `permissions:` block sets every scope it does not name to none, so without
+  # this line GITHUB_TOKEN arrives with no package access at all and the restore dies on a bare
+  # "403 (Forbidden)" naming neither the feed nor the scope. Necessary, and not sufficient — see
+  # the note on the feed step for the grant it still needs.
+  packages: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      # TWO tokens, doing two different jobs, and conflating them is the failure this comment exists to
+      # prevent.
+      #
+      # GH_TOKEN drives `gh` inside the skill (push branch, open PR). The built-in repo-scoped token is
+      # exactly right for that, unchanged from the Claude variant.
+      #
+      # COPILOT_GITHUB_TOKEN drives the MODEL. Copilot CLI resolves its token in the order
+      # COPILOT_GITHUB_TOKEN -> GH_TOKEN -> GITHUB_TOKEN, and that fallback chain is a trap here: a
+      # Copilot entitlement belongs to a USER with a seat, and the Actions GITHUB_TOKEN is an
+      # installation token belonging to no user. So an empty secret does not fail loudly, it silently
+      # falls through to a token that will be refused for entitlement reasons, at the far end of a job
+      # that already spent five minutes restoring dotnet. Hence the preflight step below.
+      #
+      # Supply a PAT belonging to an account that holds a Copilot seat. That is a long-lived
+      # user-scoped credential in CI, which is a real thing to own and rotate, and it is worth weighing
+      # against the ANTHROPIC_API_KEY it replaces rather than assuming it is free because the seat
+      # already exists.
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Sonnet through the Copilot rail is the low-risk port: the skill is a 225-line contract with hard
+      # stops, and keeping the model family constant while changing the billing rail retires most of the
+      # instruction-following risk in one variable. Switch to a GPT model only after a supervised run you
+      # have read end to end. `copilot --help` lists what your plan actually offers.
+      COPILOT_MODEL: claude-sonnet-4.6
+    steps:
+      # The `runner` context is available from step level down and NOT in a job-level `env:`, where
+      # ${{ runner.temp }} does not resolve empty — GitHub rejects the whole file. The symptom points
+      # nowhere near the cause: a 0 s run attributed to the PUSH event, on a workflow whose triggers do
+      # not include push, saying only "This run likely failed because of a workflow file issue" with no
+      # annotation and no line number. $RUNNER_TEMP is the environment variable of the same directory
+      # and is readable in every step, so the paths stay defined once and stay out of the workspace.
+      - name: Resolve scratch paths
+        run: |
+          set -euo pipefail
+          echo "DRIFT_FILE=$RUNNER_TEMP/docume-drift.json" >> "$GITHUB_ENV"
+          echo "BRANCHES_BEFORE=$RUNNER_TEMP/docume-refresh-branches" >> "$GITHUB_ENV"
+          echo "TRANSCRIPT=$RUNNER_TEMP/docume-refresh-transcript.md" >> "$GITHUB_ENV"
+
+      # Cheap, and it buys a legible failure at second 5 instead of an entitlement error at minute 6.
+      # See the COPILOT_GITHUB_TOKEN comment above for why an unset secret would otherwise not announce
+      # itself. Deliberately placed before checkout: nothing below it is worth doing without a model.
+      - name: Check the Copilot token is present
+        run: |
+          set -euo pipefail
+          if [ -z "${COPILOT_GITHUB_TOKEN:-}" ]; then
+            echo "::error title=DocuMe::COPILOT_GITHUB_TOKEN is empty. Copilot CLI would silently fall back to the repo-scoped GITHUB_TOKEN, which carries no Copilot entitlement, and fail later with a message about the token rather than about this secret. Add a PAT from an account holding a Copilot seat."
+            exit 1
+          fi
+
+      # fetch-depth: 0 because the baseline is an arbitrary older sha — the commit the wiki was last
+      # generated against, which may be months back. A depth-1 clone cannot resolve it, and the skill is
+      # instructed to stop rather than report zero drift.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # DocuMe.Cli is published to GitHub Packages, not nuget.org (PLAN.md §12), and GitHub Packages
+      # authenticates every read — including a public package. Without this step the restore below sees
+      # nuget.org alone and fails with NuGet's own wording, which names neither DocuMe nor the feed it
+      # should have looked in. That failure is a consumer's FIRST docs job, on their first push.
+      #
+      # EDIT BEFORE USE. `secrets.GITHUB_TOKEN` is NOT sufficient on its own, and being in the same
+      # organisation does not change that: a GitHub Packages package is scoped to the repository that
+      # PUBLISHED it, so a token minted for this repo is refused with 403 no matter what scopes it holds.
+      # Fix it at the package: Packages -> DocuMe.Cli -> Manage Actions access -> add this repository with
+      # read, and the same for DocuMe.Core. The alternative is a `DOCUME_PACKAGES_TOKEN` secret holding a
+      # PAT with `read:packages`, which the expression below prefers when present — a long-lived
+      # credential to own and rotate, where the grant is neither. And if this repo commits a NuGet.config
+      # containing <clear />, add the feed there instead — a repo-level clear discards the source this
+      # step writes at the user level.
+      - name: Configure the DocuMe package feed
+        env:
+          FEED_USER: ${{ github.actor }}
+          FEED_TOKEN: ${{ secrets.DOCUME_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+        run: >-
+          dotnet nuget add source https://nuget.pkg.github.com/moberghr/index.json
+          --name docume
+          --username "$FEED_USER"
+          --password "$FEED_TOKEN"
+          --store-password-in-clear-text
+
+      # §12: consumers pin the tool version in .config/dotnet-tools.json, so every workflow restores the
+      # manifest instead of installing a floating latest.
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Read the wiki baseline
+        id: baseline
+        run: |
+          set -euo pipefail
+
+          if [ ! -f docume.json ]; then
+            echo "::error title=DocuMe::No docume.json in the repository root. This workflow reads the wiki root from it. Run \`docume init\` (or \`docume init --adopt\` over an existing wiki) and commit the result."
+            exit 1
+          fi
+
+          if ! root=$(jq -r '.wiki.root // "docs/wiki"' docume.json); then
+            echo "::error title=DocuMe::docume.json is present but jq could not read it (see the error above). Every path this workflow uses comes out of it, so nothing can run until it parses."
+            exit 1
+          fi
+
+          state="$root/_meta/state.json"
+
+          # Absent state file guarded as in docs-drift.yml, and it bites harder on this one: this job is
+          # nightly, so the failure it used to produce was a red cron check every morning on a repo whose
+          # only problem was that nobody had generated the wiki yet — which is precisely what the "No
+          # baseline yet" warning below exists to say calmly.
+          sha=''
+          if [ -f "$state" ]; then
+            if ! sha=$(jq -r '.baselineSha // empty' "$state"); then
+              echo "::error title=DocuMe::$state is present but jq could not read it (see the error above). It is machine-owned (§5.3) — if it was hand-edited, revert it; the docs/sync PR carries the good copy."
+              exit 1
+            fi
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # Not-yet-configured, not a failure — same as docs-drift.yml. baselineSha is stamped by the
+      # generation pass, so a wiki nobody has generated has nothing to refresh from, and there is nothing
+      # a nightly job can do about that.
+      - name: No baseline yet
+        if: steps.baseline.outputs.sha == ''
+        run: |
+          echo "::warning title=DocuMe::baselineSha is empty in the state file, so there is no baseline to \
+          refresh from. Run /docs-loop to generate the wiki and merge its PR."
+
+      # The cheap half, and the gate on the expensive one. `hasDrift` is the CLI's own answer to "is there
+      # work", so the decision is not re-derived here from a page count that would disagree with it.
+      - name: Check for drift
+        id: drift
+        if: steps.baseline.outputs.sha != ''
+        run: |
+          set -euo pipefail
+          dotnet tool run docume drift --baseline "${{ steps.baseline.outputs.sha }}" --format json \
+            > "$DRIFT_FILE"
+
+          # Read into variables first. `echo "has=$(jq …)"` looks equivalent and is not: a
+          # substitution nested inside an argument is invisible to `set -e`, so a report jq cannot
+          # read writes `has=` and exits 0 — and every `if:` below reads that as "nothing drifted",
+          # so the job goes green having skipped the work it exists to do. A bare assignment IS
+          # seen, which is why every other jq read in these templates is spelled this way.
+          # The emptiness checks are not belt-and-braces: jq on an empty document exits 0 and prints
+          # nothing, so without them a zero-byte report reaches the same green "nothing drifted".
+          if ! has=$(jq -r '.hasDrift' "$DRIFT_FILE") \
+            || ! affected=$(jq -r '.affectedCount' "$DRIFT_FILE") \
+            || [ -z "$has" ] || [ -z "$affected" ]; then
+            echo "::error title=DocuMe::\`docume drift\` exited 0 but jq could not read its report (see the error above). That report is this job's only answer to whether there is work, so it stops here rather than reporting no drift."
+            exit 1
+          fi
+          echo "has=$has" >> "$GITHUB_OUTPUT"
+          echo "affected=$affected" >> "$GITHUB_OUTPUT"
+          jq -r '.sourcesUndeclared' "$DRIFT_FILE" | grep -qx true && \
+            echo "::warning title=DocuMe::No page declares 'sources', so drift detection is off for this \
+            wiki. Add sources to page frontmatter (§5.2) — a /docs-loop job." || true
+
+      - name: Nothing drifted
+        if: steps.baseline.outputs.sha != '' && steps.drift.outputs.has != 'true'
+        run: |
+          echo "::notice title=DocuMe::No page's declared sources changed since \
+          ${{ steps.baseline.outputs.sha }}. No model run, no PR."
+
+      # Node is here for Copilot CLI, not for DocuMe. (The mermaid renderer also needs Node, but it runs
+      # in the publish path, not here — a refresh writes markdown.)
+      - name: Set up Node
+        if: steps.drift.outputs.has == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Pin this to an exact version once you have picked one. A floating `latest` in an unattended
+      # nightly job means the thing driving your repo's write token can change under you between runs,
+      # which is the same argument `dotnet tool restore` settles for docume.
+      - name: Install Copilot CLI
+        if: steps.drift.outputs.has == 'true'
+        run: npm install -g @github/copilot@latest
+
+      # Where the skill comes from. EDIT BEFORE USE: pin `ref:` to the DocuMe release your
+      # .config/dotnet-tools.json pins the CLI to. §12 ships CLI, library and plugin under one version, so
+      # a matching tag is the entire compatibility story between the skill and the commands it runs.
+      #
+      # While docu-me is private, add `token: ${{ secrets.DOCUME_PLUGIN_TOKEN }}` here — the default
+      # GITHUB_TOKEN is scoped to this repository and cannot read another one.
+      - name: Fetch the DocuMe plugin
+        if: steps.drift.outputs.has == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: moberghr/docu-me
+          ref: main
+          path: .docume-plugin
+          sparse-checkout: plugin
+
+      # The one structural difference from the Claude variant. Claude Code takes --plugin-dir and loads
+      # the plugin for that session only; Copilot CLI has no equivalent, and discovers skills by scanning
+      # known directories. So the skill gets copied into one of them. `.agents/skills` is chosen over the
+      # other two supported locations on purpose: `.github/skills` and `.claude/skills` are both places a
+      # consumer plausibly already keeps hand-written skills, and this step would then be overwriting
+      # someone's file with a fetched one.
+      #
+      # The tracked-copy branch is not hypothetical. A repo that vendors the skill deliberately (to pin
+      # it, or to amend it for local conventions) must win over the fetched copy, or the vendoring
+      # silently does nothing every night.
+      - name: Install the skill where Copilot CLI will find it
+        if: steps.drift.outputs.has == 'true'
+        run: |
+          set -euo pipefail
+          dest=.agents/skills/docs-refresh
+          if git ls-files --error-unmatch "$dest/SKILL.md" >/dev/null 2>&1; then
+            echo "::notice title=DocuMe::$dest is committed in this repo, so the fetched plugin copy is ignored and the committed one runs."
+          else
+            mkdir -p "$(dirname "$dest")"
+            rm -rf "$dest"
+            cp -R .docume-plugin/plugin/skills/docs-refresh "$dest"
+            # Keep the copy out of the skill's `git status`, same reasoning as the plugin checkout.
+            echo "/.agents/skills/docs-refresh/" >> .git/info/exclude
+          fi
+
+      - name: Prepare the workspace
+        if: steps.drift.outputs.has == 'true'
+        run: |
+          set -euo pipefail
+          # The commit the skill makes needs an identity, and a runner has none by default.
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          # The plugin checkout lands inside the workspace, so keep it out of the skill's `git status`.
+          # info/exclude rather than .gitignore: it is this runner's business, not the repo's.
+          echo '/.docume-plugin/' >> .git/info/exclude
+          git ls-remote --heads origin 'refs/heads/docs/refresh-*' > "$BRANCHES_BEFORE"
+
+      # §11's headless invocation, Copilot spelling. `/docs-refresh` is unchanged: Copilot CLI takes the
+      # same leading-slash form to invoke a skill by name, so the prompt string is portable even though
+      # nothing around it is.
+      #
+      # THE TOOL GRANT IS THE PART TO EXPECT TO ITERATE ON, and the part that carries the decision.
+      # Copilot CLI offers --allow-all-tools --allow-all-paths, which is the blanket, and the blanket is
+      # what the Claude variant refuses on principle: this job holds a token that can push branches and
+      # open PRs, and a template is the worst place to hand a model unattended reach past that. So the
+      # grant below is enumerated instead — the four binaries the skill actually drives, plus write.
+      # `docume` runs through `dotnet tool run`, so `shell(docume:*)` is not needed and would not match.
+      #
+      # If a run HANGS rather than fails, that is the signature of a missing grant: tool consent and path
+      # consent are separate axes, and a headless run that needs consent for either waits on input that
+      # never arrives. Diagnose by adding --allow-all-tools --allow-all-paths temporarily, reading the
+      # transcript for what it actually reached for, then adding that one filter and taking the blanket
+      # back off. Do not leave the blanket on because it worked.
+      #
+      # --no-ask-user is the other half of the same problem: it stops the agent seeking clarification
+      # mid-run, which is a hang and not a question when nobody is at the terminal.
+      #
+      # --share writes the session transcript to a file, which the step after uploads. The Claude variant
+      # has a long comment lamenting that `claude -p` writes nothing until it exits, so a killed run
+      # leaves a blank log; this rail can simply keep the transcript, and the artifact survives a timeout
+      # because the upload runs on always(). Given that the real cost of this port is re-validating that
+      # the skill's hard stops still hold, an artifact you can read the morning after is not a nicety.
+      #
+      # --secret-env-vars names the variables to redact from that transcript. Neither token should ever
+      # reach it; this says so to the tool rather than trusting that it does not.
+      #
+      # timeout-minutes is not boilerplate. Without it a wedged run spends the job default (6 h). With it
+      # the runner labels the step ("The action … has timed out") next to whatever the transcript caught.
+      - name: Refresh the drifted pages
+        if: steps.drift.outputs.has == 'true'
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          echo "::notice title=DocuMe::${{ steps.drift.outputs.affected }} page(s) drifted since \
+          ${{ steps.baseline.outputs.sha }} — running /docs-refresh on $COPILOT_MODEL."
+          copilot -p '/docs-refresh' \
+            --model "$COPILOT_MODEL" \
+            --no-ask-user \
+            --share "$TRANSCRIPT" \
+            --secret-env-vars COPILOT_GITHUB_TOKEN \
+            --secret-env-vars GH_TOKEN \
+            --allow-tool 'shell(git:*)' \
+            --allow-tool 'shell(gh:*)' \
+            --allow-tool 'shell(dotnet:*)' \
+            --allow-tool 'shell(jq:*)' \
+            --allow-tool write
+
+      # always(): the transcript is most valuable on the runs that failed or timed out, which is exactly
+      # when a default `if` would skip it.
+      - name: Keep the transcript
+        if: always() && steps.drift.outputs.has == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-refresh-transcript
+          path: ${{ env.TRANSCRIPT }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      # A model run that exits 0 having done nothing is the failure mode this job actually has, and it
+      # would otherwise read as a green check. Drift was reported, so a refresh branch is the expected
+      # outcome; its absence gets said out loud rather than passed over.
+      - name: Confirm a refresh branch appeared
+        if: steps.drift.outputs.has == 'true'
+        run: |
+          set -euo pipefail
+          git ls-remote --heads origin 'refs/heads/docs/refresh-*' > "$RUNNER_TEMP/branches-after"
+          if diff -q "$BRANCHES_BEFORE" "$RUNNER_TEMP/branches-after" >/dev/null; then
+            echo "::warning title=DocuMe::${{ steps.drift.outputs.affected }} page(s) drifted but no \
+            docs/refresh-* branch was pushed. Read the transcript artifact: the skill stops without a PR \
+            when it cannot verify a claim, and it reports why."
+            exit 0
+          fi
+          echo "::notice title=DocuMe::Refresh branch(es) on origin:"
+          grep -o 'refs/heads/docs/refresh-.*' "$RUNNER_TEMP/branches-after" || true

@@ -1,0 +1,337 @@
+# DocuMe — triage the feedback inbox via headless Copilot CLI (PLAN.md §9, §11).
+#
+# This is the Copilot rail of docs-feedback. Everything that decides WHETHER to run a model is identical
+# to docs-feedback.claude.yml and deliberately so: the inbox locate, the untriaged count, the jq guards,
+# the branch confirmation. Only the steps that run the model differ. Diff the two files and the difference
+# should be exactly that; if it is more, one of them has drifted.
+#
+# What it does: when untriaged items are sitting in `_meta/feedback/inbox/`, runs the `/docs-feedback` skill
+# to verify each reviewer's claim against the code, fix the pages whose claims hold, and open a
+# `docs/feedback-<date>` PR carrying the fixes, the triage verdicts and the archive moves. Merging that PR
+# republishes the corrected pages through docs-publish.yml, which is also what answers the reviewers
+# (`docume sync --reply`, §9 step 5) — a reply is only true once the fix is live.
+#
+# The trigger is the inbox itself. docs-sync.yml ingests comments and opens the `docs/sync` PR; merging it
+# is what makes new items appear on the default branch, and that push lands here. So the model runs when
+# there is feedback and not on a clock. Two consequences worth knowing:
+#   * Merging this job's own PR fires it again (the archive moves are under the same path). The precheck
+#     below finds nothing untriaged and it costs no tokens, so the loop closes itself.
+#   * Nothing retries a run that ended without a PR. If you would rather have a safety net, add a
+#     `schedule:` block — the precheck makes an idle night free.
+#
+# Like docs-refresh.yml, this is a model run, so it costs money per run; and like it, it holds NO Confluence
+# credentials. Everything here is local: reading inbox items, reading code, `docume status --offline`, and a
+# PR. The unsupervised model run never has the publishing token in its environment (rule §0.4: skills output
+# PRs, only the CLI writes to Confluence), which is also why it cannot post the reply itself.
+#
+# EDIT BEFORE USE:
+#   * COPILOT_GITHUB_TOKEN must exist as a repository secret. Read the comment on it before you assume
+#     the built-in GITHUB_TOKEN will do. This is the single most likely first failure.
+#   * `branches:` must name your default branch, and `paths:` your wiki root if it is not docs/wiki.
+#   * The plugin step must point at the DocuMe plugin your team installs — see the comment on it.
+#   * The --allow-tool list on the model step is the other thing to expect to iterate on.
+name: docs-feedback
+
+on:
+  push:
+    branches: [main] # <- your default branch
+    paths:
+      - 'docs/wiki/_meta/feedback/inbox/**'
+  workflow_dispatch:
+
+# Its own group, not docume-state: this job writes no state file and pushes only to its own
+# `docs/feedback-<date>` branch. Not cancel-in-progress — a half-finished triage should finish and open its
+# PR rather than leave verified work in a runner nobody can read.
+concurrency:
+  group: docume-feedback
+  cancel-in-progress: false
+
+# The skill pushes a branch and opens a PR; it never pushes to the default branch (§9's CI posture,
+# rule §1.5).
+permissions:
+  contents: write
+  pull-requests: write
+  # `dotnet tool restore` below reads DocuMe.Cli from GitHub Packages, which authenticates every
+  # read. An explicit `permissions:` block sets every scope it does not name to none, so without
+  # this line GITHUB_TOKEN arrives with no package access at all and the restore dies on a bare
+  # "403 (Forbidden)" naming neither the feed nor the scope. Necessary, and not sufficient — see
+  # the note on the feed step for the grant it still needs.
+  packages: read
+
+jobs:
+  feedback:
+    runs-on: ubuntu-latest
+    env:
+      # TWO tokens doing two different jobs. GH_TOKEN drives `gh` inside the skill (push branch, open PR)
+      # and the built-in repo-scoped token is right for that. COPILOT_GITHUB_TOKEN drives the MODEL, and
+      # the fallback chain COPILOT_GITHUB_TOKEN -> GH_TOKEN -> GITHUB_TOKEN is a trap: a Copilot
+      # entitlement belongs to a USER with a seat and the Actions token belongs to no user, so an empty
+      # secret does not fail, it falls through to a token that is refused for entitlement reasons at the
+      # far end of a job that already spent minutes restoring dotnet. Hence the preflight step below.
+      # Supply a PAT from an account holding a Copilot seat.
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      # Sonnet through the Copilot rail is the low-risk port. It matters more here than on docs-refresh:
+      # this job's input is untrusted text a reviewer wrote in Confluence (rule §1.3), and resistance to
+      # an instruction hidden in a comment body is model-specific behaviour, not a property of the skill
+      # text. Change this only after a supervised run you have read end to end.
+      COPILOT_MODEL: claude-sonnet-4.6
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      # The `runner` context is available from step level down and NOT in a job-level `env:`, where
+      # ${{ runner.temp }} does not resolve empty — GitHub rejects the whole file. The symptom points
+      # nowhere near the cause: a 0 s run attributed to the PUSH event, on a workflow whose triggers do
+      # not include push, saying only "This run likely failed because of a workflow file issue" with no
+      # annotation and no line number. $RUNNER_TEMP is the environment variable of the same directory
+      # and is readable in every step, so the paths stay defined once and stay out of the workspace.
+      - name: Resolve scratch paths
+        run: |
+          set -euo pipefail
+          echo "BRANCHES_BEFORE=$RUNNER_TEMP/docume-feedback-branches" >> "$GITHUB_ENV"
+          echo "TRANSCRIPT=$RUNNER_TEMP/docume-feedback-transcript.md" >> "$GITHUB_ENV"
+
+      # Cheap, and it buys a legible failure at second 5 instead of an entitlement error at minute 6.
+      # See the COPILOT_GITHUB_TOKEN comment above for why an unset secret would not otherwise announce
+      # itself.
+      - name: Check the Copilot token is present
+        run: |
+          set -euo pipefail
+          if [ -z "${COPILOT_GITHUB_TOKEN:-}" ]; then
+            echo "::error title=DocuMe::COPILOT_GITHUB_TOKEN is empty. Copilot CLI would silently fall back to the repo-scoped GITHUB_TOKEN, which carries no Copilot entitlement, and fail later with a message about the token rather than about this secret. Add a PAT from an account holding a Copilot seat."
+            exit 1
+          fi
+
+      # No fetch-depth: 0, unlike docs-refresh.yml. That job diffs from an arbitrary older baseline; this
+      # one verifies claims against the code as it is now, which the skill is explicitly told to read at
+      # HEAD rather than from a diff. A shallow clone is the whole of what it needs.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # DocuMe.Cli is published to GitHub Packages, not nuget.org (PLAN.md §12), and GitHub Packages
+      # authenticates every read — including a public package. Without this step the restore below sees
+      # nuget.org alone and fails with NuGet's own wording, which names neither DocuMe nor the feed it
+      # should have looked in. That failure is a consumer's FIRST docs job, on their first push.
+      #
+      # EDIT BEFORE USE. `secrets.GITHUB_TOKEN` is NOT sufficient on its own, and being in the same
+      # organisation does not change that: a GitHub Packages package is scoped to the repository that
+      # PUBLISHED it, so a token minted for this repo is refused with 403 no matter what scopes it holds.
+      # Fix it at the package: Packages -> DocuMe.Cli -> Manage Actions access -> add this repository with
+      # read, and the same for DocuMe.Core. The alternative is a `DOCUME_PACKAGES_TOKEN` secret holding a
+      # PAT with `read:packages`, which the expression below prefers when present — a long-lived
+      # credential to own and rotate, where the grant is neither. And if this repo commits a NuGet.config
+      # containing <clear />, add the feed there instead — a repo-level clear discards the source this
+      # step writes at the user level.
+      - name: Configure the DocuMe package feed
+        env:
+          FEED_USER: ${{ github.actor }}
+          FEED_TOKEN: ${{ secrets.DOCUME_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+        run: >-
+          dotnet nuget add source https://nuget.pkg.github.com/moberghr/index.json
+          --name docume
+          --username "$FEED_USER"
+          --password "$FEED_TOKEN"
+          --store-password-in-clear-text
+
+      # §12: consumers pin the tool version in .config/dotnet-tools.json, so every workflow restores the
+      # manifest instead of installing a floating latest. The skill runs `docume status --offline` as its
+      # pre-PR check.
+      - name: Restore tools
+        run: dotnet tool restore
+
+      - name: Locate the feedback inbox
+        id: paths
+        run: |
+          set -euo pipefail
+
+          if [ ! -f docume.json ]; then
+            echo "::error title=DocuMe::No docume.json in the repository root. This workflow reads the wiki root from it. Run \`docume init\` (or \`docume init --adopt\` over an existing wiki) and commit the result."
+            exit 1
+          fi
+
+          # `if !` rather than a bare assignment, so `set -e` does not kill the step before the
+          # annotation is written. jq's own parse error is already on stderr above it.
+          if ! root=$(jq -r '.wiki.root // "docs/wiki"' docume.json); then
+            echo "::error title=DocuMe::docume.json is present but jq could not read it (see the error above). Every path this workflow uses comes out of it, so nothing can run until it parses."
+            exit 1
+          fi
+
+          # No state read: this job counts inbox items, and an inbox that does not exist yet is handled
+          # by the unexpanded-glob guard in the step below rather than here.
+          echo "inbox=$root/_meta/feedback/inbox" >> "$GITHUB_OUTPUT"
+
+      # The cheap half, and the gate on the expensive one: `status: new` is what §9 step 1 defines as the
+      # work list, and counting it is a jq read per file.
+      #
+      # An item that will not parse counts as work rather than as nothing. It is a committed, hand-editable
+      # file (§5.4), so a typo in one is realistic — and the skill reports it in the PR body, which is how a
+      # human finds out. Treating it as "no feedback" would drop a reviewer's comment silently, which is the
+      # one outcome this whole lifecycle is built to avoid.
+      - name: Count untriaged feedback
+        id: inbox
+        run: |
+          set -euo pipefail
+          inbox='${{ steps.paths.outputs.inbox }}'
+          new=0
+          unreadable=0
+          # An inbox that does not exist yet leaves the glob unexpanded, which `-e` filters out; a repo
+          # whose pages have drawn no comments is the ordinary case, not an error.
+          for item in "$inbox"/*.json; do
+            [ -e "$item" ] || continue
+            if status=$(jq -r '.status // empty' "$item" 2>/dev/null); then
+              if [ "$status" = 'new' ]; then new=$((new + 1)); fi
+            else
+              unreadable=$((unreadable + 1))
+              echo "::warning title=DocuMe::$item is not readable JSON. /docs-feedback will report it in \
+              the PR body; fix it by hand or delete it."
+            fi
+          done
+          if [ $((new + unreadable)) -gt 0 ]; then work=true; else work=false; fi
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          echo "work=$work" >> "$GITHUB_OUTPUT"
+
+      - name: Nothing to triage
+        if: steps.inbox.outputs.work != 'true'
+        run: |
+          echo "::notice title=DocuMe::No inbox item has status 'new'. No model run, no PR."
+
+      # Node is here for Copilot CLI, not for DocuMe.
+      - name: Set up Node
+        if: steps.inbox.outputs.work == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Pin this to an exact version once you have picked one, for the reason docs-refresh.yml gives: a
+      # floating `latest` in an unattended job means the thing driving your repo's write token can change
+      # under you between runs.
+      - name: Install Copilot CLI
+        if: steps.inbox.outputs.work == 'true'
+        run: npm install -g @github/copilot@latest
+
+      # Where the skill comes from. EDIT BEFORE USE: pin `ref:` to the DocuMe release your
+      # .config/dotnet-tools.json pins the CLI to. §12 ships CLI, library and plugin under one version, so a
+      # matching tag is the entire compatibility story between the skill and the commands it runs.
+      #
+      # A repo that would rather vendor the skill can delete this step and commit its own copy under one of
+      # the directories Copilot CLI scans — the install step below leaves a committed copy alone.
+      #
+      # While docu-me is private, add `token: ${{ secrets.DOCUME_PLUGIN_TOKEN }}` here — the default
+      # GITHUB_TOKEN is scoped to this repository and cannot read another one.
+      - name: Fetch the DocuMe plugin
+        if: steps.inbox.outputs.work == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: moberghr/docu-me
+          ref: main
+          path: .docume-plugin
+          sparse-checkout: plugin
+
+      # The one structural difference from the Claude rail. Claude Code takes --plugin-dir and loads the
+      # plugin for that session only; Copilot CLI has no equivalent and discovers skills by scanning known
+      # directories, so the skill gets copied into one. `.agents/skills` is chosen over the other two
+      # supported locations because `.github/skills` and `.claude/skills` are both places a consumer
+      # plausibly already keeps hand-written skills, and this step would then overwrite one with a fetched
+      # copy. A committed copy wins, or deliberate vendoring silently does nothing every run.
+      - name: Install the skill where Copilot CLI will find it
+        if: steps.inbox.outputs.work == 'true'
+        run: |
+          set -euo pipefail
+          dest=.agents/skills/docs-feedback
+          if git ls-files --error-unmatch "$dest/SKILL.md" >/dev/null 2>&1; then
+            echo "::notice title=DocuMe::$dest is committed in this repo, so the fetched plugin copy is ignored and the committed one runs."
+          else
+            mkdir -p "$(dirname "$dest")"
+            rm -rf "$dest"
+            cp -R .docume-plugin/plugin/skills/docs-feedback "$dest"
+            echo '/.agents/skills/docs-feedback/' >> .git/info/exclude
+          fi
+
+      - name: Prepare the workspace
+        if: steps.inbox.outputs.work == 'true'
+        run: |
+          set -euo pipefail
+          # The commit the skill makes needs an identity, and a runner has none by default.
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          # The plugin checkout lands inside the workspace, so keep it out of the skill's `git status` — and
+          # out of the `git mv` it runs against the inbox. info/exclude rather than .gitignore: it is this
+          # runner's business, not the repo's.
+          echo '/.docume-plugin/' >> .git/info/exclude
+          git ls-remote --heads origin 'refs/heads/docs/feedback-*' > "$BRANCHES_BEFORE"
+
+      # §11's headless invocation, Copilot spelling. `/docs-feedback` is unchanged: Copilot CLI takes the
+      # same leading-slash form to invoke a skill by name.
+      #
+      # THE TOOL GRANT CARRIES THE DECISION, and on this job more than any other. Copilot CLI offers
+      # --allow-all-tools --allow-all-paths; that blanket is what the Claude rail refuses on principle,
+      # and the reason it refuses is sharpest here — this job holds a token that can push branches and
+      # open PRs, and its input is untrusted text a reviewer wrote in Confluence (rule §1.3). An
+      # instruction hidden in a comment body reaching an unconstrained shell is the failure this
+      # enumeration exists to bound. `git mv` is covered by shell(git:*); `docume` runs through
+      # `dotnet tool run`, so shell(docume:*) would not match and is not needed.
+      #
+      # A HANG rather than a failure is the signature of a missing grant: tool consent and path consent
+      # are separate axes and a headless run needing either waits on input that never arrives. Diagnose
+      # by adding the blanket temporarily, read the transcript for what it reached for, add that one
+      # filter, take the blanket back off. Do not leave it on because it worked.
+      #
+      # --no-ask-user stops the agent seeking clarification mid-run, which is a hang and not a question
+      # when nobody is at the terminal.
+      #
+      # --share keeps the session transcript, which the step after uploads. On this job it is closer to
+      # required than useful: when a triage verdict looks wrong, the transcript is the only record of
+      # which comment text the model read and what it did with it.
+      #
+      # --secret-env-vars names the variables to redact from that transcript. Neither token should ever
+      # reach it; this says so to the tool rather than trusting that it does not.
+      #
+      # timeout-minutes: without it a wedged run spends the job default (6 h). With it the runner labels
+      # the step next to whatever the transcript caught.
+      - name: Triage the feedback
+        if: steps.inbox.outputs.work == 'true'
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          echo "::notice title=DocuMe::${{ steps.inbox.outputs.new }} untriaged inbox item(s) — running \
+          /docs-feedback."
+          copilot -p '/docs-feedback' \
+            --model "$COPILOT_MODEL" \
+            --no-ask-user \
+            --share "$TRANSCRIPT" \
+            --secret-env-vars COPILOT_GITHUB_TOKEN \
+            --secret-env-vars GH_TOKEN \
+            --allow-tool 'shell(git:*)' \
+            --allow-tool 'shell(gh:*)' \
+            --allow-tool 'shell(dotnet:*)' \
+            --allow-tool 'shell(jq:*)' \
+            --allow-tool write
+
+      # always(): the transcript is most valuable on the runs that failed or timed out, which is exactly
+      # when a default `if` would skip it.
+      - name: Keep the transcript
+        if: always() && steps.inbox.outputs.work == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-feedback-transcript
+          path: ${{ env.TRANSCRIPT }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      # A model run that exits 0 having done nothing is the failure mode this job actually has, and it would
+      # otherwise read as a green check. Items were waiting, so a feedback branch is the expected outcome;
+      # its absence gets said out loud rather than passed over.
+      - name: Confirm a feedback branch appeared
+        if: steps.inbox.outputs.work == 'true'
+        run: |
+          set -euo pipefail
+          git ls-remote --heads origin 'refs/heads/docs/feedback-*' > "$RUNNER_TEMP/branches-after"
+          if diff -q "$BRANCHES_BEFORE" "$RUNNER_TEMP/branches-after" >/dev/null; then
+            echo "::warning title=DocuMe::${{ steps.inbox.outputs.new }} item(s) were waiting but no \
+            docs/feedback-* branch was pushed. Read the transcript artifact: the skill stops without a PR \
+            it cannot verify a claim, and it reports why."
+            exit 0
+          fi
+          echo "::notice title=DocuMe::Feedback branch(es) on origin:"
+          grep -o 'refs/heads/docs/feedback-.*' "$RUNNER_TEMP/branches-after" || true

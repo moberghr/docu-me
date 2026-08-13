@@ -30,15 +30,28 @@ namespace DocuMe.Core.Tests.Templates;
 /// </remarks>
 public sealed class WorkflowTemplateTests
 {
-    /// <summary>The templates §14 names, by the filenames M6's <c>init</c> will scaffold.</summary>
+    /// <summary>
+    /// Every template file in <c>templates/workflows/</c>, by its own name rather than by the name a
+    /// consumer receives.
+    /// </summary>
+    /// <remarks>
+    /// The two are no longer the same thing. A model-running workflow ships one per-rail spelling —
+    /// <c>docs-refresh.claude.yml</c>, <c>docs-refresh.copilot.yml</c> — and whichever the rail selects
+    /// lands in a consumer repo as <c>docs-refresh.yml</c>. This list names the files on disk so that
+    /// every assertion below runs against BOTH rails: a Copilot variant that lost its timeout, leaked a
+    /// credential or dropped its permission gate is exactly as broken as a Claude one that did, and a
+    /// list of consumer-facing names would have checked only whichever rail happened to be the default.
+    /// </remarks>
     private static readonly string[] Templates =
     [
         "docs-drift.yml",
         "docs-drift-pr.yml",
         "docs-publish.yml",
         "docs-sync.yml",
-        "docs-refresh.yml",
-        "docs-feedback.yml",
+        "docs-refresh.claude.yml",
+        "docs-refresh.copilot.yml",
+        "docs-feedback.claude.yml",
+        "docs-feedback.copilot.yml",
     ];
 
     /// <summary>The templates that talk to Confluence, and so need both credential variables.</summary>
@@ -50,10 +63,16 @@ public sealed class WorkflowTemplateTests
     ];
 
     /// <summary>
-    /// The templates that run a model (§11's headless <c>claude -p</c>). Their output is a PR, so none of
-    /// them writes to Confluence and none of them holds a credential.
+    /// The templates that run a model (§11's headless invocation, <c>claude -p</c> or <c>copilot -p</c>).
+    /// Their output is a PR, so none of them writes to Confluence and none holds a Confluence credential.
     /// </summary>
-    private static readonly string[] ModelDriven = ["docs-refresh.yml", "docs-feedback.yml"];
+    private static readonly string[] ModelDriven =
+    [
+        "docs-refresh.claude.yml",
+        "docs-refresh.copilot.yml",
+        "docs-feedback.claude.yml",
+        "docs-feedback.copilot.yml",
+    ];
 
     /// <summary>
     /// GitHub's default job timeout in minutes — what a step with no <c>timeout-minutes</c> of its own
@@ -65,7 +84,11 @@ public sealed class WorkflowTemplateTests
     /// The templates whose only <c>docume</c> invocation happens inside the skill they run, so the literal
     /// command line is not in the yaml.
     /// </summary>
-    private static readonly string[] SkillDriven = ["docs-feedback.yml"];
+    private static readonly string[] SkillDriven =
+    [
+        "docs-feedback.claude.yml",
+        "docs-feedback.copilot.yml",
+    ];
 
     /// <summary>
     /// The templates that read <c>docume.json</c> to find the wiki root, and the job each does it in.
@@ -76,9 +99,72 @@ public sealed class WorkflowTemplateTests
         ("docs-publish.yml", "publish"),
         ("docs-sync.yml", "sync"),
         ("docs-drift.yml", "mark"),
-        ("docs-refresh.yml", "refresh"),
-        ("docs-feedback.yml", "feedback"),
+        ("docs-refresh.claude.yml", "refresh"),
+        ("docs-refresh.copilot.yml", "refresh"),
+        ("docs-feedback.claude.yml", "feedback"),
+        ("docs-feedback.copilot.yml", "feedback"),
     ];
+
+    /// <summary>
+    /// The Copilot rail's half of the tool-grant contract: the grant is spelled out, and the blanket
+    /// is absent.
+    /// </summary>
+    /// <remarks>
+    /// <c>--allow-all-tools</c> / <c>--allow-all-paths</c> are Copilot's equivalent of
+    /// <c>--dangerously-skip-permissions</c>, and they are refused for the identical reason: these jobs
+    /// hand an unattended model a token that can push branches and open PRs, and on
+    /// <c>docs-feedback</c> the input is text a reviewer wrote in Confluence (rule §1.3). The
+    /// executable yaml is what is searched, not the file — both templates discuss the blanket at length
+    /// in a comment explaining how to use it while diagnosing a hang, and a naive text search would
+    /// read that advice as the violation it warns against.
+    /// </remarks>
+    private static void AssertCopilotGrantIsEnumerated(string name, string runnable)
+    {
+        var blanket = $"{name} passes a blanket tool grant. That is Copilot's "
+            + "--dangerously-skip-permissions, and it is refused for the same reason: this job can push "
+            + "branches and open PRs unattended. Enumerate what the skill actually needs.";
+
+        runnable.ShouldNotContain("--allow-all-tools", customMessage: blanket);
+        runnable.ShouldNotContain("--allow-all-paths", customMessage: blanket);
+
+        var ungranted = $"{name} passes no --allow-tool, so the model run gets Copilot's default grant "
+            + "instead of one this repo decided on.";
+
+        var grants = runnable
+            .Split('\n')
+            .Count(line => line.Contains("--allow-tool", StringComparison.Ordinal));
+
+        grants.ShouldBeGreaterThan(0, ungranted);
+
+        // The three binaries every skill in this plugin reaches for: `docume` through `dotnet tool
+        // run`, the PR through `gh`, the branch and commit through `git`. A grant that dropped one
+        // fails at the step that needed it, mid-run, after the model has already been paid for.
+        foreach (var binary in new[] { "git", "gh", "dotnet" })
+        {
+            var unreachable = $"{name} never grants shell({binary}…), so the skill cannot run "
+                + $"`{binary}` — the run dies at the first step that needs it, having already spent.";
+
+            runnable.ShouldContain($"shell({binary}", customMessage: unreachable);
+        }
+    }
+
+    /// <summary>
+    /// The skill a template invokes, which is its file name with the rail infix taken back off:
+    /// <c>docs-refresh.copilot.yml</c> runs <c>/docs-refresh</c>, out of
+    /// <c>plugin/skills/docs-refresh/</c>. Both rails run the same skill — that is the point of having
+    /// rails at all, and the reason the skill bodies are untouched by them.
+    /// </summary>
+    private static string SkillName(string template)
+    {
+        var stem = Path.GetFileNameWithoutExtension(template);
+        var infix = stem.LastIndexOf('.');
+
+        return infix < 0 ? stem : stem[..infix];
+    }
+
+    /// <summary>Whether a template is the Copilot spelling, by the same infix.</summary>
+    private static bool IsCopilot(string template) =>
+        Path.GetFileNameWithoutExtension(template).EndsWith(".copilot", StringComparison.Ordinal);
 
     private const string CredentialPrefix = "DOCUME_CONFLUENCE_";
     private const string ToolRestore = "dotnet tool restore";
@@ -467,21 +553,38 @@ public sealed class WorkflowTemplateTests
             // whose input is text a reviewer wrote in Confluence (rule §1.3).
             var text = string.Join('\n', runnable);
 
-            text.ShouldContain("--permission-mode", customMessage: $"{name} runs a model with no permission mode (§11).");
-            text.ShouldNotContain(
-                "--dangerously-skip-permissions",
-                customMessage: $"{name}: never in a template — this job can push branches and open PRs.");
+            // Each rail spells the gate with its own flag, and both are asserted rather than one being
+            // waved through: Claude bounds the run with --permission-mode, Copilot with the enumerated
+            // --allow-tool set checked in Every_model_run_grants_exactly_the_tools_its_skill_declares.
+            // What is common is the refusal below — neither rail may hand the run an unbounded grant.
+            var gate = IsCopilot(name) ? "--allow-tool" : "--permission-mode";
 
-            // Rule §1.1 again, for the key only these templates carry.
-            var apiKey = runnable
-                .Where(line => line.Contains("ANTHROPIC_API_KEY", StringComparison.Ordinal))
-                .Where(line => line.Contains(':', StringComparison.Ordinal))
+            text.ShouldContain(gate, customMessage: $"{name} runs a model with no permission gate (§11).");
+
+            foreach (var escape in new[] { "--dangerously-skip-permissions", "--allow-all-tools" })
+            {
+                text.ShouldNotContain(
+                    escape,
+                    customMessage: $"{name}: never in a template — this job can push branches and open PRs.");
+            }
+
+            // Rule §1.1 again, for the credential only these templates carry. Which one it is depends
+            // on the rail; that it is read from `secrets.` does not.
+            var secret = IsCopilot(name) ? "COPILOT_GITHUB_TOKEN" : "ANTHROPIC_API_KEY";
+
+            // Where the secret is BOUND, which is the line rule §1.1 is about, rather than every line
+            // that mentions it. The Copilot rail names its own token twice more: once in the shell
+            // emptiness test its preflight step runs, and once in that step's error message. A looser
+            // "contains the name and a colon" filter collects both of those and then fails them for
+            // not saying secrets. — the assertion misreading a shell test as a declaration.
+            var credential = runnable
+                .Where(line => line.TrimStart().StartsWith($"{secret}:", StringComparison.Ordinal))
                 .ToList();
 
-            apiKey.ShouldNotBeEmpty($"{name} runs a model without an API key.");
-            apiKey.ShouldAllBe(
+            credential.ShouldNotBeEmpty($"{name} runs a model without naming {secret}.");
+            credential.ShouldAllBe(
                 line => line.Contains("secrets.", StringComparison.Ordinal),
-                $"{name}: the API key must come from `${{{{ secrets.… }}}}`.");
+                $"{name}: {secret} must come from `${{{{ secrets.… }}}}`.");
         }
     }
 
@@ -518,14 +621,34 @@ public sealed class WorkflowTemplateTests
     {
         foreach (var name in ModelDriven)
         {
-            var skill = Path.GetFileNameWithoutExtension(name);
+            var skill = SkillName(name);
             var runnable = string.Join('\n', Runnable(name));
 
             // The slash command, from the yaml the runner acts on rather than from the prose above it.
             var wrongSkill = $"{name} must invoke /{skill} (§11). A template that runs another "
                 + "template's skill passes every other assertion in this class.";
 
-            runnable.ShouldContain($"claude -p '/{skill}'", customMessage: wrongSkill);
+            var cli = IsCopilot(name) ? "copilot" : "claude";
+
+            runnable.ShouldContain($"{cli} -p '/{skill}'", customMessage: wrongSkill);
+
+            // The two rails express a tool grant differently enough that one set comparison cannot
+            // cover both, and pretending otherwise is how a real grant stops being checked.
+            //
+            // Claude's --allowed-tools is a list of the SAME tool names the skill declares in its
+            // frontmatter, so the two sides compare directly and the assertion below is exact.
+            //
+            // Copilot's --allow-tool is a repeated flag naming BINARIES and filters — shell(git:*),
+            // write — which have no correspondence to Bash/Read/Edit. Set equality against the
+            // frontmatter would be comparing two vocabularies. What is checkable, and what actually
+            // matters, is that the grant stayed enumerated: the blanket is the thing this whole family
+            // of assertions exists to keep out.
+            if (IsCopilot(name))
+            {
+                AssertCopilotGrantIsEnumerated(name, runnable);
+
+                continue;
+            }
 
             var granted = QuotedFlagValue(runnable, "--allowed-tools");
             var declared = FrontmatterValue(SkillText(skill), "allowed-tools");
@@ -680,7 +803,17 @@ public sealed class WorkflowTemplateTests
     [Fact]
     public void The_feedback_template_triggers_on_the_inbox_it_triages()
     {
-        const string name = "docs-feedback.yml";
+        // Both rails, because the trigger and the precheck are the half of this job that has nothing to
+        // do with which model runs: a Copilot variant that watched the wrong path, or counted something
+        // other than `status: new`, would be exactly as silently-never-firing as a Claude one.
+        foreach (var name in SkillDriven)
+        {
+            AssertFeedbackTriggersOnItsInbox(name);
+        }
+    }
+
+    private static void AssertFeedbackTriggersOnItsInbox(string name)
+    {
         var text = Text(name);
 
         // §9's work list is inbox items with `status: new`, and they arrive on the default branch when the
@@ -1045,7 +1178,12 @@ public sealed class WorkflowTemplateTests
         // clearest case of that: with no state file at all, `sha=$(jq ...)` — a bare assignment, unlike
         // docs-publish.yml's, so `set -e` sees it — exited 2 first. The nightly refresh turned that into
         // a red cron check every morning on a repo whose only problem was that nobody had run /docs-loop.
-        foreach (var (name, job) in new[] { ("docs-drift.yml", "mark"), ("docs-refresh.yml", "refresh") })
+        foreach (var (name, job) in new[]
+        {
+            ("docs-drift.yml", "mark"),
+            ("docs-refresh.claude.yml", "refresh"),
+            ("docs-refresh.copilot.yml", "refresh"),
+        })
         {
             var steps = Steps(name, job);
 
@@ -1149,7 +1287,7 @@ public sealed class WorkflowTemplateTests
     {
         foreach (var name in ModelDriven)
         {
-            var skill = Path.GetFileNameWithoutExtension(name);
+            var skill = SkillName(name);
             var families = BranchFamilies(name);
 
             // Vacuous-pass guard: these two templates confirm their model run did something by listing
@@ -1691,8 +1829,16 @@ public sealed class WorkflowTemplateTests
             .Select(job => Mapping(job.Value).Children.FirstOrDefault(child => IsKey(child.Key, "steps")).Value)
             .OfType<YamlSequenceNode>()
             .SelectMany(steps => steps.Children.OfType<YamlMappingNode>())
-            .Where(step => Value(step, "run").Contains("claude -p", StringComparison.Ordinal))
+            .Where(step => ModelInvocations.Any(
+                cli => Value(step, "run").Contains(cli, StringComparison.Ordinal)))
             .ToList();
+
+    /// <summary>
+    /// How each rail spells "run the model". Matched against the step's <c>run:</c> so a template that
+    /// renamed its step, or moved the invocation into a script, stops being found — which is what the
+    /// vacuous-pass guards at each call site are there to report.
+    /// </summary>
+    private static readonly string[] ModelInvocations = ["claude -p", "copilot -p"];
 
     /// <summary>The scalar at <paramref name="key"/>, or empty when the step does not carry it.</summary>
     private static string Value(YamlMappingNode node, string key)
