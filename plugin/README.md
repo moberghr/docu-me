@@ -41,7 +41,7 @@ marketplace lives in another repository, so this entry has to be added there by 
     "source": "git-subdir",
     "url": "https://github.com/moberghr/docu-me.git",
     "path": "plugin",
-    "ref": "v0.1.1"
+    "ref": "v0.2.0"
   },
   "description": "The generative half of the DocuMe docs lifecycle: write, refresh and correct a repo-based wiki that publishes to Confluence. Every skill's output is a pull request, and only the `docume` CLI talks to Confluence.",
   "category": "documentation"

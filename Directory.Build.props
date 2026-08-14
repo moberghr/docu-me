@@ -8,7 +8,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
     <!-- Single version across CLI, Core, plugin, action (PLAN.md §12). -->
-    <Version>0.1.1</Version>
+    <Version>0.2.0</Version>
   </PropertyGroup>
 
   <!-- Package metadata shared by both packable projects (PLAN.md §12). RepositoryUrl is what makes
