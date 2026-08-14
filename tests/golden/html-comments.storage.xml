@@ -1,6 +1,7 @@
 <h2>HTML comments</h2>
 <p>Prose before a standalone comment.</p>
 <p>Prose after it: no blank line and no empty paragraph is left behind.</p>
+<p>Prose whose citation sits directly underneath it, no blank line before the comment.</p>
 <p>Content wrapped by DocuMe's own refresh markers survives; the markers do not.</p>
 <p>Text with an  comment keeps the author's spacing verbatim.</p>
 <p>A comment may also trail a sentence. </p>

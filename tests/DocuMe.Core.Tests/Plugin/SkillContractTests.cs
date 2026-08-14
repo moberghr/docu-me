@@ -37,8 +37,8 @@ namespace DocuMe.Core.Tests.Plugin;
 /// </remarks>
 public sealed partial class SkillContractTests
 {
-    /// <summary>The three skills §11 names.</summary>
-    private static readonly string[] Skills = ["docs-refresh", "docs-feedback", "docs-loop"];
+    /// <summary>The four skills §11 names.</summary>
+    private static readonly string[] Skills = ["docs-refresh", "docs-feedback", "docs-loop", "docs-processes"];
 
     /// <summary>
     /// The branch each skill's PR is opened on (rule §8.4, PLAN.md §9/§10). Asserted because it is a
@@ -46,17 +46,18 @@ public sealed partial class SkillContractTests
     /// <c>docs/feedback-*</c> to tell a run that did nothing from one that opened a PR.
     /// </summary>
     /// <remarks>
-    /// <c>docs/loop-</c> is the one prefix no §9/§10 sentence names, because no workflow template invokes
-    /// generation: `/docs-loop` runs from somebody's terminal on a wiki that does not exist yet. It is
-    /// pinned here anyway, and to the same shape as the other two, because the alternative is that the
-    /// first workflow to automate generation has to guess — and because a skill free to pick its own
-    /// branch name picks a different one each run.
+    /// <c>docs/loop-</c> and <c>docs/processes-</c> are the two prefixes no §9/§10 sentence names, because
+    /// no workflow template invokes generation: both run from somebody's terminal on a wiki that does not
+    /// have the page yet. They are pinned here anyway, and to the same shape as the other two, because the
+    /// alternative is that the first workflow to automate generation has to guess — and because a skill
+    /// free to pick its own branch name picks a different one each run.
     /// </remarks>
     private static readonly Dictionary<string, string> BranchPrefixes = new(StringComparer.Ordinal)
     {
         ["docs-refresh"] = "docs/refresh-",
         ["docs-feedback"] = "docs/feedback-",
         ["docs-loop"] = "docs/loop-",
+        ["docs-processes"] = "docs/processes-",
     };
 
     /// <summary>
@@ -123,17 +124,18 @@ public sealed partial class SkillContractTests
     /// <remarks>
     /// <para>
     /// <strong>This is what makes the §1.3 clause structural rather than remembered.</strong> Every other
-    /// test here iterates <c>Skills</c>, a hardcoded three, so that list — not the directory — is the
-    /// enforcement boundary. A fourth skill under <c>plugin/skills/</c> is required by rule §1.3 to state
-    /// the untrusted-input contract and by rule §0.4 to stay behind the CLI, and would be checked for
-    /// neither: it would ship green carrying no prompt-injection defense at all (CLAUDE.md §0.2, PLAN.md
-    /// §9).
+    /// test here iterates <c>Skills</c>, a hardcoded list, so that list — not the directory — is the
+    /// enforcement boundary. A skill under <c>plugin/skills/</c> that is not on it is required by rule
+    /// §1.3 to state the untrusted-input contract and by rule §0.4 to stay behind the CLI, and would be
+    /// checked for neither: it would ship green carrying no prompt-injection defense at all (CLAUDE.md
+    /// §0.2, PLAN.md §9). <c>docs-processes</c> was added to the list in the same commit that shipped it,
+    /// which is the whole of what this test asks.
     /// </para>
     /// <para>
     /// Nothing else closes it. <c>PluginManifestTests</c> and <see cref="SkillsReferencePageTests"/> do
     /// enumerate the directory, and both ask whether a skill is <em>documented</em> — in README.md and in
     /// <c>docs/wiki/30-automation/skills.md</c> — which an author satisfies without ever stating the
-    /// clause. A documented fourth skill passes the whole suite as it stands.
+    /// clause. A documented skill would pass every other test in the suite.
     /// </para>
     /// <para>
     /// Failing here rather than discovering the subjects from disk is deliberate. Adding the name to
@@ -484,6 +486,21 @@ public sealed partial class SkillContractTests
             pageId,
             Case.Sensitive,
             $"docs-loop/SKILL.md must say `{pageId}` is publish's to write, not the skill's (§5.2).");
+    }
+
+    [Fact]
+    public void The_loop_skill_defers_its_baseline_to_the_business_tier_when_it_exists()
+    {
+        // business-tier.md mechanism 5 (D2): baselineSha becomes the oldest sha across BOTH progress
+        // files once docs-processes exists. Pinned separately from
+        // The_loop_skill_spells_the_two_fields...: "oldest" alone was already true before this rule
+        // existed (the PROGRESS.md-only oldest), so that word cannot detect the cross-file sentence
+        // being dropped again — and dropping it silently retires the business tier's drift.
+        const string message = "docs-loop/SKILL.md must say baselineSha is the oldest sha across both "
+            + "progress files once docs-processes exists (business-tier.md D2) — dropping this silently "
+            + "retires the business tier's drift.";
+
+        Text("docs-loop").ShouldContain("PROGRESS-BUSINESS.md", Case.Sensitive, message);
     }
 
     private static string Root { get; } = Locate();

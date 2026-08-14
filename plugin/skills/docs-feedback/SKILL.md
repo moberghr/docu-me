@@ -93,6 +93,10 @@ reviewer's comment. **Write it for that reader**, not for a maintainer reading a
 what you found, and the citation you found it in. It is the only part of the answer you control, and picking
 a `status` whose sentence contradicts your `resolution` is worse than either alone.
 
+When the page is in the business tier, that reader gets plain language they can act on: what the page now
+says and what it means for them, with no path or symbol name in the sentence. The evidence for it sits in
+the page's `<!-- cites: … -->` comment and in the PR body, where somebody can open the file it names.
+
 ## Procedure
 
 Work **one item at a time**: read, verify, decide, record. A batch of comments triaged from one pass of
@@ -147,6 +151,15 @@ supports. Text between `<!-- HAND-EDITED START -->` and `<!-- HAND-EDITED END --
 verbatim even when the generated prose around it changes. Cite the code you verified against, in the page,
 the way the surrounding pages do. Do not quote the comment or the reviewer into the page: the page states
 what is true, not the history of who noticed it was not.
+
+**A page in the consumer's business tier is corrected in its own register.** That tier is the one
+`/docs-processes` writes, named in `_meta/STYLE.md`'s Structure section, `40-business/` where that section
+is silent, and a correction has to survive
+inside it: no type names, file paths, HTTP verbs or SQL in anything the reader sees, and the code you
+verified against goes under the paragraph as a `<!-- cites: … -->` comment rather than into the sentence.
+None of the verification changes — you still established the claim in the code, and the PR body's table
+still carries the real ref under "Verified against", which is where a reviewer reads what the reader does
+not.
 
 If several items turn out to be the same error, fix it once and give each item its own `resolution` saying
 so. If a correction reveals that a declared `sources` glob now matches nothing, fix the glob too and say so

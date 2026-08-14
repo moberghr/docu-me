@@ -6,6 +6,9 @@ Prose before a standalone comment.
 
 Prose after it: no blank line and no empty paragraph is left behind.
 
+Prose whose citation sits directly underneath it, no blank line before the comment.
+<!-- cites: src/Example.cs:10 -->
+
 <!-- A comment may span
      more than one line, and all of it goes. -->
 

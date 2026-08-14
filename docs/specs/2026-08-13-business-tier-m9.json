@@ -1,0 +1,77 @@
+{
+  "slug": "business-tier-m9",
+  "date": "2026-08-13",
+  "scope": "new-feature",
+  "spec_markdown": ".claude/references/business-tier.md",
+  "spec_adopted": "engineer-supplied spec (Phase 0.7); markdown not rewritten by this workflow",
+  "security_impact": "none",
+  "change_manifest": [
+    { "path": "plugin/skills/docs-processes/SKILL.md", "action": "create", "purpose": "D1: the fourth skill — process inventory, business register, comment citations, BUSINESS.md contract; system-contract clauses 1-3/5-7 mirrored from docs-loop, clause 4 replaced per spec mechanisms 2-4" },
+    { "path": "tests/DocuMe.Core.Tests/Plugin/SkillContractTests.cs", "action": "modify", "purpose": "D6: add docs-processes to Skills and BranchPrefixes (docs/processes-); update 'three skills' doc comments — the declared enforcement boundary for a fourth skill" },
+    { "path": "tests/DocuMe.Core.Tests/Plugin/SkillsReferencePageTests.cs", "action": "modify", "purpose": "D6: EmptyRunConditions gains a docs-processes entry AND docs-loop's token 'todo' must be replaced with a phrase unique to docs-loop (the new skill's inventory vocabulary contains 'todo'); BaselineStamps gains (docs-processes, oldest)" },
+    { "path": "docs/wiki/30-automation/skills.md", "action": "modify", "purpose": "D7: table row + `/docs-processes` section; intro count three->four; empty-run cell tokens kept in sync with the test's uniqueness rule; baselineSha stamp stated in the new section" },
+    { "path": "plugin/README.md", "action": "modify", "purpose": "D5: skill table row for docs-processes (PluginManifestTests documentation pairing)" },
+    { "path": "PLAN.md", "action": "modify", "purpose": "D8: §11 'The three skills are the three directories' -> four, one docs-processes bullet; must stay inside the 20k-token loop budget (check-state-size.py)" },
+    { "path": "plugin/skills/docs-loop/SKILL.md", "action": "modify", "purpose": "D2: baselineSha = oldest generation sha across PROGRESS.md and, when present, PROGRESS-BUSINESS.md; 'What this skill does not do' gains the business tier" },
+    { "path": "plugin/skills/docs-refresh/SKILL.md", "action": "modify", "purpose": "D3: stale pages under the business-tier directory regenerate in the business register with comment citations, never introduce markers" },
+    { "path": "plugin/skills/docs-feedback/SKILL.md", "action": "modify", "purpose": "D4: replies on business pages answer in the page's register; verification discipline unchanged" },
+    { "path": "CHANGELOG.md", "action": "modify", "purpose": "conditional: unreleased entry for the fourth skill, only after inspecting ChangelogTests' six bounds; drop with a note if the bounds make it a release-time concern" },
+    { "path": "README.md", "action": "modify", "purpose": "AMENDED post-approval (Batch 1 drift, spec-incomplete branch): QuickstartTests.Every_skill_that_ships_has_a_row_in_the_README_skills_table walks plugin/skills/ and requires a root-README row per shipped skill; one table row + two three->four count words" },
+    { "path": ".claude/references/decisions.md", "action": "modify", "purpose": "AMENDED (Stage 1 N5): the M9 decision entry was written in the planning session; Phase 5 corrected its evidence claim (golden pins the drop + adjacent form; ContentHashTests pins hash-invariance)" },
+    { "path": "tests/DocuMe.Core.Tests/State/ContentHashTests.cs", "action": "modify", "purpose": "AMENDED (Phase 5, Stage 1 W1 + Stage 2 W): regression-pin the citation-only-edit hash invariance the business tier's approval guarantee rests on" },
+    { "path": "tests/golden/html-comments.md", "action": "modify", "purpose": "AMENDED (Phase 5, Stage 1 W1 + Stage 2 W): add the comment-directly-under-its-paragraph case the cites-grammar mandates; NOT a regeneration — a hand-written addition surfaced for human review per rule 4.3" },
+    { "path": "tests/golden/html-comments.storage.xml", "action": "modify", "purpose": "AMENDED (Phase 5): the hand-written expected output for the added golden case (one <p> line, comment dropped)" }
+  ],
+  "public_contracts": [
+    { "kind": "cli-flag", "signature": "/docs-processes (Claude Code skill, plugin 'docume')", "change": "new", "surface": "external" },
+    { "kind": "schema", "signature": "docs/processes-<date> branch prefix; _meta/PROGRESS-BUSINESS.md; _meta/BUSINESS.md; <!-- cites: --> comment grammar", "change": "new", "surface": "internal-tooling" }
+  ],
+  "test_manifest": [
+    "SkillContractTests: docs-processes enters Skills -> all per-skill contract checks apply (untrusted-input + claims-to-verify, _meta/STYLE.md named, 'docume' present, no REST paths, no 'docume publish'/'--reply' in bash blocks, branch prefix literal present, frontmatter name==dir, description>40)",
+    "SkillsReferencePageTests: page table row set == shipped skills; intro counts four; per-skill empty-run token unique across ALL FOUR SKILL.mds and present in that row's cell; baselineSha writers each mention the field in their page section; docs-processes stamp word 'oldest'",
+    "PluginManifestTests: every skill dir has SKILL.md; README documentation pairing",
+    "ChangelogTests: any skill name the changelog mentions must exist (guards the conditional entry)",
+    "Acceptance sweep: docs/wiki must still convert cleanly after the skills.md edit (run-suite covers it)",
+    "tools/loop/check-state-size.py: PLAN.md token budget after the §11 edit",
+    "Suite baseline: 1463 total, 2 PRE-EXISTING failures (DogfoodWikiTests '.codex/', ShippedTreeCoverageTests 'AGENTS.md') — untracked Codex-session artifacts from 11:59, out of scope; acceptance bar is NO NEW failures"
+  ],
+  "plan": {
+    "batches": [
+      {
+        "id": 1,
+        "title": "Ship the fourth skill green (atomic: skill + declared lists + docs)",
+        "files": ["plugin/skills/docs-processes/SKILL.md", "tests/DocuMe.Core.Tests/Plugin/SkillContractTests.cs", "tests/DocuMe.Core.Tests/Plugin/SkillsReferencePageTests.cs", "docs/wiki/30-automation/skills.md", "plugin/README.md", "PLAN.md"],
+        "boundary": "these six must land together — a new skill directory alone reds Every_skill_that_ships_is_one_this_class_checks",
+        "acceptance": "dotnet build 0 warnings; run-suite.py shows no failures beyond the 2 pre-existing; check-state-size.py OK"
+      },
+      {
+        "id": 2,
+        "title": "Cross-skill contract amendments (D2-D4)",
+        "files": ["plugin/skills/docs-loop/SKILL.md", "plugin/skills/docs-refresh/SKILL.md", "plugin/skills/docs-feedback/SKILL.md"],
+        "boundary": "amendments must not break token-uniqueness established in batch 1, nor docs-loop's 'oldest' stamp word",
+        "acceptance": "run-suite.py no new failures"
+      },
+      {
+        "id": 3,
+        "title": "Bookkeeping + full verification sweep",
+        "files": ["CHANGELOG.md"],
+        "boundary": "CHANGELOG only if ChangelogTests bounds allow; then full suite + behavioral diff",
+        "acceptance": "full run-suite.py; docume convert docs/wiki exit 0; behavioral diff written"
+      }
+    ]
+  },
+  "success_criteria": [
+    "plugin ships four skills; docs-processes passes every SkillContractTests per-skill check",
+    "docs/wiki/30-automation/skills.md documents the fourth skill and all derived-set tests pass",
+    "docs-loop states the two-file baselineSha min rule; refresh/feedback state their business-register behavior",
+    "no new test failures vs the 2-failure pre-existing baseline; PLAN.md within budget",
+    "tools/loop/state.json and GATES.md deliberately untouched (loop-owned; M9 ran interactively)"
+  ],
+  "assumptions": [
+    "[VERIFIED:tests/golden/html-comments.md] comment-drop and contentHash properties underpinning the citation contract",
+    "[VERIFIED:tests/DocuMe.Core.Tests/Plugin/SkillContractTests.cs:146] fourth-skill enforcement boundary is the Skills list",
+    "[VERIFIED:tests/DocuMe.Core.Tests/Plugin/SkillsReferencePageTests.cs:145-151] empty-run token uniqueness spans all shipped skills",
+    "M9 acceptance steps on the Inventhor consumer (spec 'Acceptance' 1-5) are a follow-up run of the shipped skill, not part of this repo change"
+  ],
+  "open_decisions": []
+}

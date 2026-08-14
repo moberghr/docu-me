@@ -234,8 +234,11 @@ commits, and stamping today's sha would retire every drift they have accumulated
 nothing left to ever report it again.
 
 So: set `baselineSha` to the **oldest** generation sha still recorded in `PROGRESS.md` — the first `done`
-row's sha. On a wiki's first page that is `<head>`, which is why the rule looks like a no-op until the
-second run. Then confirm the clone has it:
+row's sha — and, where `_meta/PROGRESS-BUSINESS.md` exists, the oldest across both files. That second
+inventory is the business tier's, `/docs-processes` owns it, and its pages were generated against commits
+of their own: a baseline read from this file alone would retire their drift as quietly as stamping
+`<head>` retires this tier's. On a wiki's first page that is `<head>`, which is why the rule looks like a
+no-op until the second run. Then confirm the clone has it:
 
 ```bash
 git cat-file -e <baselineSha>^{commit}
@@ -347,7 +350,7 @@ for right alignment and storage format cannot express it (§7). Every cell's tex
 
 ## Baseline
 
-`baselineSha` left at `a1b2c3d`, the oldest generation point still un-refreshed. Not moved to `<head>`:
+`baselineSha` left at `a1b2c3d`, the oldest generation point across both progress files still un-refreshed. Not moved to `<head>`:
 that would retire the drift the earlier pages have accumulated.
 
 ## Observed claims
@@ -374,6 +377,9 @@ of invisible.
 
 - **Publish.** Merging the PR touches `<wiki.root>/**`, which fires the consumer's `docs-publish.yml`; that
   is what puts the page in Confluence. Only the CLI writes to Confluence (rule §0.4).
+- **Write a business-tier page.** `/docs-processes` owns that tier and the inventory behind it: its unit is
+  a process rather than a code unit, and its register is written for a reader who cannot check a page
+  against the source. A process nobody has documented is that skill's `todo`, not this one's.
 - **Rewrite a page whose code changed.** That is drift, and `/docs-refresh` owns it (§10). If a unit you are
   writing reveals that a neighbouring page is now wrong, record it in `GAPS.md` and leave the page alone — a
   generation PR that also rewrote three other pages buries the new page in a diff.

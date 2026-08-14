@@ -22,3 +22,25 @@
 **Rule:** For a temp working area, create it inside the repo (`.gitignore`-safe or committed-selectively), `cd` into it as its own command, run each step as a flat command, and clean up with `rm -r` (never `-rf`) + `rm <file>`. Do not use subshells, `set -e`, `bash script.sh`, or `cd … && git …`. This supersedes the blanket "`&&` triggers denials" note above — plain `&&` chains are fine.
 **Why it matters:** The dotnet-tool install acceptance (`dotnet new tool-manifest` → `dotnet tool install --local` → `dotnet tool run`) needs a dedicated cwd; knowing cwd persists avoids the blocked subshell/script paths entirely.
 **When it applies:** Any loop iteration that packs/installs a tool locally or needs a scratch directory.
+
+## 2026-08-13 — Adding a fourth plugin skill is a declared-list change first (M9)
+
+- **What happened:** M9's spec listed five deliverables; the guard tests required nine files. A new
+  directory under `plugin/skills/` hard-fails `SkillContractTests.Every_skill_that_ships_is_one_this_class_checks`
+  until it is added to `Skills` + `BranchPrefixes`, and `SkillsReferencePageTests`/`QuickstartTests`/`PluginManifestTests`
+  require rows in `docs/wiki/30-automation/skills.md`, root `README.md`, and `plugin/README.md`; PLAN.md §11's
+  spelled-out skill count goes stale too.
+- **Rule:** before planning a new skill, grep the two Plugin test classes for declared lists and grep the
+  docs for the spelled-out count ("three"); put every hit in the change manifest up front.
+- **Why:** each miss surfaces as a red mid-batch and forces an unplanned scope amendment.
+
+## 2026-08-13 — SkillsReferencePageTests tokens are cross-file unique; pick phrases, not words (M9)
+
+- **What happened:** docs-loop's `EmptyRunConditions` token was the bare string `todo`; the new skill's
+  inventory states legitimately contain that word, breaking the token's one-owner assertion. Also
+  `BranchPrefix()` asserts exactly ONE `docs/…-` prefix per SKILL.md, so sibling skills may only be
+  referenced in slash-command form (`/docs-processes`), never by branch or by a `docs/`-hyphen path.
+- **Rule:** empty-run tokens must be multi-word phrases unique to their SKILL.md; when writing one skill,
+  never quote another's token phrase or branch prefix.
+- **Why:** the both-ways uniqueness check is what keeps the wiki page's derived table honest; a bare word
+  rots the day another skill shares vocabulary.
