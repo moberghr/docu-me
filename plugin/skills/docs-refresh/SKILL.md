@@ -111,6 +111,15 @@ For each entry in `pages[]`:
 5. **Record three things** for the PR table: the page, what changed in the code, and why that changed the
    page. "Why" is the column a reviewer actually reads.
 
+**A stale page in the consumer's business tier regenerates in that tier's register.** `_meta/STYLE.md`'s
+Structure section names the directory `/docs-processes` writes into, `40-business/` where that section is
+silent; inside it a citation lives in a
+`<!-- cites: … -->` comment under the paragraph it backs, and you verify and update it exactly as you do a
+visible one rather than lifting a path into the prose. No `⚠️` marker may be introduced on such a page —
+the reader of that tier has no way to go and check one — so a claim the code no longer settles comes off
+the page and the question goes to `_meta/GAPS.md`. `_meta/BUSINESS.md` is read-only ground truth for the
+facts no code states: cite it, never write one into it.
+
 Do not create pages here. Code that no page describes is a gap: append it to `_meta/GAPS.md` under a
 heading a human can act on, and let `/docs-loop` write the page.
 

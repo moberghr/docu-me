@@ -10,6 +10,7 @@ request.** No skill calls the Confluence API, and no skill publishes (rule §0.4
 | Skill | What it does | Spec |
 |---|---|---|
 | `/docs-loop` | The generation engine: inventory, section taxonomy, one-unit-per-run discipline, PROGRESS/GAPS bookkeeping, opens `docs/loop-<date>` | §11 |
+| `/docs-processes` | The same engine pointed at the business and process tier: process inventory, plain-language register, citations in HTML comments, opens `docs/processes-<date>` | §11 |
 | `/docs-refresh` | Rewrites the pages whose declared `sources` changed since the generation baseline, opens `docs/refresh-<date>` | §10 |
 | `/docs-feedback` | Verifies a reviewer's Confluence comment against the code, opens `docs/feedback-<date>` (or declines with a citation) | §9 |
 
@@ -54,8 +55,8 @@ a .NET solution: a sparse clone of `plugin/` is the whole download. Bump `ref` t
 ## Two conventions worth knowing before editing
 
 **The manifest declares no `skills` path.** `skills/` is scanned by default, so every
-`skills/<name>/SKILL.md` in this directory is discovered without being listed. A fourth skill is therefore
-a new directory and nothing else — `docs-loop` was added that way. What keeps that honest is
+`skills/<name>/SKILL.md` in this directory is discovered without being listed. Another skill is therefore
+a new directory and nothing else — `docs-loop` and `docs-processes` were both added that way. What keeps that honest is
 `PluginManifestTests`, which walks the tree rather than the manifest, plus `SkillContractTests`, which
 asserts each skill's frontmatter, its untrusted-input clause and the branch its PR is opened on.
 

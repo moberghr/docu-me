@@ -9,7 +9,7 @@ namespace DocuMe.Core.Tests.Plugin;
 
 /// <summary>
 /// <c>docs/wiki/30-automation/skills.md</c>'s skill table, triage routes, baseline paragraphs, untrusted-input
-/// warning and install block, against what the three <c>SKILL.md</c> files in <c>plugin/skills/</c>, the
+/// warning and install block, against what the <c>SKILL.md</c> files in <c>plugin/skills/</c>, the
 /// manifests and the CLI actually do.
 /// </summary>
 /// <remarks>
@@ -49,7 +49,7 @@ public sealed class SkillsReferencePageTests
     private const string ReadmePath = "README.md";
     private const string ProbePath = ".mtk/paths-93/probe-tool-manifest.mjs";
 
-    /// <summary>The clause both generation skills carry and <c>docs-feedback</c> deliberately does not.</summary>
+    /// <summary>The clause every generation skill carries and <c>docs-feedback</c> deliberately does not.</summary>
     private const string WriterClause = "field you may write";
 
     private const string RowHeader = "| Skill | Use it when |";
@@ -62,24 +62,35 @@ public sealed class SkillsReferencePageTests
     /// runs on.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Hand-written, and anchored: <see cref="Every_row_says_when_its_skill_opens_nothing"/> asserts each
-    /// token appears in its own SKILL.md and in neither of the others, which is what lets the row check run
+    /// token appears in its own SKILL.md and in none of the others, which is what lets the row check run
     /// both ways. A skill that stops for a new reason needs its token changed here, and the class says so.
+    /// </para>
+    /// <para>
+    /// <c>docs-loop</c>'s token was the bare word <c>todo</c> until <c>docs-processes</c> shipped. That
+    /// skill keeps an inventory of its own with the same four states by design, so it carries the word too
+    /// and the uniqueness check failed on a page that was perfectly accurate. The longer phrase is the
+    /// heading of the same edge case in the same file, and it names the file the row already points a
+    /// reader at.
+    /// </para>
     /// </remarks>
     private static readonly (string Skill, string Condition)[] EmptyRunConditions =
     [
-        ("docs-loop", "todo"),
+        ("docs-loop", "Nothing is `todo`"),
         ("docs-refresh", "hasDrift"),
         ("docs-feedback", "untriaged"),
+        ("docs-processes", "process inventory is exhausted"),
     ];
 
     /// <summary>
     /// The value each generation skill stamps into <c>baselineSha</c>, as the word its section has to carry.
     /// </summary>
     /// <remarks>
-    /// The two are different on purpose (<c>/docs-loop</c> the oldest generation sha still in
-    /// <c>PROGRESS.md</c>, <c>/docs-refresh</c> the head it regenerated everything against), and a page that
-    /// states one rule for the field states a rule that is wrong for one of them.
+    /// They are not all the same on purpose (<c>/docs-loop</c> the oldest generation sha still in
+    /// <c>PROGRESS.md</c>, <c>/docs-processes</c> the oldest across both progress files,
+    /// <c>/docs-refresh</c> the head it regenerated everything against), and a page that states one rule
+    /// for the field states a rule that is wrong for one of them.
     /// </remarks>
     /// <summary>
     /// What the page's opening sentence about the quiet ending has to name, as a reader reads it. The
@@ -91,6 +102,7 @@ public sealed class SkillsReferencePageTests
     private static readonly (string Skill, string Stamp)[] BaselineStamps =
     [
         ("docs-loop", "oldest"),
+        ("docs-processes", "oldest"),
         ("docs-refresh", "head"),
     ];
 
@@ -129,8 +141,9 @@ public sealed class SkillsReferencePageTests
     /// <remarks>
     /// The failure this guards is iter92's shape: the page said a run with nothing drifted "opens nothing"
     /// for <c>/docs-refresh</c> and said nothing for the other two, so the silence asserted that they always
-    /// open one. All three stop instead — no unit <c>todo</c>, no page drifted, no untriaged item — and a
-    /// consumer who reads a PR as the only ending treats a quiet nightly job as a broken one.
+    /// open one. Every one of them stops instead — no unit <c>todo</c>, no process left, no page drifted,
+    /// no untriaged item — and a consumer who reads a PR as the only ending treats a quiet nightly job as a
+    /// broken one.
     /// </remarks>
     [Fact]
     public void Every_row_says_when_its_skill_opens_nothing()
@@ -170,7 +183,7 @@ public sealed class SkillsReferencePageTests
         wrong.ShouldBeEmpty(silent);
 
         // The count has to sit in the sentence that names the ending rather than anywhere in the opening.
-        // The intro says "All three" twice, once about the PR and once about its absence, so a check on the
+        // The intro repeats the count twice, once about the PR and once about its absence, so a check on the
         // whole paragraph is satisfied by the wrong one — which is how this assertion first passed a
         // mutation that deleted the claim (.mtk/paths-93/mutate-skills-page.mjs).
         var claim = Intro()
@@ -496,7 +509,7 @@ public sealed class SkillsReferencePageTests
 
     /// <summary>Whether a skill documents an ending that opens no pull request.</summary>
     /// <remarks>
-    /// All three phrase it differently and all three name the same three things, so the tokens are the
+    /// They phrase it differently and all of them name the same three things, so the tokens are the
     /// derivation: "no branch, no commit, no PR" in any order.
     /// </remarks>
     private static bool DocumentsAnEmptyRun(string skill)

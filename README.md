@@ -251,11 +251,12 @@ writes labels. Everything else is read-only.
 | Skill | What it does |
 |---|---|
 | `/docs-loop` | Writes the pages. One unit per run, read from the code, every claim cited; opens `docs/loop-<date>`. |
+| `/docs-processes` | Writes the business and process tier, one process per run, citations in HTML comments the reader never sees; opens `docs/processes-<date>`. |
 | `/docs-refresh` | Rewrites the pages whose `sources` changed since the baseline; opens `docs/refresh-<date>`. |
 | `/docs-feedback` | Verifies a reviewer's comment against the code; opens `docs/feedback-<date>` or declines with a citation. |
 
-All three end by putting `docume status --json` in the PR body, so the state of the wiki is visible in the
-pull request a reviewer is already reading. All three also have the other ending, the one a nightly job has
+All four end by putting `docume status --json` in the PR body, so the state of the wiki is visible in the
+pull request a reviewer is already reading. All four also have the other ending, the one a nightly job has
 most nights: they stop without a branch, a commit or a pull request. An empty PR costs a reviewer more than
 it tells them.
 
