@@ -28,6 +28,7 @@ environment and from nowhere else.
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/moberghr/docu-me/main/schema/docume.schema.json",
+  "agent": "claude",
   "confluence": {
     "baseUrl": "https://example.atlassian.net/wiki",
     "spaceKey": "DOCS",
@@ -68,6 +69,9 @@ Every other field does default to the value shown.
 
 Two are worth a second look:
 
+- **`agent`** selects the model-workflow rail. `claude` uses Claude Code and `ANTHROPIC_API_KEY`;
+  `copilot` uses GitHub Copilot CLI and `COPILOT_GITHUB_TOKEN`. Older configs that omit it resolve to
+  `claude`.
 - **`wiki.homePage`** names the index file of *every* directory, not only the root. `a/b/page.md` hangs
   under `a/b/README.md`, which hangs under `a/README.md`. A directory with no index page is skipped
   rather than synthesized: its children hang from the nearest index above it, because inventing a page

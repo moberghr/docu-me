@@ -8,7 +8,7 @@ sources:
 
 [TOC]
 
-Six templates, scaffolded by `docume init`. Each adds the DocuMe package feed, runs
+Eight template variants, with six workflows scaffolded by `docume init`. Each adds the DocuMe package feed, runs
 `dotnet tool restore` and then the CLI through the repo-local tool manifest, so a workflow and a laptop
 run the same pinned version.
 
@@ -25,8 +25,10 @@ access token with `read:packages`.
 | `docs-drift-pr.yml` | `pull_request` | Comments on the pull request with the wiki pages its code changes affect |
 | `docs-drift.yml` | `workflow_run` after your deploy workflow completes | `drift --mark`: labels the affected pages stale |
 | `docs-sync.yml` | schedule, every six hours, plus manual dispatch | `sync` — reads labels and comments, opens a `docs/sync` pull request when state changed |
-| `docs-refresh.yml` | schedule, nightly at 03:00, plus manual dispatch | Runs `/docs-refresh` when drift is reported, opening a `docs/refresh-<date>` pull request |
-| `docs-feedback.yml` | push to the default branch, paths `docs/wiki/_meta/feedback/inbox/**`, plus manual dispatch | Runs `/docs-feedback` when new inbox items land |
+| `docs-refresh.claude.yml` | schedule, nightly at 03:00, plus manual dispatch | Claude spelling of `/docs-refresh`, selected by `docume init --agent claude` |
+| `docs-refresh.copilot.yml` | schedule, nightly at 03:00, plus manual dispatch | Copilot spelling of `/docs-refresh`, selected by `docume init --agent copilot` |
+| `docs-feedback.claude.yml` | push to the default branch, paths `docs/wiki/_meta/feedback/inbox/**`, plus manual dispatch | Claude spelling of `/docs-feedback`, selected by `docume init --agent claude` |
+| `docs-feedback.copilot.yml` | push to the default branch, paths `docs/wiki/_meta/feedback/inbox/**`, plus manual dispatch | Copilot spelling of `/docs-feedback`, selected by `docume init --agent copilot` |
 
 ## Why the two drift workflows differ
 
@@ -39,8 +41,8 @@ never shipped.
 
 ## Secrets
 
-Three of the six carry the credential variables, and they are the three that talk to Confluence:
-`docs-publish.yml`, `docs-drift.yml`, `docs-sync.yml`.
+Three of the eight carry the Confluence credential variables, and they are the three that talk to
+Confluence: `docs-publish.yml`, `docs-drift.yml` and `docs-sync.yml`.
 
 ```yaml
 env:
@@ -48,19 +50,18 @@ env:
   DOCUME_CONFLUENCE_TOKEN: ${{ secrets.DOCUME_CONFLUENCE_TOKEN }}
 ```
 
-The other three hold neither on purpose, and handing them the token would undo the reason they are
-separate files. `docs-drift-pr.yml` runs on every contributor's branch, and its report is a `git diff`
-plus a glob match, so the workflow with the widest trigger never sees the publishing token.
-`docs-refresh.yml` and `docs-feedback.yml` are the unsupervised model runs, and a skill's output is a
-pull request: only the CLI writes to Confluence, so the token stays out of the job a model drives. Those
-two want `ANTHROPIC_API_KEY` instead, which no other template needs.
+The other five hold neither Confluence credential on purpose: `docs-drift-pr.yml`,
+`docs-refresh.claude.yml`, `docs-refresh.copilot.yml`, `docs-feedback.claude.yml` and
+`docs-feedback.copilot.yml`. `docs-drift-pr.yml` runs on every contributor's branch, and its report is a
+`git diff` plus a glob match, so the workflow with the widest trigger never sees the publishing token.
+The `*.claude.yml` variants use `ANTHROPIC_API_KEY`; the `*.copilot.yml` variants use
+`COPILOT_GITHUB_TOKEN`. A skill's output is a pull request, so only the CLI writes to Confluence.
 
 ## Everything writes through a pull request
 
-Four of the six change the repo, and none of them pushes to the default branch. `docs-publish.yml` and
-`docs-sync.yml` commit the machine-owned state file to the shared `docs/sync` branch, opening that pull
-request when it is not already open; `docs-refresh.yml` and `docs-feedback.yml` push a dated branch of
-their own. So a human reviews every docs change before it publishes.
+Six of the eight change the repo, and none pushes to the default branch. `docs-publish.yml`,
+`docs-sync.yml`, `docs-refresh.claude.yml`, `docs-refresh.copilot.yml`, `docs-feedback.claude.yml` and
+`docs-feedback.copilot.yml` open pull requests. So a human reviews every docs change before it publishes.
 
 That is also why the publish workflow is the *only* one that writes page bodies: it runs on the default
 branch, after the review.
@@ -68,7 +69,8 @@ branch, after the review.
 > [!NOTE]
 > A workflow that opened no pull request and one that failed look identical in a green run, and that is
 > a live risk in exactly the two a model drives, because the skill is what decides whether to push at
-> all. So `docs-refresh.yml` and `docs-feedback.yml` check `git ls-remote` for their own branch family
+> all. So `docs-refresh.claude.yml`, `docs-refresh.copilot.yml`, `docs-feedback.claude.yml` and
+> `docs-feedback.copilot.yml` check `git ls-remote` for their own branch family
 > before and after, and annotate the run with which branch they pushed: a refresh run that pushed
 > nothing says so out loud. The other two need no such check — their branch is the fixed `docs/sync`,
 > and `gh pr view` deciding whether to `gh pr create` cannot silently open nothing.

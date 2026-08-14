@@ -471,6 +471,7 @@ public sealed partial class ChangelogTests
             ["four"] = 4,
             ["six"] = 6,
             ["seven"] = 7,
+            ["eight"] = 8,
             ["thirteen"] = 13,
         };
 

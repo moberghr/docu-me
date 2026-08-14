@@ -345,7 +345,9 @@ public sealed class WikiIndexPageTests
             {
                 var body = File.ReadAllText(path);
                 return body.Contains("@anthropic-ai/claude-code", StringComparison.Ordinal)
-                    || body.Contains("claude -p ", StringComparison.Ordinal);
+                    || body.Contains("@github/copilot", StringComparison.Ordinal)
+                    || body.Contains("claude -p ", StringComparison.Ordinal)
+                    || body.Contains("copilot -p ", StringComparison.Ordinal);
             })
             .Select(Path.GetFileName)
             .Select(name => name!)

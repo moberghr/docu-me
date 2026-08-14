@@ -11,6 +11,11 @@
       "type": "string",
       "description": "This schema's URL. Written by `docume init`; ignored by the loader."
     },
+    "agent": {
+      "type": "string",
+      "enum": ["claude", "copilot"],
+      "description": "Agent rail used by the model-running workflow templates. Written by `docume init --agent`; omitted only by older configs, which default to claude."
+    },
     "confluence": {
       "type": "object",
       "additionalProperties": false,

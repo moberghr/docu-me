@@ -428,6 +428,7 @@ public sealed class WorkflowsReferencePageTests
         4 => "four",
         5 => "five",
         6 => "six",
+        8 => "eight",
         _ => throw new ArgumentOutOfRangeException(
             nameof(count),
             count,

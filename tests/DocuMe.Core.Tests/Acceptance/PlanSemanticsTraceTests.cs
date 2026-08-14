@@ -229,7 +229,7 @@ public sealed partial class PlanSemanticsTraceTests
             Sites =
             [
                 new() { File = SkillPath, Performs = @"^name: docs-feedback$" },
-                new() { File = "templates/workflows/docs-feedback.yml", Performs = @"workflow_dispatch:" },
+                new() { File = "templates/workflows/docs-feedback.claude.yml", Performs = @"workflow_dispatch:" },
             ],
         },
         new()
@@ -322,7 +322,7 @@ public sealed partial class PlanSemanticsTraceTests
                 // cannot hold `contents: read`.
                 new()
                 {
-                    File = "templates/workflows/docs-feedback.yml",
+                    File = "templates/workflows/docs-feedback.claude.yml",
                     Performs = @"permissions:\n  contents: write\n  pull-requests: write",
                 },
 
@@ -330,7 +330,7 @@ public sealed partial class PlanSemanticsTraceTests
                 // it cannot write to Confluence even if it tried (rule §0.4).
                 new()
                 {
-                    File = "templates/workflows/docs-feedback.yml",
+                    File = "templates/workflows/docs-feedback.claude.yml",
                     Performs = @"DOCUME_CONFLUENCE_TOKEN",
                     Absent = true,
                 },

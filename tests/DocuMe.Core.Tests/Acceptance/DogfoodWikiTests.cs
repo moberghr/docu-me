@@ -72,7 +72,6 @@ public sealed class DogfoodWikiTests
     private static readonly string[] UnshippedRoots =
     [
         ".claude/",  // this repo's own agent configuration: rules, references, MTK settings.
-        ".codex/",   // the Codex CLI's hook config for this repo — agent tooling, same as .claude/.
         ".github/",  // CI for this repository. The workflows `init` scaffolds live under templates/.
         "docs/",     // the wiki itself: what documents the product, not an artifact it describes.
         "tasks/",    // MTK's lessons and todo list — notes about building DocuMe.

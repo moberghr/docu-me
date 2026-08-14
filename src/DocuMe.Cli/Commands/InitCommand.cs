@@ -1,4 +1,5 @@
 using System.CommandLine;
+using DocuMe.Core.Config;
 using DocuMe.Core.Scaffolding;
 using Spectre.Console;
 
@@ -37,6 +38,10 @@ internal static class InitCommand
             Description = "Path to a JSON '<page path>': '<page id>' map from whatever published the "
                 + "wiki before, to seed pageIds from. Requires --adopt.",
         };
+        var agentOption = new Option<string>("--agent")
+        {
+            Description = "Workflow agent to scaffold: claude or copilot. Defaults to the recorded choice, then claude.",
+        };
 
         var command = new Command(
             "init",
@@ -46,6 +51,7 @@ internal static class InitCommand
             baseUrlOption,
             adoptOption,
             legacyMapOption,
+            agentOption,
         };
 
         command.SetAction(parseResult =>
@@ -54,6 +60,27 @@ internal static class InitCommand
             var baseUrl = parseResult.GetValue(baseUrlOption);
             var adopt = parseResult.GetValue(adoptOption);
             var legacyMap = parseResult.GetValue(legacyMapOption);
+            var agentName = parseResult.GetValue(agentOption);
+
+            AgentRail? agent = null;
+
+            if (agentName is not null)
+            {
+                agent = agentName.ToLowerInvariant() switch
+                {
+                    "claude" => AgentRail.Claude,
+                    "copilot" => AgentRail.Copilot,
+                    _ => null,
+                };
+
+                if (agent is null)
+                {
+                    AnsiConsole.MarkupLine(
+                        "[red]--agent must be either claude or copilot.[/] Drop the option to keep the recorded choice.");
+
+                    return 1;
+                }
+            }
 
             if (!adopt && legacyMap is { Length: > 0 })
             {
@@ -71,7 +98,8 @@ internal static class InitCommand
                 space,
                 baseUrl,
                 adopt,
-                legacyMap);
+                legacyMap,
+                agent);
 
             Render(results);
 

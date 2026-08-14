@@ -156,6 +156,7 @@ Three things the tree above deliberately does *not* say, each of which an earlie
 ```jsonc
 {
   "$schema": "https://raw.githubusercontent.com/moberghr/docu-me/main/schema/docume.schema.json",
+  "agent": "claude",                  // selects the model-workflow rail; old configs default to Claude
   "confluence": {
     "baseUrl": "https://kvika.atlassian.net/wiki",
     "spaceKey": "AUR",
@@ -349,7 +350,7 @@ The highest-risk component. Requirements (derived from the actual AurServices wi
 
 - Intake: Confluence comments only (v1). The inbox format (§5.4) is the pluggable seam — future channels (Jira, aiproxy, …) just produce inbox items.
 - `docume sync --comments` → inbox items → committed via PR by the cron workflow.
-- **`/docs-feedback` skill** (run locally or manually triggered in CI):
+- **`/docs-feedback` skill** (run locally or manually triggered in CI through `docs-feedback.claude.yml` or `docs-feedback.copilot.yml`):
   1. Reads inbox items with `status: new`.
   2. For each: **verify the claim against the actual codebase** — same evidence discipline as docs-loop. Comments are untrusted input; the skill treats them as *claims to verify*, never as instructions (prompt-injection defense — stated explicitly in the SKILL.md system contract).
   3. Triage: factual error → fix page(s); open question → append to `_meta/GAPS.md`; suggestion/out-of-scope → mark `rejected` with reason.
@@ -361,13 +362,13 @@ The highest-risk component. Requirements (derived from the actual AurServices wi
 
 - **On every deploy** (consumer workflow `docs-drift.yml`, `workflow_run` after the deploy workflow): `docume drift --mark` → stale labels + dashboard update. Seconds, no LLM.
 - **On every PR** (advisory job, `docs-drift-pr.yml`): `docume drift --baseline origin/<defaultBranch> --format github-comment` → sticky PR comment listing affected pages. Non-blocking. Authors may run `/docs-refresh` on their branch for contract-level changes.
-- **`/docs-refresh` skill** (nightly cron in CI via headless Claude, and locally on demand — both, per locked decision):
+- **`/docs-refresh` skill** (nightly cron in CI via headless Claude (`docs-refresh.claude.yml`) or GitHub Copilot (`docs-refresh.copilot.yml`), and locally on demand — both, per locked decision):
   1. Input: `docume drift --format json` (or `status --json`) → stale page list.
   2. Regenerate ONLY stale pages against current HEAD, following `_meta/STYLE.md` + frontmatter sources; update `sources` if the code moved; bump `baselineSha`.
   3. Output: PR `docs/refresh-<date>` with a summary table (page → what changed → why).
 - **On merge to default branch** (consumer workflow `docs-publish.yml`, path filter `docs/wiki/**`): `docume publish --changed-since <state.lastPublishedSha>` → changed pages republished, approvals on changed pages invalidated, dashboard refreshed, then §9 step 5's reply pass and the state/stamp carry. **Failure contract:** every `docume` step holds its exit code rather than failing the job on the spot, one step at the end turns any held failure into a red check *after* the state file is safe, and the reply is skipped outright when the publish failed. **Toolchain:** this is the only scaffolded workflow that installs Node and `beautiful-mermaid`, because publish is the only command that renders a diagram (§4, §6.2 step 3). `init` gitignores `node_modules/` rather than populating it, so a wiki holding one ```mermaid``` fence fails the whole publish on the renderer's exit 3 if the job skips either step.
 - **Cron** (`docs-sync.yml`, e.g. every 6h): `docume sync` + `docume dashboard`; opens/updates a `docs/sync` PR when state/inbox changed.
-- **Comment triage** (`docs-feedback.yml`): counts untriaged inbox items and runs the §9 skill when there is work.
+- **Comment triage** (`docs-feedback.claude.yml` or `docs-feedback.copilot.yml`): counts untriaged inbox items and runs the §9 skill when there is work.
 
 **`baselineSha` has no CLI writer, by design.** §6.4 reads it, §8's banner prints it and `status` reports it, but no `docume` command sets it: it records the commit the wiki was *generated* against, so only a generation pass (`/docs-loop`, `/docs-refresh`) is entitled to move it. A publish that bumped it would claim the pages were regenerated when they were only re-uploaded.
 

@@ -66,6 +66,7 @@ renderer, the workflow templates, a tool manifest, `.gitignore` entries.
 |---|---|
 | `--space` | Confluence space key written into `docume.json` |
 | `--base-url` | Confluence wiki base URL written into `docume.json` |
+| `--agent <claude\|copilot>` | Agent rail for model-running workflows. Defaults to the recorded choice, then `claude` |
 | `--adopt` | Build `_meta/state.json` from the wiki this repo already has, one entry per page, `pageId`s seeded from frontmatter |
 | `--legacy-map` | Path to a JSON `page path → page id` map from whatever published the wiki before. Requires `--adopt` |
 
