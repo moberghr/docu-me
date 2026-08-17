@@ -317,6 +317,71 @@ public sealed class PublishExecutorTests : IDisposable
     }
 
     /// <summary>
+    /// Every body update stamps its provenance into the version message: which tool wrote the version,
+    /// from which commit, of which content. That makes the page history legible next to hand edits — a
+    /// version without the stamp was not written by DocuMe — and it costs one field on a request that
+    /// is being sent anyway.
+    /// </summary>
+    [Fact]
+    public async Task Stamps_the_repo_sha_and_content_hash_into_the_version_message_of_a_body_update()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        var pageId = PageId(first, "README.md");
+
+        Write("README.md", "# Home\n\nRewritten, with no image at all.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 1);
+        StubUpdate(server);
+        StubNoInlineComments(server);
+
+        var second = await ExecuteAsync(server, first.State, repoSha: "c0ffee");
+
+        second.Succeeded.ShouldBeTrue();
+
+        var payload = Payload(Requests(server, "PUT", $"/wiki/api/v2/pages/{pageId}").Single());
+        var message = payload.GetProperty("version").GetProperty("message").GetString();
+
+        message.ShouldBe(
+            $"docume publish — repo c0ffee, content {second.State.Pages["README.md"].ContentHash}");
+    }
+
+    /// <summary>
+    /// A publish outside a git checkout has no sha to name, and the stamp says what it knows rather
+    /// than nothing at all: the tool and the content hash still identify the write.
+    /// </summary>
+    [Fact]
+    public async Task Stamps_the_content_hash_alone_when_no_repo_sha_was_passed()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        var pageId = PageId(first, "README.md");
+
+        Write("README.md", "# Home\n\nRewritten, with no image at all.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 1);
+        StubUpdate(server);
+        StubNoInlineComments(server);
+
+        var second = await ExecuteAsync(server, first.State);
+
+        second.Succeeded.ShouldBeTrue();
+
+        var payload = Payload(Requests(server, "PUT", $"/wiki/api/v2/pages/{pageId}").Single());
+        var message = payload.GetProperty("version").GetProperty("message").GetString();
+
+        message.ShouldBe($"docume publish — content {second.State.Pages["README.md"].ContentHash}");
+    }
+
+    /// <summary>
     /// Rule §9.1's other half, asserted on the wire at the call site that would carry the breach: the
     /// version read asks Confluence for a version, and does not bring the page body back with it.
     /// </summary>

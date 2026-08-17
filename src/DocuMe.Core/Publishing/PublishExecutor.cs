@@ -510,7 +510,12 @@ public sealed class PublishExecutor
             var updated = await _client
                 .UpdatePageAsync(
                     new ConfluencePageRevision(
-                        pageId!, planned.Title, RequireBody(planned, body), remoteVersion, parentId),
+                        pageId!,
+                        planned.Title,
+                        RequireBody(planned, body),
+                        remoteVersion,
+                        parentId,
+                        ProvenanceMessage(options.RepoSha, plan.ContentHash)),
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -1005,6 +1010,24 @@ public sealed class PublishExecutor
     /// children pointing at the id state still records. Naming it is enough — state records the new id
     /// once the parent is written, so the next run reads the stale id as a move and performs it.
     /// </remarks>
+    /// <summary>
+    /// The version message every body update carries: which tool wrote the version, from which commit,
+    /// of which content — the page-side half of <see cref="WarnOnHandEdits"/>, since a version without
+    /// this stamp in the history was not written by DocuMe.
+    /// </summary>
+    /// <remarks>
+    /// The sha is the run's, not the page's: <see cref="PublishExecutionOptions.RepoSha"/> is optional
+    /// (a publish outside a git checkout has none), and the stamp says what it knows. The content hash
+    /// is §5.3's banner-excluded <see cref="ContentHash"/>, so the history entry names the same value
+    /// state records — recoverable from Confluence alone if state.json is ever lost. The model notes an
+    /// unverified community report of v2 dropping <c>version.message</c>; the stamp is provenance, not
+    /// a mechanism anything depends on, so sending it costs nothing either way.
+    /// </remarks>
+    private static string ProvenanceMessage(string? repoSha, string contentHash) =>
+        repoSha is { Length: > 0 } sha
+            ? $"docume publish — repo {sha}, content {contentHash}"
+            : $"docume publish — content {contentHash}";
+
     /// <summary>
     /// Rule §9.1 said out loud: a live version ahead of the one the last publish wrote means somebody
     /// edited the page in Confluence, and the body write that follows discards that edit.
