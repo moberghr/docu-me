@@ -12,6 +12,27 @@ public sealed record DocumeConfig
     [JsonPropertyName("$schema")]
     public string? Schema { get; init; }
 
+    /// <summary>
+    /// Which coding agent this repo's model-running workflows are written for (PLAN.md §10).
+    /// Recorded by <c>docume init --agent</c> and read back by a later run.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nullable on purpose, and it is the one field here whose absence means something. Every repo
+    /// scaffolded before the Copilot rail existed has no <c>agent</c> key, and those repos are on the
+    /// Claude rail — so "absent" resolves to <see cref="AgentRail.Claude"/> and the default is
+    /// backwards-compatible by construction rather than by coincidence. A non-nullable property
+    /// defaulting to <c>Claude</c> would read the same at runtime and lose the distinction that
+    /// matters at <c>init</c>: whether this repo has ever chosen.
+    /// </para>
+    /// <para>
+    /// Read only by <c>init</c>. Nothing else in the tool branches on the rail, because nothing else
+    /// runs a model — the rail decides which template a consumer receives, and after that it is their
+    /// workflow file that carries the answer.
+    /// </para>
+    /// </remarks>
+    public AgentRail? Agent { get; init; }
+
     public ConfluenceConfig Confluence { get; init; } = new();
 
     public WikiConfig Wiki { get; init; } = new();

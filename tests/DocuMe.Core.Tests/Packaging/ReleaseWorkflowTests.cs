@@ -772,11 +772,16 @@ public sealed class ReleaseWorkflowTests : IDisposable
 
         using var process = Process.Start(info)
             ?? throw new InvalidOperationException("git did not start.");
+
+        // stderr is drained concurrently, never after stdout: with both streams redirected, a
+        // sequential read deadlocks the moment the child fills the unread pipe. git 2.54 started
+        // writing the init.defaultBranch advice to stderr, and `git init --bare` hung the whole
+        // suite here, blocked in write(2) with nobody reading.
+        var error = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
         var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
 
-        return new ProcessResult(process.ExitCode, output, error);
+        return new ProcessResult(process.ExitCode, output, error.GetAwaiter().GetResult());
     }
 
     /// <summary>The shell of the step named <paramref name="name"/>, extracted from the shipped yaml.</summary>
@@ -864,11 +869,14 @@ public sealed class ReleaseWorkflowTests : IDisposable
 
         using var process = Process.Start(info)
             ?? throw new InvalidOperationException("bash did not start.");
+
+        // Concurrent for the reason GitResult states: a sequential double read deadlocks once the
+        // child fills the pipe nobody is reading yet.
+        var error = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
         var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
 
-        return new ProcessResult(process.ExitCode, output, error);
+        return new ProcessResult(process.ExitCode, output, error.GetAwaiter().GetResult());
     }
 
     private static string CreateFile(string directory, string name, string content)

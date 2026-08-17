@@ -6,7 +6,7 @@ namespace DocuMe.Core.Tests.Scaffolding;
 
 /// <summary>
 /// <c>docume init --adopt</c> (PLAN.md §6.1): the state skeleton built from a wiki the repo already
-/// has. Driven through <see cref="ProjectScaffolder.Scaffold(string, string?, string?, bool, string?)"/>
+/// has. Driven through <see cref="ProjectScaffolder.Scaffold(string, string?, string?, bool, string?, DocuMe.Core.Config.AgentRail?)"/>
 /// rather than <see cref="WikiAdopter.Adopt"/> directly, because half of what can go wrong is the
 /// wiring — which file is read, which is written, and which row the outcome is reported on.
 /// </summary>

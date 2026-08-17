@@ -341,6 +341,62 @@ public sealed partial class CliReferencePageTests
             + "option has to appear in each command's table like every other one.");
     }
 
+    /// <summary>
+    /// The two splits above between them account for the whole page, so no part of it is a region
+    /// every assertion in this class quantifies over nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One layer up from the row pattern: a split decides which text an assertion may be satisfied
+    /// by, and these two disagree about what ends a piece.
+    /// <see cref="PageWidePreamble"/> cuts the page at the first COMMAND heading;
+    /// <see cref="CommandSection"/>'s body ends at the next <c>\n## </c> OF ANY KIND. So an ordinary
+    /// non-command h2 below the first command heading is a terminator for one split and a boundary
+    /// for neither, and the text after it belongs to no piece.
+    /// </para>
+    /// <para>
+    /// The live page has eight h2 headings and its one non-command heading sits ABOVE the first
+    /// command heading, so nothing falls between pieces today. The LAYOUT is what made that true,
+    /// not an assertion, and the silent direction is the row pattern's one level out: a phantom
+    /// option in an orphaned region never reaches
+    /// <see cref="Every_option_the_reference_page_documents_is_one_the_command_declares"/>, nor its
+    /// unread set, because both quantify over sections.
+    /// </para>
+    /// <para>
+    /// Measured, one cell per layout (<c>.mtk/paths-203/mutate-page-split.py</c>, 7 cells, full
+    /// suite each): a phantom option in a table under a trailing <c>## Appendix</c>, a bare-name row
+    /// in the same place, and a non-command h2 between two command sections each passed all 1460
+    /// tests. The denominators were CAUGHT: the same phantom inside a section, and the same heading
+    /// placed above a REAL table, which loses eleven rows and reds
+    /// <see cref="Every_declared_option_is_in_its_commands_option_table"/> — the loud direction,
+    /// which is why an orphan cannot hide a real option, only an invented one.
+    /// </para>
+    /// <para>
+    /// Whitespace-only spans are dropped and that exclusion is measured, not assumed: the last
+    /// body's <c>$</c> matches before a trailing newline at end of input, so the live page ends in a
+    /// one-character span outside every piece. Text a reader cannot read is not text an assertion
+    /// needs. The boundary comes from <see cref="PageWidePreamble"/> itself rather than a second
+    /// reading of the same rule, so the two splits are pinned to each other: if they ever disagree
+    /// about where the first command section starts, the gap between their answers reports here.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void Every_part_of_the_reference_page_is_in_the_preamble_or_one_command_section()
+    {
+        var unreached = UnreachedPageText();
+
+        var because = "These parts of docs/wiki/20-reference/cli.md are below the page-wide preamble "
+            + "and inside no command section, so every assertion in this class runs on a smaller "
+            + $"page than the one a reader gets: {string.Join(" | ", unreached)}. A non-command "
+            + "\"## \" heading below the first command heading ends that command's section and opens "
+            + "no other, and an option table under it is documented to a reader and quantified over "
+            + "by nothing — a phantom flag there is never reported as invented. Put the heading "
+            + "above the first command section, where page-wide prose lives, or make it a command "
+            + "section of its own.";
+
+        unreached.ShouldBeEmpty(because);
+    }
+
     [Fact]
     public void Every_documented_invocation_names_a_real_command_with_real_options()
     {
@@ -786,6 +842,45 @@ public sealed partial class CliReferencePageTests
         sections.ShouldNotBeEmpty(because);
 
         return sections;
+    }
+
+    /// <summary>
+    /// The spans of the reference page that fall outside both splits — after the page-wide preamble
+    /// and inside no command section — each folded to one line for the failure message.
+    /// </summary>
+    private static List<string> UnreachedPageText()
+    {
+        var page = File.ReadAllText(Path.Combine([RepoRoot, .. ReferencePagePath]));
+
+        var covered = new List<(int Start, int End)> { (0, PageWidePreamble().Length) };
+
+        covered.AddRange(CommandSection().Matches(page)
+            .Cast<Match>()
+            .Select(match => (Start: match.Index, End: match.Index + match.Length)));
+
+        var spans = new List<string>();
+        var cursor = 0;
+
+        foreach (var (start, end) in covered.OrderBy(span => span.Start))
+        {
+            if (start > cursor)
+            {
+                spans.Add(page[cursor..start]);
+            }
+
+            cursor = Math.Max(cursor, end);
+        }
+
+        if (cursor < page.Length)
+        {
+            spans.Add(page[cursor..]);
+        }
+
+        return spans
+            .Where(span => !string.IsNullOrWhiteSpace(span))
+            .Select(span => WhitespaceRun().Replace(span.Trim(), " "))
+            .Select(span => span.Length > 90 ? span[..90] + "…" : span)
+            .ToList();
     }
 
     /// <summary>

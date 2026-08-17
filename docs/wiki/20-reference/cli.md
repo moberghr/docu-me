@@ -62,12 +62,18 @@ state takes `--state`, defaulting to `<wiki.root>/_meta/state.json`.
 Scaffolds a consumer repo: `docume.json`, the `docs/wiki/` skeleton with `_meta/STYLE.md`, the mermaid
 renderer, the workflow templates, a tool manifest, `.gitignore` entries.
 
+The scaffolded `_meta/STYLE.md` is a questionnaire, not a style: seven bullets (audience, tone,
+structure, scope, diagrams, business, verification) that every generation skill reads at the start of a
+run. Answer them before the first run, because they decide the wiki you get. An unanswered guide leaves
+the skill inferring your taxonomy from the code for that one run and saying so in the pull request.
+
 | Option | Effect |
 |---|---|
 | `--space` | Confluence space key written into `docume.json` |
 | `--base-url` | Confluence wiki base URL written into `docume.json` |
 | `--adopt` | Build `_meta/state.json` from the wiki this repo already has, one entry per page, `pageId`s seeded from frontmatter |
 | `--legacy-map` | Path to a JSON `page path → page id` map from whatever published the wiki before. Requires `--adopt` |
+| `--agent` | Which agent the two model-running workflows are written for: `claude` or `copilot`. Recorded in `docume.json`; omitted, a recorded value wins and a fresh repo gets `claude` |
 
 Idempotent: an existing file is never overwritten, and every skip is reported.
 

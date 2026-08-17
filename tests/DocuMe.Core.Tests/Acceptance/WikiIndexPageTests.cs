@@ -343,9 +343,13 @@ public sealed class WikiIndexPageTests
         WorkflowTemplates()
             .Where(path =>
             {
+                // Both rails: a copilot spelling runs a model exactly as much as a claude one does,
+                // and counting only one rail would let the index call the other "CLI-only".
                 var body = File.ReadAllText(path);
                 return body.Contains("@anthropic-ai/claude-code", StringComparison.Ordinal)
-                    || body.Contains("claude -p ", StringComparison.Ordinal);
+                    || body.Contains("claude -p ", StringComparison.Ordinal)
+                    || body.Contains("@github/copilot", StringComparison.Ordinal)
+                    || body.Contains("copilot -p ", StringComparison.Ordinal);
             })
             .Select(Path.GetFileName)
             .Select(name => name!)

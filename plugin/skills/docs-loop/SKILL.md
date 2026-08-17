@@ -64,11 +64,12 @@ These clauses hold for every run. They are not style preferences.
 | the existing pages | under `wiki.root` | the shape to match. A page that reads like a different document is a page a reader distrusts |
 | the code | the repo | the only source of a factual claim |
 
-`_meta/STYLE.md` is scaffolded by `docume init` as four one-line bullets under a single heading —
-**Audience**, **Tone**, **Structure**, **Verification** — introduced by "Fill these in for your project."
-A consumer who filled it in has usually grown each bullet into its own section, so look for the four topics
-by name rather than for a heading level. If it is still the four scaffolded lines, say so in the PR body and
-infer the taxonomy from the code's own top-level shape for this one run.
+`_meta/STYLE.md` is scaffolded by `docume init` as seven bullets under a single heading —
+**Audience**, **Tone**, **Structure**, **Scope**, **Diagrams**, **Business**, **Verification** —
+introduced by "Fill these in for your project." A consumer who filled it in has usually grown each bullet
+into its own section, so look for the seven topics by name rather than for a heading level. If it is still
+the scaffolded questions, say so in the PR body and infer the taxonomy from the code's own top-level shape
+for this one run.
 Do not invent a house style and do not fill `STYLE.md` in yourself: it is the consumer's file, and a guessed
 style guide is worse than an empty one because the next run will follow it.
 

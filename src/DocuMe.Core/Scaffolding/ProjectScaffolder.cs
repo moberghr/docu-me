@@ -138,9 +138,25 @@ public static class ProjectScaffolder
         string? spaceKey = null,
         string? baseUrl = null,
         bool adopt = false,
-        string? legacyMapPath = null)
+        string? legacyMapPath = null,
+        AgentRail? agent = null)
     {
-        var config = Write(targetDir, ConfigLoader.DefaultFileName, () => BuildConfigJson(spaceKey, baseUrl));
+        // Read before the write, because this is the one decision that depends on what the repo
+        // already decided. `Write` below is lazy and skips an existing file, so a repo that has a
+        // config keeps it and this is the only look we get at the rail it recorded.
+        var recorded = ReadConfig(targetDir).Config?.Agent;
+        var rail = agent ?? recorded ?? AgentRail.Claude;
+
+        // A repo that recorded one rail and was just asked for the other. Not an error: §9.4 makes
+        // overwriting unavailable anyway, and refusing would block the twenty other targets this run
+        // would happily scaffold. It is worth SAYING, though — silently skipping the two files the
+        // consumer actually came here to change is the unhelpful half of idempotence.
+        var contradicted = agent is not null && recorded is not null && agent != recorded;
+
+        var config = Write(
+            targetDir,
+            ConfigLoader.DefaultFileName,
+            () => BuildConfigJson(spaceKey, baseUrl, rail));
 
         // Read back the config just written — or the consumer's own, when it already had one — because
         // three targets hang off it: where the wiki lives, the state file inside it, and the renderer.
@@ -155,10 +171,11 @@ public static class ProjectScaffolder
         results.Add(Write(targetDir, $"{wikiRoot.Path}/{StyleFile}", BuildStyleGuide));
         results.Add(state);
 
-        results.AddRange(BundledTemplates.WorkflowFileNames.Select(name => Copy(
+        results.AddRange(BundledTemplates.WorkflowFileNames(rail).Select(name => Copy(
             targetDir,
             $"{WorkflowDirectory}/{name}",
-            () => BundledTemplates.ReadWorkflow(name))));
+            () => BundledTemplates.ReadWorkflow(name, rail),
+            RailSwitchNote(targetDir, name, contradicted, recorded, rail))));
 
         // Directly after the workflows, because it is what makes them run at all.
         results.Add(MergeToolManifest(targetDir));
@@ -710,11 +727,49 @@ public static class ProjectScaffolder
     private static string Combine(string targetDir, string relativePath)
         => System.IO.Path.Combine([targetDir, .. relativePath.Split('/')]);
 
-    private static string BuildConfigJson(string? spaceKey, string? baseUrl)
+    /// <summary>
+    /// The note on a model-running workflow that this run was asked to change the rail of and cannot.
+    /// <see langword="null"/> for every other file and every ordinary run.
+    /// </summary>
+    /// <remarks>
+    /// Conditioned on the file EXISTING, not just on the contradiction: a repo that deleted one of the
+    /// two gets that one written fresh on the requested rail, and a note telling it to delete a file
+    /// that is being created in the same breath would be nonsense. The result is that a half-switched
+    /// repo reports one row created and one skipped-with-a-note, which is exactly its situation.
+    /// </remarks>
+    private static string? RailSwitchNote(
+        string targetDir,
+        string fileName,
+        bool contradicted,
+        AgentRail? recorded,
+        AgentRail requested)
+    {
+        if (!contradicted || !BundledTemplates.IsRailed(fileName))
+        {
+            return null;
+        }
+
+        if (!File.Exists(Combine(targetDir, $"{WorkflowDirectory}/{fileName}")))
+        {
+            return null;
+        }
+
+        var railed = BundledTemplates.WorkflowFileNames(requested)
+            .Where(BundledTemplates.IsRailed)
+            .Select(name => $"{WorkflowDirectory}/{name}");
+
+        return $"this repo is on the {recorded} rail and init never overwrites (rule §9.4). To move it "
+            + $"to {requested}, delete {string.Join(" and ", railed)}, then run init --agent "
+            + $"{requested.ToString().ToLowerInvariant()} again. Everything else this run reports is "
+            + "unaffected.";
+    }
+
+    private static string BuildConfigJson(string? spaceKey, string? baseUrl, AgentRail agent)
     {
         var config = new DocumeConfig
         {
             Schema = SchemaUrl,
+            Agent = agent,
             Confluence = new ConfluenceConfig
             {
                 BaseUrl = baseUrl ?? BaseUrlPlaceholder,
@@ -741,12 +796,22 @@ public static class ProjectScaffolder
         """
         # Style guide
 
-        Repo-specific conventions the docs-loop follows when generating this wiki.
+        Repo-specific conventions the generation skills follow when writing this wiki.
         Fill these in for your project.
 
-        - **Audience:** who reads these docs.
-        - **Tone:** how they should read.
-        - **Structure:** the section taxonomy (domains, services, etc.).
+        - **Audience:** who reads these docs. Engineers, the people who use the
+          system, or both: each tier is generated by its own skill.
+        - **Tone:** how the pages should read.
+        - **Structure:** the section taxonomy (domains, services, etc.), and the
+          directory the business tier lives in, if this wiki carries one.
+        - **Scope:** how large the wiki should be and how deep one page goes. The
+          skills write to the size stated here, so a thin answer is a thin wiki.
+        - **Diagrams:** whether pages open with a mermaid diagram, and of which
+          kinds. The bundled renderer accepts a subset of mermaid, so check every
+          new diagram with `docume convert --render-mermaid` before it ships.
+        - **Business:** who reads the process pages `/docs-processes` writes, and
+          the facts no code states (policy, legal intent), which belong in
+          `_meta/BUSINESS.md` for those pages to cite.
         - **Verification:** every claim needs a code citation; mark unverified
           statements with ⚠️ UNVERIFIED.
         """ + Environment.NewLine;

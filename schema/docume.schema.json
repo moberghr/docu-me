@@ -11,6 +11,11 @@
       "type": "string",
       "description": "This schema's URL. Written by `docume init`; ignored by the loader."
     },
+    "agent": {
+      "type": "string",
+      "enum": ["claude", "copilot"],
+      "description": "Which coding agent the repo's model-running workflows (docs-refresh, docs-feedback) are written for. Recorded by `docume init --agent`; absent means claude, the rail every repo scaffolded before the copilot rail existed is on."
+    },
     "confluence": {
       "type": "object",
       "additionalProperties": false,

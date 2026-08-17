@@ -82,12 +82,13 @@ internal static class DocumeCli
         using var process = Process.Start(info)
             ?? throw new InvalidOperationException("dotnet did not start.");
 
-        // Read before waiting: a command that fills a pipe buffer would deadlock against WaitForExit.
+        // Read before waiting, and stderr concurrently with stdout: a sequential double read
+        // deadlocks once the child fills the unread pipe (see ReleaseWorkflowTests.GitResult).
+        var errorTask = process.StandardError.ReadToEndAsync(Xunit.TestContext.Current.CancellationToken);
         var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
 
-        return new CliRun(process.ExitCode, output, error, string.Join(' ', args));
+        return new CliRun(process.ExitCode, output, errorTask.GetAwaiter().GetResult(), string.Join(' ', args));
     }
 
     /// <summary>

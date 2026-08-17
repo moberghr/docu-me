@@ -71,6 +71,10 @@ internal static class ShippedTree
             + "only: it carries no prose, so it can state nothing about configuration. The pages "
             + "themselves are outside this sweep structurally — .html and .css are not swept Extensions "
             + "— and their claims are held by the same wiki pages they are written from.",
+        ["AGENTS.md"] = "the cross-tool restatement of CLAUDE.md, generated for agents that do not read "
+            + "CLAUDE.md. Same classification as CLAUDE.md and for the same reason: standards for "
+            + "working on DocuMe, not on a consumer's repo. It is in the global gitignore, so `git "
+            + "status` never shows it and only this sweep, which walks the filesystem, sees it at all.",
         ["CLAUDE.md"] = "engineering standards for agents working on DocuMe, not on a consumer's repo.",
         ["CODE_INDEX.md"] = "a generated map of this repository's own source.",
         ["GATES.md"] = "human-gate instructions for Mirko. CARRIES A CLAIM: three `confluence.*` loop "

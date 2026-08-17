@@ -33,6 +33,22 @@ as an inbox item.
 | [Reference](20-reference/README.md) | Every command, every config field, the conversion contract |
 | [Automation](30-automation/README.md) | The workflows and the Claude skills that drive it unattended |
 
+## How a wiki grows, and why yours looks the way it does
+
+Every generation skill reads `_meta/STYLE.md` before it writes a word, and writes to what that file
+answers: who reads the wiki, how it should sound, how it is organised, how big it should be, whether
+pages carry diagrams, whether a business tier exists, and how claims are verified. The consequence is
+that the style guide is the lever for everything you might dislike about a generated wiki. Thin pages
+and no diagrams mean the guide never asked for depth or diagrams, not that the generator cannot
+produce them.
+
+Generation is two skills, one per audience. `/docs-loop` writes the technical tier and `/docs-processes`
+writes the business and process tier beside it, for readers who never open the code. Each keeps its own
+inventory (`_meta/PROGRESS.md` and `_meta/PROGRESS-BUSINESS.md`), and each writes that inventory on its
+first run instead of a page, so a human can reorder the list before pages are generated against it. A
+wiki with no business tier is a wiki where `/docs-processes` has not run yet: nothing creates that tier
+as a side effect. The skills are documented in [Claude Skills](30-automation/skills.md).
+
 ## Getting started
 
 Installation and the first publish are in the repository `README.md`, not here: they change with the

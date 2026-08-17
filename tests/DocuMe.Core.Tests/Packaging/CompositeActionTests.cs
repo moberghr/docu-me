@@ -729,11 +729,14 @@ public sealed class CompositeActionTests : IDisposable
 
         using var process = Process.Start(info)
             ?? throw new InvalidOperationException("bash did not start.");
+
+        // stderr drained concurrently with stdout: a sequential double read deadlocks once the
+        // child fills the unread pipe (see ReleaseWorkflowTests.GitResult).
+        var errorTask = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
         var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
 
-        return new ProcessResult(process.ExitCode, output, error);
+        return new ProcessResult(process.ExitCode, output, errorTask.GetAwaiter().GetResult());
     }
 
     private static string CreateFile(string directory, string name, string content)

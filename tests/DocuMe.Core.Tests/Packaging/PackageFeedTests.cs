@@ -202,7 +202,7 @@ public sealed partial class PackageFeedTests
                 .Contains(read, StringComparison.Ordinal))
             .ToList();
 
-        templates.Count.ShouldBe(6, $"Not every scaffolded workflow reads {read}.");
+        templates.Count.ShouldBe(8, $"Not every scaffolded workflow reads {read}.");
 
         var readme = File.ReadAllText(Path.Combine(RepoRoot, "README.md"));
         const string Names = $"The scaffolded workflows read a `{TokenSecret}` secret and README.md "

@@ -229,7 +229,7 @@ public sealed partial class PlanSemanticsTraceTests
             Sites =
             [
                 new() { File = SkillPath, Performs = @"^name: docs-feedback$" },
-                new() { File = "templates/workflows/docs-feedback.yml", Performs = @"workflow_dispatch:" },
+                new() { File = "templates/workflows/docs-feedback.claude.yml", Performs = @"workflow_dispatch:" },
             ],
         },
         new()
@@ -322,7 +322,7 @@ public sealed partial class PlanSemanticsTraceTests
                 // cannot hold `contents: read`.
                 new()
                 {
-                    File = "templates/workflows/docs-feedback.yml",
+                    File = "templates/workflows/docs-feedback.claude.yml",
                     Performs = @"permissions:\n  contents: write\n  pull-requests: write",
                 },
 
@@ -330,7 +330,7 @@ public sealed partial class PlanSemanticsTraceTests
                 // it cannot write to Confluence even if it tried (rule §0.4).
                 new()
                 {
-                    File = "templates/workflows/docs-feedback.yml",
+                    File = "templates/workflows/docs-feedback.claude.yml",
                     Performs = @"DOCUME_CONFLUENCE_TOKEN",
                     Absent = true,
                 },
@@ -349,7 +349,7 @@ public sealed partial class PlanSemanticsTraceTests
             Id = "§9 CI posture — PR-only writes",
             Why = "PLAN.md §9 and rule §1.5 both say feedback processing runs with \"read-only repo "
                 + "access\". No GitHub job can: pushing the docs/feedback-<date> branch the same bullet "
-                + "requires needs `contents: write`, and templates/workflows/docs-feedback.yml grants it "
+                + "requires needs `contents: write`, and templates/workflows/docs-feedback.claude.yml grants it "
                 + "(its own comment at the permissions block says why). What IS enforced is the half that "
                 + "matters, and the wiki already words it correctly — "
                 + "docs/wiki/30-automation/workflows.md's \"Everything writes through a pull request\" "

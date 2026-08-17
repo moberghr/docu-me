@@ -141,8 +141,9 @@ First release. Everything below is new, so it is grouped by what it does rather 
 
 ### Packaging
 
-- Six workflow templates shipped by `init`: publish on merge, sync on a schedule, drift on a PR, drift after
-  a deploy, nightly refresh, and feedback. The publish job closes the feedback loop: after republishing it
+- Eight workflow templates shipped by `init`: publish on merge, sync on a schedule, drift on a PR, drift after
+  a deploy, nightly refresh, and feedback — the refresh and feedback jobs each in a claude and a copilot
+  spelling, of which a repo receives the pair on its rail. The publish job closes the feedback loop: after republishing it
   runs `sync --reply`, then carries the state file and the `repliedAt`-stamped items into the `docs/sync` PR
   together, so a reviewer is answered once and only once.
 - Every scaffolded workflow adds the GitHub Packages feed before restoring the pinned CLI. `DocuMe.Cli` is

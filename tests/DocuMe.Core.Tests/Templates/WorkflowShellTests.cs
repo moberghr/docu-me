@@ -45,7 +45,23 @@ public sealed class WorkflowShellTests : IDisposable
     private const string ArchivePath = "docs/wiki/_meta/feedback/archive";
     private const string StateBranch = "docs/sync";
 
-    /// <summary>A stand-in baseline revision — <c>docs-refresh.yml</c> only ever passes it through.</summary>
+    /// <summary>
+    /// The refresh template whose shell this class actually executes.
+    /// </summary>
+    /// <remarks>
+    /// The Claude rail rather than the Copilot one, and the choice is not arbitrary: these tests run
+    /// the gate's shell for real, and running it twice would prove the same seven behaviours twice over
+    /// while costing a second subprocess per case. What makes that safe is
+    /// <see cref="The_copilot_rail_gates_the_model_run_with_the_same_shell"/>, which holds the Copilot
+    /// variant's gate to this one byte for byte — so every case below is a case about both rails, and a
+    /// Copilot template that quietly rewrote its own gate reds there rather than going unnoticed here.
+    /// </remarks>
+    private const string RefreshTemplate = "docs-refresh.claude.yml";
+
+    /// <summary>The Copilot spelling of the same job, held to <see cref="RefreshTemplate"/>'s gate.</summary>
+    private const string RefreshTemplateCopilot = "docs-refresh.copilot.yml";
+
+    /// <summary>A stand-in baseline revision — the refresh job only ever passes it through.</summary>
     private const string Sha = "1234567890abcdef1234567890abcdef12345678";
 
     private static readonly string RepoRoot = Locate();
@@ -294,7 +310,7 @@ public sealed class WorkflowShellTests : IDisposable
     [Fact]
     public void Reads_the_baseline_the_state_file_carries()
     {
-        var repo = NewConsumerRepo("docs-refresh.yml", prExists: false);
+        var repo = NewConsumerRepo(RefreshTemplate, prExists: false);
         WriteState(repo, $$$"""{"baselineSha":"{{{Sha}}}","pages":{}}""");
 
         var run = RunRefreshStep(repo, "Read the wiki baseline");
@@ -310,7 +326,7 @@ public sealed class WorkflowShellTests : IDisposable
     [Fact]
     public void Reports_no_baseline_when_nobody_has_generated_the_wiki()
     {
-        var repo = NewConsumerRepo("docs-refresh.yml", prExists: false);
+        var repo = NewConsumerRepo(RefreshTemplate, prExists: false);
 
         var run = RunRefreshStep(repo, "Read the wiki baseline");
 
@@ -326,7 +342,7 @@ public sealed class WorkflowShellTests : IDisposable
     [Fact]
     public void Puts_the_clis_own_drift_answer_into_the_step_outputs()
     {
-        var repo = NewConsumerRepo("docs-refresh.yml", prExists: false);
+        var repo = NewConsumerRepo(RefreshTemplate, prExists: false);
         var match = new SourceMatch("src/**/*.cs", ["src/Thing.cs"]);
         var report = new DriftReport
         {
@@ -362,7 +378,7 @@ public sealed class WorkflowShellTests : IDisposable
     [InlineData("{\"hasDrift\":true,\"affectedCount\":2}\ntrailing garbage\n")]
     public void Stops_rather_than_reporting_no_drift_when_the_report_cannot_be_read(string report)
     {
-        var repo = NewConsumerRepo("docs-refresh.yml", prExists: false);
+        var repo = NewConsumerRepo(RefreshTemplate, prExists: false);
 
         var run = RunRefreshStep(repo, "Check for drift", report);
 
@@ -381,7 +397,7 @@ public sealed class WorkflowShellTests : IDisposable
     [Fact]
     public void Warns_when_no_page_declares_sources()
     {
-        var repo = NewConsumerRepo("docs-refresh.yml", prExists: false);
+        var repo = NewConsumerRepo(RefreshTemplate, prExists: false);
         var report = new DriftReport
         {
             Baseline = Sha,
@@ -405,7 +421,7 @@ public sealed class WorkflowShellTests : IDisposable
     [Fact]
     public void Names_the_refresh_branch_the_skill_pushed()
     {
-        var repo = NewConsumerRepo("docs-refresh.yml", prExists: false);
+        var repo = NewConsumerRepo(RefreshTemplate, prExists: false);
         RunRefreshStep(repo, "Prepare the workspace").Result.Code.ShouldBe(0);
         PushRefreshBranch(repo, "docs/refresh-2026-07-25");
 
@@ -427,7 +443,7 @@ public sealed class WorkflowShellTests : IDisposable
     [Fact]
     public void Warns_when_drift_was_reported_and_no_refresh_branch_appeared()
     {
-        var repo = NewConsumerRepo("docs-refresh.yml", prExists: false);
+        var repo = NewConsumerRepo(RefreshTemplate, prExists: false);
         RunRefreshStep(repo, "Prepare the workspace").Result.Code.ShouldBe(0);
 
         var run = RunRefreshStep(repo, "Confirm a refresh branch appeared");
@@ -445,19 +461,95 @@ public sealed class WorkflowShellTests : IDisposable
     [Fact]
     public void Drives_docs_refresh_by_names_the_template_still_uses()
     {
-        var names = RunBlocks("docs-refresh.yml").Select(block => block.Name).ToList();
+        var names = RunBlocks(RefreshTemplate).Select(block => block.Name).ToList();
 
         names.ShouldContain("Check for drift");
         names.ShouldContain("Confirm a refresh branch appeared");
 
-        var drift = RunBlocks("docs-refresh.yml")
+        var drift = RunBlocks(RefreshTemplate)
             .Single(block => string.Equals(block.Name, "Check for drift", StringComparison.Ordinal));
         drift.Script.ShouldContain("$DRIFT_FILE");
 
-        var confirm = RunBlocks("docs-refresh.yml")
+        var confirm = RunBlocks(RefreshTemplate)
             .Single(block =>
                 string.Equals(block.Name, "Confirm a refresh branch appeared", StringComparison.Ordinal));
         confirm.Script.ShouldContain("$BRANCHES_BEFORE");
+    }
+
+    /// <summary>
+    /// The Copilot rail decides whether to spend money with the same shell the Claude rail does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what makes every case above a case about both rails. Those cases execute
+    /// <see cref="RefreshTemplate"/>'s gate for real; this one holds
+    /// <see cref="RefreshTemplateCopilot"/>'s to it byte for byte, so a Copilot variant that reworded
+    /// its own jq guard, dropped an emptiness check, or renamed a step reds HERE rather than passing
+    /// unexamined because the executed tests only ever read the other file.
+    /// </para>
+    /// <para>
+    /// Byte-for-byte and not "equivalent": the whole reason the gate is a spelled-out shell block with
+    /// commented reasoning is that the reasoning does not survive paraphrase. Both templates open by
+    /// claiming the difference between them is confined to the steps that run the model — this is the
+    /// assertion that claim is worth anything.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void The_copilot_rail_gates_the_model_run_with_the_same_shell()
+    {
+        // "Check for drift" and nothing else. This is the step that decides whether the model runs at
+        // all, and it is the one whose reasoning must not be paraphrased per rail.
+        //
+        // "Confirm a refresh branch appeared" is deliberately NOT held to byte equality, and finding
+        // that out is what this test was for: it diverges because the Copilot rail keeps a transcript
+        // artifact and the Claude rail does not, so each points a reader at the record it actually has.
+        // Pointing a Copilot reader at an empty step log to preserve a byte match would be the tail
+        // wagging the dog. Its structural half is asserted separately below.
+        string[] gate = ["Check for drift"];
+
+        var claude = RunBlocks(RefreshTemplate)
+            .Where(block => gate.Contains(block.Name, StringComparer.Ordinal))
+            .ToDictionary(block => block.Name, block => block.Script, StringComparer.Ordinal);
+
+        var copilot = RunBlocks(RefreshTemplateCopilot)
+            .Where(block => gate.Contains(block.Name, StringComparer.Ordinal))
+            .ToDictionary(block => block.Name, block => block.Script, StringComparer.Ordinal);
+
+        // ANTI-VACUITY. Both comparisons below are over the intersection, so a rename on either side
+        // would otherwise compare nothing and pass.
+        claude.Keys.Order(StringComparer.Ordinal).ShouldBe(
+            gate.Order(StringComparer.Ordinal),
+            $"{RefreshTemplate} no longer spells the gate steps this test drives it by.");
+
+        const string missing = $"{RefreshTemplateCopilot} is missing a gate step {RefreshTemplate} has. The "
+            + "rails may differ in how they invoke a model; they may not differ in when they decide to.";
+
+        copilot.Keys.Order(StringComparer.Ordinal).ShouldBe(gate.Order(StringComparer.Ordinal), missing);
+
+        foreach (var step in gate)
+        {
+            var diverged = $"the '{step}' step differs between the two rails. Everything that decides "
+                + "WHETHER to run a model is supposed to be identical across them — both templates say "
+                + "so in their opening comment. Whichever one changed, the other needs the same change.";
+
+            copilot[step].ShouldBe(claude[step], diverged);
+        }
+
+        // The confirm step's wording is per-rail; its job is not. Both rails must still notice a model
+        // run that spent money and pushed nothing — the silent-green failure the step exists to catch.
+        const string confirm = "Confirm a refresh branch appeared";
+
+        var copilotConfirm = RunBlocks(RefreshTemplateCopilot)
+            .SingleOrDefault(block => string.Equals(block.Name, confirm, StringComparison.Ordinal));
+
+        copilotConfirm.ShouldNotBeNull(
+            $"{RefreshTemplateCopilot} has no '{confirm}' step, so a Copilot run that produced no PR "
+            + "would report a clean green check.");
+
+        const string blind = $"{RefreshTemplateCopilot}'s '{confirm}' step no longer compares against the branch "
+            + "list captured before the run, so it cannot tell a new branch from one already there.";
+
+        copilotConfirm.Script.Contains("$BRANCHES_BEFORE", StringComparison.Ordinal).ShouldBeTrue(blind);
     }
 
     // ---- extraction -------------------------------------------------------------------------------
@@ -667,7 +759,7 @@ public sealed class WorkflowShellTests : IDisposable
     /// </summary>
     private RefreshRun RunRefreshStep(ConsumerRepo repo, string stepName, string? report = null)
     {
-        var step = RunBlocks("docs-refresh.yml")
+        var step = RunBlocks(RefreshTemplate)
             .Single(block => string.Equals(block.Name, stepName, StringComparison.Ordinal));
 
         // The two expressions this template interpolates into shell. Both are step outputs, so a runner
@@ -853,11 +945,14 @@ public sealed class WorkflowShellTests : IDisposable
 
         using var process = Process.Start(info)
             ?? throw new InvalidOperationException($"{file} did not start.");
+
+        // stderr drained concurrently with stdout: a sequential double read deadlocks once the
+        // child fills the unread pipe (see ReleaseWorkflowTests.GitResult).
+        var errorTask = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
         var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
 
-        return new ProcessResult(process.ExitCode, output, error);
+        return new ProcessResult(process.ExitCode, output, errorTask.GetAwaiter().GetResult());
     }
 
     private string NewScratch(string prefix)

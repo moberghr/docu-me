@@ -115,8 +115,8 @@ docu-me/
 │   └── action.yml
 ├── templates/                        # embedded into DocuMe.Core, written out by `docume init`
 │   ├── tools/render-mermaid.mjs      # beautiful-mermaid wrapper
-│   └── workflows/{docs-drift.yml,docs-drift-pr.yml,docs-publish.yml,
-│                 docs-sync.yml,docs-refresh.yml,docs-feedback.yml}
+│   └── workflows/{docs-drift,docs-drift-pr,docs-publish,docs-sync,
+│                 docs-refresh.{claude,copilot},docs-feedback.{claude,copilot}}.yml
 ├── schema/docume.schema.json         # what every scaffolded docume.json points `$schema` at
 ├── docs/wiki/                        # DocuMe's own wiki — dogfood the tool on itself
 ├── .github/workflows/                # build, test, validate both plugin manifests, release
@@ -156,6 +156,7 @@ Three things the tree above deliberately does *not* say, each of which an earlie
 ```jsonc
 {
   "$schema": "https://raw.githubusercontent.com/moberghr/docu-me/main/schema/docume.schema.json",
+  "agent": "claude",                    // model-workflow rail; absent = claude
   "confluence": {
     "baseUrl": "https://kvika.atlassian.net/wiki",
     "spaceKey": "AUR",

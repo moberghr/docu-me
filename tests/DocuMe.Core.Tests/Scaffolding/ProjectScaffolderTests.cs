@@ -134,20 +134,72 @@ public sealed class ProjectScaffolderTests : IDisposable
     /// (<see cref="Templates.WorkflowTemplateTests"/> reads that directory), so what
     /// <c>init</c> ships has to be those exact bytes and not a copy that drifted from them.
     /// </summary>
-    [Fact]
-    public void Scaffold_ships_the_workflow_templates_byte_for_byte()
+    [Theory]
+    [InlineData(AgentRail.Claude)]
+    [InlineData(AgentRail.Copilot)]
+    public void Scaffold_ships_the_workflow_templates_byte_for_byte(AgentRail rail)
     {
-        ProjectScaffolder.Scaffold(_dir);
+        var target = System.IO.Path.Combine(_dir, rail.ToString());
+        Directory.CreateDirectory(target);
+        ProjectScaffolder.Scaffold(target, agent: rail);
+
+        var shipped = Directory
+            .GetFiles(System.IO.Path.Combine(target, ".github", "workflows"), "*.yml")
+            .ToDictionary(path => System.IO.Path.GetFileName(path)!, path => path, StringComparer.Ordinal);
+
+        // Vacuous-pass guard. Every assertion below is inside a loop over the templates that ship on
+        // this rail, so a scaffold that wrote nothing at all would pass the byte comparison by never
+        // reaching it — and the rail plumbing is exactly the kind of change that can write nothing.
+        shipped.ShouldNotBeEmpty($"the {rail} rail scaffolded no workflow at all.");
 
         foreach (var source in Directory.GetFiles(TemplateDirectory("workflows"), "*.yml"))
         {
-            var shipped = Full($".github/workflows/{System.IO.Path.GetFileName(source)}");
+            var template = System.IO.Path.GetFileName(source)!;
+            var consumer = ConsumerName(template);
 
-            File.ReadAllBytes(shipped).ShouldBe(
+            // A template belonging to the OTHER rail must not be here — under its own name or the
+            // bare one. This is the half of the contract the rail introduced: shipping both spellings
+            // would give a consumer two nightly jobs contending for one concurrency group.
+            if (RailOf(template) is { } owner && owner != rail)
+            {
+                shipped.ShouldNotContainKey(
+                    template,
+                    $"{template} belongs to the {owner} rail but was shipped on the {rail} one.");
+
+                continue;
+            }
+
+            shipped.ShouldContainKey(
+                consumer,
+                $"{template} ships on the {rail} rail but no {consumer} was written.");
+
+            File.ReadAllBytes(shipped[consumer]).ShouldBe(
                 File.ReadAllBytes(source),
-                $"{System.IO.Path.GetFileName(source)} was not shipped verbatim.");
+                $"{template} was not shipped verbatim as {consumer}.");
         }
     }
+
+    /// <summary>
+    /// A template's consumer-facing name: the rail infix taken back off, so both
+    /// <c>docs-refresh.claude.yml</c> and <c>docs-refresh.copilot.yml</c> land as
+    /// <c>docs-refresh.yml</c>. Deliberately re-derived here rather than asked of
+    /// <c>BundledTemplates</c> — a test that computes the expected name with the same code that
+    /// produced it would agree with any bug they share.
+    /// </summary>
+    private static string ConsumerName(string template) =>
+        RailOf(template) is null
+            ? template
+            : System.IO.Path.GetFileNameWithoutExtension(
+                System.IO.Path.GetFileNameWithoutExtension(template)) + ".yml";
+
+    /// <summary>The rail a template is written for, or <see langword="null"/> when it serves both.</summary>
+    private static AgentRail? RailOf(string template) =>
+        Enum.TryParse<AgentRail>(
+            System.IO.Path.GetExtension(System.IO.Path.GetFileNameWithoutExtension(template)).TrimStart('.'),
+            ignoreCase: true,
+            out var rail)
+            ? rail
+            : null;
 
     [Fact]
     public void Scaffold_ships_the_render_script_byte_for_byte()
@@ -163,10 +215,14 @@ public sealed class ProjectScaffolderTests : IDisposable
     /// A workflow added to <c>templates/workflows/</c> ships without anyone editing the scaffolder
     /// (the embed is a glob) — this pins the other direction, that none is silently left behind.
     /// </summary>
-    [Fact]
-    public void Scaffold_ships_every_workflow_in_the_tree()
+    [Theory]
+    [InlineData(AgentRail.Claude)]
+    [InlineData(AgentRail.Copilot)]
+    public void Scaffold_ships_every_workflow_in_the_tree(AgentRail rail)
     {
-        var results = ProjectScaffolder.Scaffold(_dir);
+        var target = System.IO.Path.Combine(_dir, rail.ToString());
+        Directory.CreateDirectory(target);
+        var results = ProjectScaffolder.Scaffold(target, agent: rail);
 
         const string prefix = ".github/workflows/";
         var shipped = results
@@ -175,10 +231,22 @@ public sealed class ProjectScaffolderTests : IDisposable
             .Select(path => path[prefix.Length..])
             .OrderBy(name => name, StringComparer.Ordinal);
 
+        // Exactly one spelling of each: a railed template contributes its bare name once, from
+        // whichever variant this rail selected, and the four rail-agnostic ones contribute themselves.
+        // Distinct() is what would hide the bug this asserts against — two variants both shipping —
+        // so the expectation is built with it and the comparison below is against the raw list.
         var inTree = Directory
             .GetFiles(TemplateDirectory("workflows"), "*.yml")
             .Select(System.IO.Path.GetFileName)
-            .OrderBy(name => name, StringComparer.Ordinal);
+            .Where(name => RailOf(name!) is not { } owner || owner == rail)
+            .Select(name => ConsumerName(name!))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+
+        var collided = $"two templates claim the same consumer-facing name on the {rail} rail, so one "
+            + "would overwrite the other and a consumer would silently get whichever came last.";
+
+        inTree.Distinct(StringComparer.Ordinal).Count().ShouldBe(inTree.Count, collided);
 
         shipped.ShouldBe(inTree);
     }

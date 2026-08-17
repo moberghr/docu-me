@@ -112,16 +112,17 @@ The repository is its own marketplace, so it installs directly:
 From the root of the repository you want documented:
 
 ```bash
-docume init --space DOCS --base-url https://your-domain.atlassian.net/wiki
+docume init --space DOCS --base-url https://your-domain.atlassian.net/wiki --agent claude
 ```
 
 Thirteen targets, and it is idempotent: a file DocuMe owns is never overwritten, and the two files it
 shares with you (`.gitignore`, `.config/dotnet-tools.json`) are merged rather than replaced. Re-running
-reports skips.
+reports skips. Pass `--agent copilot` if the two model workflows should run the GitHub Copilot CLI
+instead of Claude Code; the choice is recorded in `docume.json` and a re-run keeps it.
 
 | Target | What it is |
 |---|---|
-| `docume.json` | Config: space, base URL, wiki root, label names, mermaid renderer path |
+| `docume.json` | Config: space, base URL, workflow agent rail, wiki root, label names, mermaid renderer path |
 | `docs/wiki/README.md` | The wiki's root page |
 | `docs/wiki/_meta/STYLE.md` | Your authoring conventions. **Fill this in** — it is what the skills read |
 | `docs/wiki/_meta/state.json` | Machine-owned: page ids, versions, content hashes, approvals. Committed |
@@ -147,8 +148,9 @@ export DOCUME_CONFLUENCE_EMAIL="you@example.com"
 export DOCUME_CONFLUENCE_TOKEN="<your Atlassian API token>"
 ```
 
-For the workflows, as repository secrets: `DOCUME_CONFLUENCE_EMAIL`, `DOCUME_CONFLUENCE_TOKEN`, and
-`ANTHROPIC_API_KEY` for the two that call a skill (`docs-feedback`, `docs-refresh`).
+For the workflows, set repository secrets `DOCUME_CONFLUENCE_EMAIL` and `DOCUME_CONFLUENCE_TOKEN`.
+The Claude rail needs `ANTHROPIC_API_KEY`; `docume init --agent copilot` instead scaffolds the Copilot
+rail, which needs `COPILOT_GITHUB_TOKEN` from a user with a Copilot seat.
 
 One more, and only from outside Moberg: `DOCUME_PACKAGES_TOKEN`, a PAT with `read:packages`. Every
 scaffolded workflow adds the GitHub Packages feed before restoring the pinned CLI, and it falls back to
@@ -184,11 +186,21 @@ title: Loans Domain     # optional; defaults to the first H1
 stale, and what `/docs-refresh` regenerates from. A page with no `sources` is never reported as drifted.
 
 **To generate the pages instead of writing them, run `/docs-loop` in Claude Code.** Fill in
-`docs/wiki/_meta/STYLE.md` first — its four bullets (audience, tone, structure, verification) are what the
-skill reads instead of carrying assumptions about your repo. The first run builds an inventory of what the
-wiki should cover, into `docs/wiki/_meta/PROGRESS.md`, and writes no page: correct that list before forty
-pages get generated against it. Each run after that takes one unit, reads its code, writes the page with its
-`sources` and a citation behind every claim, and adds a commit to a `docs/loop-<date>` pull request.
+`docs/wiki/_meta/STYLE.md` first: its seven bullets (audience, tone, structure, scope, diagrams, business,
+verification) are what the skill reads instead of carrying assumptions about your repo, and they decide
+what you get. A wiki with thin pages and no diagrams is usually a style guide that never asked for them.
+The first run builds an inventory of what the wiki should cover, into `docs/wiki/_meta/PROGRESS.md`, and
+writes no page: correct that list before forty pages get generated against it. Each run after that takes
+one unit, reads its code, writes the page with its `sources` and a citation behind every claim, and adds a
+commit to a `docs/loop-<date>` pull request.
+
+The second audience has its own generator. `/docs-processes` writes the business and process tier, the
+pages for the people who use the system rather than the people who build it, and it follows the same
+shape: its first run writes no page either, it derives the process inventory into
+`docs/wiki/_meta/PROGRESS-BUSINESS.md` for you to reorder, and every run after that documents one process
+on a `docs/processes-<date>` pull request. The facts no code states (why a limit is what it is, which
+policy a refusal implements) go in `docs/wiki/_meta/BUSINESS.md`, and its pages cite them. Until that
+skill runs, the business tier does not exist; nothing generates it as a side effect.
 
 ### 6. Check before you publish
 

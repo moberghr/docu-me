@@ -62,7 +62,7 @@ public sealed partial class ConsumerKnowledgeCoverageTests
     /// consumers necessarily share.
     /// </para>
     /// </remarks>
-    private static readonly string[] ConsumerTopics = ["Audience", "Tone", "Structure"];
+    private static readonly string[] ConsumerTopics = ["Audience", "Tone", "Structure", "Diagrams"];
 
     /// <summary>
     /// The guide's remaining sections: the product describing itself, which §9.5 does not forbid the tool
