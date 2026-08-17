@@ -446,6 +446,11 @@ public sealed class PublishExecutor
 
         var creating = plan.Action == PagePublishAction.Create || recreate;
 
+        if (!creating && plan.WritesBody)
+        {
+            WarnOnHandEdits(planned, current, remoteVersion, warnings);
+        }
+
         // §6.2 step 6, and this early on purpose: a page that is about to be held back must not render a
         // diagram or upload a byte first. Only a body rewrite can strand a comment's anchor — a create has
         // no comments to strand, and a move or an attachment-only publish leaves the text alone.
@@ -1000,6 +1005,36 @@ public sealed class PublishExecutor
     /// children pointing at the id state still records. Naming it is enough — state records the new id
     /// once the parent is written, so the next run reads the stale id as a move and performs it.
     /// </remarks>
+    /// <summary>
+    /// Rule §9.1 said out loud: a live version ahead of the one the last publish wrote means somebody
+    /// edited the page in Confluence, and the body write that follows discards that edit.
+    /// </summary>
+    /// <remarks>
+    /// A warning and never a refusal, on purpose. Overwriting hand edits is the design — the repo is the
+    /// source of truth, and preserving a browser edit would need the page body read that rule §9.1
+    /// forbids. What was missing is the word: the versions are already in hand (the optimistic-lock read
+    /// above), so naming them costs no request, and the page history holds the diff for whoever wants
+    /// to bring the edit back through a pull request. A page state without a recorded version — an
+    /// adopted wiki before its first publish records one — proves nothing either way, so it stays quiet.
+    /// </remarks>
+    private static void WarnOnHandEdits(
+        PlannedPage planned,
+        PageState? current,
+        int remoteVersion,
+        List<string> warnings)
+    {
+        if (current is not { PublishedVersion: > 0 } recorded || remoteVersion <= recorded.PublishedVersion)
+        {
+            return;
+        }
+
+        warnings.Add(
+            $"{planned.Path} was edited in Confluence after the last publish: the page is at version "
+            + $"{remoteVersion} and the last publish wrote version {recorded.PublishedVersion}. The repo "
+            + "is the source of truth, so this run overwrites those edits — the page history holds them "
+            + "if something there is worth bringing back through a pull request.");
+    }
+
     private static void WarnOnParentDrift(
         PlannedPage planned,
         DocumeState state,
