@@ -190,6 +190,7 @@ sources:                # code paths this page derives from → drives drift det
 # optional overrides:
 title: Loans Domain     # default: first H1
 pageId: "123456"        # set by publish; may be pre-seeded for adopted pages
+publish: false          # draft: held back by publish (reported, never written), ignored by drift
 ---
 ```
 

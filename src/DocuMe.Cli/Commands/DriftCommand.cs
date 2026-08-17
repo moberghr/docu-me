@@ -680,7 +680,7 @@ internal static class DriftCommand
         {
             AnsiConsole.MarkupLine(
                 $"[yellow]No page declares a 'sources:' glob, so drift can never be reported "
-                + $"({report.PageCount} page(s) in the tree). Add 'sources:' to page frontmatter to "
+                + $"({report.PageCount} publishable page(s)). Add 'sources:' to page frontmatter to "
                 + $"link a page to the code it documents (§5.2).[/]");
 
             return;

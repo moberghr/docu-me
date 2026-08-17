@@ -33,7 +33,10 @@ public static class DriftPlanner
     /// Changed files as forward-slash paths relative to the repo root <c>sources</c> globs are written
     /// against — the directory holding <c>docume.json</c> (§5.1).
     /// </param>
-    /// <param name="pages">Every page in the tree. Pages declaring no <c>sources</c> are counted and skipped.</param>
+    /// <param name="pages">
+    /// Every page in the tree. Drafts (<c>publish: false</c>, §5.2) are invisible to every number in
+    /// the report; of the rest, pages declaring no <c>sources</c> are counted and skipped.
+    /// </param>
     public static DriftReport Plan(
         string baseline,
         string head,
@@ -46,7 +49,13 @@ public static class DriftPlanner
         ArgumentNullException.ThrowIfNull(pages);
 
         var files = Normalize(changedFiles);
-        var withSources = pages.Where(page => page.Parsed.Frontmatter.Sources.Count > 0).ToList();
+
+        // Drafts drop out on the first line (§5.2): a draft is not published, so nothing a reader
+        // sees can be stale. They are held out of the counts too, not just the matching, because the
+        // two denominators print as one ratio and the undeclared-sources nag hangs off the second: a
+        // draft with no sources is not a page missing them.
+        var visible = pages.Where(page => page.Parsed.Frontmatter.Publish).ToList();
+        var withSources = visible.Where(page => page.Parsed.Frontmatter.Sources.Count > 0).ToList();
         var matchesByPattern = MatchesByPattern(withSources, files);
 
         var affected = new List<DriftedPage>();
@@ -72,7 +81,7 @@ public static class DriftPlanner
             Baseline = baseline,
             Head = head,
             ChangedFileCount = files.Count,
-            PageCount = pages.Count,
+            PageCount = visible.Count,
             PagesWithSourcesCount = withSources.Count,
             Pages = affected,
         };

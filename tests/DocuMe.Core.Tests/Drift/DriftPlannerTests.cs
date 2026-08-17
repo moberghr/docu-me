@@ -89,6 +89,84 @@ public sealed class DriftPlannerTests
         report.HasDrift.ShouldBeFalse();
     }
 
+    /// <summary>
+    /// <c>publish: false</c> (§5.2): a draft is committed but held back from publishing, so nothing a
+    /// reader sees derives from it and there is nothing to be stale.
+    /// </summary>
+    [Fact]
+    public void Plan_IgnoresADraftWhoseSourcesMatched()
+    {
+        var report = Plan(
+            ["src/Loans/LoanService.cs"],
+            Draft("domains/loans.md", "Loans", "src/Loans/**"));
+
+        report.Pages.ShouldBeEmpty();
+        report.HasDrift.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Plan_DoesNotCountADraftAsAPageMissingSources()
+    {
+        // The undeclared-sources nag defends readers of published pages: a sourceless draft must not
+        // dilute the "N of M declare sources" ratio, let alone flip the nag on.
+        var report = Plan(
+            ["src/Loans/LoanService.cs"],
+            Page("domains/loans.md", "Loans", "src/Loans/**"),
+            Draft("drafts/rates.md", "Rates"));
+
+        report.SourcesUndeclared.ShouldBeFalse();
+        report.PageCount.ShouldBe(1);
+        report.PagesWithSourcesCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public void Plan_ExcludesDraftsFromBothDenominators()
+    {
+        // PageCount and PagesWithSourcesCount print as one ratio, so they must agree about drafts:
+        // both count only the pages drift can see, whatever the draft's frontmatter declares.
+        var report = Plan(
+            ["src/Loans/LoanService.cs"],
+            Page("domains/loans.md", "Loans", "src/Loans/**"),
+            Page("index.md", "Home"),
+            Draft("drafts/one.md", "One", "src/Loans/**"),
+            Draft("drafts/two.md", "Two"));
+
+        report.PageCount.ShouldBe(2);
+        report.PagesWithSourcesCount.ShouldBe(1);
+        report.Pages.ShouldHaveSingleItem().Path.ShouldBe("domains/loans.md");
+    }
+
+    /// <summary>
+    /// A tree whose every page is a draft has no frontmatter for drift to complain about: the
+    /// undeclared-sources nag is a statement about visible pages, and there are none.
+    /// </summary>
+    [Fact]
+    public void Plan_DoesNotDeclareSourcesMissingWhenEveryPageIsADraft()
+    {
+        var report = Plan(
+            ["src/Loans/LoanService.cs"],
+            Draft("drafts/one.md", "One"),
+            Draft("drafts/two.md", "Two"));
+
+        report.PageCount.ShouldBe(0);
+        report.SourcesUndeclared.ShouldBeFalse();
+        report.HasDrift.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The same holds for a tree with no pages at all: the undeclared-sources nag tells an author to
+    /// add frontmatter, and an empty wiki has no frontmatter to add it to.
+    /// </summary>
+    [Fact]
+    public void Plan_DoesNotDeclareSourcesMissingWhenTheTreeIsEmpty()
+    {
+        var report = Plan(["src/Loans/LoanService.cs"]);
+
+        report.PageCount.ShouldBe(0);
+        report.SourcesUndeclared.ShouldBeFalse();
+        report.HasDrift.ShouldBeFalse();
+    }
+
     [Fact]
     public void Plan_CarriesTheRevisionsAndTheChangedFileCount()
     {
@@ -208,4 +286,9 @@ public sealed class DriftPlannerTests
         path,
         title,
         new ParsedPage(new PageFrontmatter { Sources = sources }, title, string.Empty));
+
+    private static WikiPage Draft(string path, string title, params string[] sources) => new(
+        path,
+        title,
+        new ParsedPage(new PageFrontmatter { Sources = sources, Publish = false }, title, string.Empty));
 }

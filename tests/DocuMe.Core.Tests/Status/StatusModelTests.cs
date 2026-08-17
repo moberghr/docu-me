@@ -55,6 +55,24 @@ public sealed class StatusModelTests : IDisposable
         state.Detail.ShouldContain("nothing has been published");
     }
 
+    /// <summary>
+    /// Status inherits the plan's decision about a draft (§5.2): it is not unpublished work waiting to
+    /// happen, so it appears in no page row and inflates no drift count. The publish plan's DRAFTS line
+    /// is where a draft is named; status counting it as unpublished would nag forever about a page that
+    /// is parked on purpose.
+    /// </summary>
+    [Fact]
+    public void A_draft_appears_in_no_row_and_counts_toward_nothing()
+    {
+        Write("unfinished.md", "---\npublish: false\n---\n\n# Unfinished\n\nStill being written.");
+
+        var report = Build(new DocumeState(), stateExists: false);
+
+        report.Pages.Select(page => page.Path).ShouldBe(["README.md", "guides/setup.md"]);
+        report.UnpublishedCount.ShouldBe(2);
+        report.Failures.ShouldBeEmpty();
+    }
+
     [Fact]
     public void A_published_wiki_with_nothing_changed_is_in_sync()
     {

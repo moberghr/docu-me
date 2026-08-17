@@ -32,7 +32,11 @@ public sealed record DriftReport
     /// <summary>How many changed files the diff answered with, before any glob was applied.</summary>
     public required int ChangedFileCount { get; init; }
 
-    /// <summary>Pages in the tree, whether or not they declare <c>sources</c>.</summary>
+    /// <summary>
+    /// Pages drift can see, whether or not they declare <c>sources</c>. A draft
+    /// (<c>publish: false</c>, §5.2) is not published, so nothing a reader sees can be stale, and it
+    /// counts toward no number in this report.
+    /// </summary>
     public required int PageCount { get; init; }
 
     /// <summary>
@@ -51,9 +55,11 @@ public sealed record DriftReport
 
     /// <summary>
     /// Whether no page in the tree declares <c>sources</c> at all, which makes a zero result a
-    /// statement about the frontmatter rather than about the diff.
+    /// statement about the frontmatter rather than about the diff. A tree with no visible pages,
+    /// because it is empty or because every page is a draft, has no frontmatter to complain about,
+    /// so it does not raise this.
     /// </summary>
-    public bool SourcesUndeclared => PagesWithSourcesCount == 0;
+    public bool SourcesUndeclared => PageCount > 0 && PagesWithSourcesCount == 0;
 
     /// <summary>
     /// The report as JSON (<c>--format json</c>) — the shape a CI step parses, so
