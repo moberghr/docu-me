@@ -122,4 +122,52 @@ public sealed class FrontmatterParserTests
 
         parsed.Title.ShouldBeNull();
     }
+
+    [Fact]
+    public void Parse_reads_publish_false_as_a_draft()
+    {
+        var parsed = FrontmatterParser.Parse(
+            """
+            ---
+            publish: false
+            ---
+
+            # Draft Page
+            """);
+
+        parsed.Frontmatter.Publish.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Parse_reads_explicit_publish_true()
+    {
+        var parsed = FrontmatterParser.Parse(
+            """
+            ---
+            publish: true
+            ---
+
+            # Published Page
+            """);
+
+        parsed.Frontmatter.Publish.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Parse_defaults_publish_to_true_when_the_key_is_absent()
+    {
+        var parsed = FrontmatterParser.Parse(
+            """
+            ---
+            title: Keyless Page
+            ---
+
+            # Keyless Page
+            """);
+
+        parsed.Frontmatter.Publish.ShouldBeTrue();
+
+        // A page with no frontmatter at all is publishable too.
+        FrontmatterParser.Parse("# Plain Page\n\nBody.\n").Frontmatter.Publish.ShouldBeTrue();
+    }
 }

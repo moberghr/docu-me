@@ -382,6 +382,38 @@ public sealed class PublishExecutorTests : IDisposable
     }
 
     /// <summary>
+    /// §5.2's draft contract at the write path: a draft page sends no request at all, and a published
+    /// child filed under a never-published draft parent fails with a message that names the draft
+    /// rather than blaming a parent failure that never happened.
+    /// </summary>
+    [Fact]
+    public async Task A_draft_sends_nothing_and_a_child_under_a_never_published_draft_says_why()
+    {
+        Write("b/README.md", "---\npublish: false\n---\n\n# Unfinished Section\n\nStill being written.\n");
+        Write("b/child.md", "# Child Of A Draft\n\nReady before its parent.\n");
+
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        StubNoChildren(server);
+
+        var outcome = await ExecuteAsync(server, new DocumeState());
+
+        var failure = outcome.Failures.ShouldHaveSingleItem();
+        failure.Path.ShouldBe("b/child.md");
+        failure.Message.ShouldContain("is a draft (publish: false)");
+        failure.Message.ShouldNotContain("Fix the parent's failure");
+
+        var createdTitles = Requests(server, "POST", "/wiki/api/v2/pages")
+            .Select(request => Payload(request).GetProperty("title").GetString())
+            .ToArray();
+
+        createdTitles.ShouldNotContain("Unfinished Section");
+        createdTitles.ShouldContain("Home");
+    }
+
+    /// <summary>
     /// Rule §9.1's other half, asserted on the wire at the call site that would carry the breach: the
     /// version read asks Confluence for a version, and does not bring the page body back with it.
     /// </summary>

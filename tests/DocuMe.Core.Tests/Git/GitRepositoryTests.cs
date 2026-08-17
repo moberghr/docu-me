@@ -153,6 +153,94 @@ public sealed class GitRepositoryTests : IDisposable
         thrown.Message.ShouldContain("d00dfeed");
     }
 
+    /// <summary>
+    /// The per-commit grain of the same §6.4 question: when <c>drift-ignore-revs</c> discards whole
+    /// commits, each commit's own files must be knowable — newest first, as <c>git log</c> answers,
+    /// and a file touched by two commits listed under both, because discarding one of them must not
+    /// discard the other's evidence.
+    /// </summary>
+    [Fact]
+    public async Task Attributes_changed_files_to_the_commits_that_touched_them()
+    {
+        Write("src/a.cs", "// a\n");
+        var baseline = Commit("baseline");
+
+        Write("src/a.cs", "// a, edited\n");
+        Write("src/b.cs", "// b\n");
+        var second = Commit("second");
+
+        Write("src/b.cs", "// b, edited\n");
+        var third = Commit("third");
+
+        Write("src/a.cs", "// a, edited again\n");
+        Write("src/c.cs", "// c\n");
+        var fourth = Commit("fourth");
+
+        var commits = await GitRepository.ChangedFilesByCommitAsync(
+            _dir, baseline, fourth, TestContext.Current.CancellationToken);
+
+        commits.Select(commit => commit.Sha).ShouldBe([fourth, third, second]);
+        commits[0].Files.ShouldBe(["src/a.cs", "src/c.cs"]);
+        commits[1].Files.ShouldBe(["src/b.cs"]);
+        commits[2].Files.ShouldBe(["src/a.cs", "src/b.cs"]);
+    }
+
+    /// <summary>
+    /// The two block shapes the parser must not misread, earned from git rather than assumed: a
+    /// merge commit prints a bare sha with no file list under <c>--name-only</c>, and a commit
+    /// whose changes all fall outside the asked-about directory prints the same bare-sha shape
+    /// under <c>--relative</c> while still occupying the range. Both must come back as entries
+    /// with empty file lists, in range, so the ignored-commit count sees them; and the in-scope
+    /// commit's path must be spelled relative to the asked-about directory, which is the parity
+    /// the flat diff's <c>--relative</c> promises.
+    /// </summary>
+    [Fact]
+    public async Task Attributes_a_merge_and_an_out_of_scope_commit_as_bare_entries()
+    {
+        Write("sub/inside.cs", "// in\n");
+        Write("outside.cs", "// out\n");
+        var baseline = Commit("baseline");
+
+        Write("outside.cs", "// out, edited\n");
+        var outside = Commit("outside only");
+
+        Git("checkout", "-q", "-b", "feature", baseline);
+        Write("sub/inside.cs", "// in, edited on a branch\n");
+        var branched = Commit("inside on a branch");
+
+        Git("checkout", "-q", "-");
+        Git("merge", "-q", "--no-ff", "-m", "merge feature", "feature");
+        var merge = Git("rev-parse", "HEAD").Trim();
+
+        var sub = Path.Combine(_dir, "sub");
+        var commits = await GitRepository.ChangedFilesByCommitAsync(
+            sub, baseline, merge, TestContext.Current.CancellationToken);
+
+        // The merge is newest and leads; the two parents share a commit second, so git's traversal
+        // order between them is not worth pinning — membership and per-commit attribution are.
+        commits.Count.ShouldBe(3);
+        commits[0].Sha.ShouldBe(merge);
+        commits[0].Files.ShouldBeEmpty();
+
+        var bySha = commits.ToDictionary(commit => commit.Sha, StringComparer.Ordinal);
+        bySha[branched].Files.ShouldBe(["inside.cs"]);
+        bySha[outside].Files.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Refuses_to_attribute_a_range_this_repository_cannot_resolve()
+    {
+        Write("src/a.cs", "// a\n");
+        var sha = Commit("first");
+
+        var thrown = await Should.ThrowAsync<GitException>(async () => await GitRepository
+            .ChangedFilesByCommitAsync(_dir, "d00dfeed", sha, TestContext.Current.CancellationToken));
+
+        // Same bar as the flat diff: the revision has to be in the message, because a shallow CI
+        // clone hits this and an unnamed revision sends the reader to the wrong place.
+        thrown.Message.ShouldContain("d00dfeed");
+    }
+
     [Fact]
     public async Task Treats_a_directory_that_is_not_a_checkout_as_no_sha_but_refuses_to_diff_it()
     {

@@ -585,6 +585,335 @@ public sealed class CliDriftTests : IDisposable
     }
 
     /// <summary>
+    /// The exemption file end-to-end (§6.4): with every changed file matched by
+    /// <c>_meta/drift-ignore</c>, the run that would have reported both pages reports neither, and
+    /// <c>--fail-on-drift</c> exits 0 because there is no drift left to fail on. The exemptions are
+    /// named rather than swallowed — the count line, the reason a pattern carried, and the file whose
+    /// pattern carried none rendered without a dangling separator.
+    /// </summary>
+    /// <remarks>
+    /// The matcher itself is covered at the Core level (<see cref="Drift.DriftExemptionsTests"/>);
+    /// what only the process can answer is whether the command finds the file next to the state it
+    /// already reads, and what the exempt section looks like on the stream a user gets.
+    /// </remarks>
+    [Fact]
+    public void A_change_the_ignore_file_matches_is_reported_exempt_rather_than_as_drift()
+    {
+        var work = Seeded(nameof(A_change_the_ignore_file_matches_is_reported_exempt_rather_than_as_drift));
+
+        ExemptSources(
+            work,
+            "# mechanical sweeps never mean the docs moved",
+            "src/limits/*.cs # rename-only sweep",
+            "src/rates/*.cs");
+
+        var run = Invoke(work, "drift", "--fail-on-drift");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        // Neither page is reported: with every match exempt the verdict is the no-drift one, which
+        // is what --fail-on-drift turned into the exit 0 above.
+        run.Flowed.ShouldNotContain(LimitsPath, customMessage: run.Diagnostics);
+        run.Flowed.ShouldNotContain(RatesPath, customMessage: run.Diagnostics);
+
+        run.Flowed.ShouldContain(
+            "2 changed file(s) ignored by _meta/drift-ignore",
+            customMessage: run.Diagnostics);
+
+        run.Flowed.ShouldContain(
+            "src/limits/Limits.cs (src/limits/*.cs — rename-only sweep)",
+            customMessage: run.Diagnostics);
+
+        run.Flowed.ShouldContain(
+            "src/rates/Rates.cs (src/rates/*.cs)",
+            customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
+    /// <c>--format json</c> carries the exempted list, next to a count the exemption changed: one
+    /// pattern takes one of the two changed files out of the match, so the same payload says both
+    /// "one page drifted" and "one change was counted out, and here is why". A CI step that posts
+    /// the report can then account for every changed file rather than only the ones that drifted.
+    /// </summary>
+    [Fact]
+    public void A_json_report_carries_the_exempted_files()
+    {
+        var work = Seeded(nameof(A_json_report_carries_the_exempted_files));
+
+        ExemptSources(work, "src/limits/*.cs # rename-only sweep");
+
+        var run = Invoke(work, "drift", "--format", "json");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        using var document = JsonDocument.Parse(run.Output);
+
+        document.RootElement.GetProperty("affectedCount").GetInt32().ShouldBe(1, run.Diagnostics);
+
+        var exempted = document.RootElement.GetProperty("exempted");
+
+        exempted.GetArrayLength().ShouldBe(1, run.Diagnostics);
+
+        var entry = exempted[0];
+
+        entry.GetProperty("path").GetString().ShouldBe("src/limits/Limits.cs", run.Diagnostics);
+        entry.GetProperty("pattern").GetString().ShouldBe("src/limits/*.cs", run.Diagnostics);
+        entry.GetProperty("reason").GetString().ShouldBe("rename-only sweep", run.Diagnostics);
+    }
+
+    /// <summary>
+    /// <c>--mark</c> considers only non-exempt matches (§6.4): with every match exempt there is no
+    /// drift, so the write half has nothing to plan and never builds a client. Asserted as zero
+    /// requests, the way the dry-run fact above is — the failure this guards against is a mark run
+    /// labelling pages whose only "drift" was a sweep the repo declared mechanical.
+    /// </summary>
+    [Fact]
+    public void A_mark_run_labels_nothing_when_every_match_is_exempt()
+    {
+        var work = Seeded(nameof(A_mark_run_labels_nothing_when_every_match_is_exempt));
+
+        ExemptSources(work, "src/limits/*.cs", "src/rates/*.cs");
+
+        var run = Invoke(work, "drift", "--mark");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        LabelWrites().ShouldBeEmpty(run.Diagnostics);
+        Seen().ShouldBeEmpty(run.Diagnostics);
+
+        // The flags stay down too: state that recorded an exempted change as staleness would make
+        // the next sync report labels Confluence never got.
+        var state = State(work);
+
+        state.Pages[LimitsPath].Stale.ShouldBeFalse(run.Diagnostics);
+        state.Pages[RatesPath].Stale.ShouldBeFalse(run.Diagnostics);
+    }
+
+    /// <summary>
+    /// A malformed exemption line fails the run, naming the file and the 1-based line, so the fix is
+    /// an edit rather than a search. Loud beats lenient here: an exemption list silently half-read
+    /// would silently un-report drift, which is worse than reporting too much (§6.4).
+    /// </summary>
+    [Fact]
+    public void A_malformed_drift_ignore_line_fails_the_run_naming_its_line()
+    {
+        var work = Seeded(nameof(A_malformed_drift_ignore_line_fails_the_run_naming_its_line));
+
+        // Line 3 has a reason and no pattern: not a comment, because its `#` is not at line start.
+        ExemptSources(
+            work,
+            "# a comment and a pattern both parse",
+            "src/limits/*.cs # rename-only sweep",
+            " # a reason with no pattern");
+
+        var run = Invoke(work, "drift");
+
+        run.Code.ShouldNotBe(0, run.Diagnostics);
+
+        // De-wrapped before matching: the message opens with the file's full path, one long token the
+        // console wraps mid-word, so "drift-ignore" can arrive split across a padded line break.
+        var unwrapped = string.Concat(run.FlowedAll.Where(c => !char.IsWhiteSpace(c)));
+        unwrapped.ShouldContain("drift-ignore", customMessage: run.Diagnostics);
+        unwrapped.ShouldContain("line3", Case.Insensitive, run.Diagnostics);
+    }
+
+    /// <summary>
+    /// The machine formats route the failure to stderr, and that is a wire contract: a CI step piping
+    /// stdout into a PR comment must never post a parse error as the comment body.
+    /// </summary>
+    [Fact]
+    public void A_malformed_drift_ignore_line_stays_off_stdout_in_a_machine_format()
+    {
+        var work = Seeded(nameof(A_malformed_drift_ignore_line_stays_off_stdout_in_a_machine_format));
+
+        ExemptSources(
+            work,
+            "src/limits/*.cs # rename-only sweep",
+            " # a reason with no pattern");
+
+        var run = Invoke(work, "drift", "--format", "json");
+
+        run.Code.ShouldNotBe(0, run.Diagnostics);
+        run.Error.ShouldContain("line 2", Case.Insensitive, run.Diagnostics);
+        run.Output.ShouldNotContain("{", customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
+    /// The commit exemption end-to-end (§6.4): with the one commit in range listed in
+    /// <c>_meta/drift-ignore-revs</c>, the run that would have reported both pages reports neither,
+    /// and <c>--fail-on-drift</c> exits 0 because no drift is left to fail on. The narrowing is
+    /// disclosed rather than swallowed: the IGNORED COMMITS line renders, naming the file and the
+    /// count, because a quiet verdict over a narrowed diff must say the diff was narrowed.
+    /// </summary>
+    /// <remarks>
+    /// The parser is covered at the Core level (<c>DriftIgnoreRevsTests</c>); what only the process
+    /// can answer is whether the command finds the file next to the exemption list it already reads,
+    /// switches the diff to per-commit attribution, and renders the disclosure.
+    /// </remarks>
+    [Fact]
+    public void A_commit_listed_in_drift_ignore_revs_no_longer_marks_the_page()
+    {
+        var work = Seeded(nameof(A_commit_listed_in_drift_ignore_revs_no_longer_marks_the_page));
+
+        // The sweep is the fixture's second commit, the one that moved the code out from under
+        // both pages, captured the way the fixture's own Commit helper reads a sha.
+        var sweep = Git(work, "rev-parse", "HEAD").Trim();
+
+        ExemptCommits(
+            work,
+            "# the rewrite of both sources was a mechanical sweep",
+            sweep);
+
+        var run = Invoke(work, "drift", "--fail-on-drift");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        // Neither page is reported: every change in range came from the ignored commit.
+        run.Flowed.ShouldNotContain(LimitsPath, customMessage: run.Diagnostics);
+        run.Flowed.ShouldNotContain(RatesPath, customMessage: run.Diagnostics);
+
+        // De-wrapped before matching: the line ends in one long token the console wraps mid-word,
+        // the way the malformed-line fact above reads its path.
+        var unwrapped = string.Concat(run.Flowed.Where(c => !char.IsWhiteSpace(c)));
+
+        unwrapped.ShouldContain("IGNOREDCOMMITS", customMessage: run.Diagnostics);
+        unwrapped.ShouldContain("1commit(s)heldoutby_meta/drift-ignore-revs", customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
+    /// The steady state of a long-lived sweep list: every sha in it is older than the current
+    /// baseline. A file that ignores nothing in range must not change the answer, because the walk
+    /// and the flat diff are different algorithms (a merge's resolution, a diverged baseline) and
+    /// with nothing ignored there is no disclosure to say one replaced the other. The run answers
+    /// exactly as it would with no file at all.
+    /// </summary>
+    [Fact]
+    public void A_revs_file_naming_nothing_in_range_changes_nothing()
+    {
+        var work = Seeded(nameof(A_revs_file_naming_nothing_in_range_changes_nothing));
+
+        ExemptCommits(
+            work,
+            "# a sweep sha from another era, long before this baseline",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+        var baseline = Invoke(work, "drift", "--format", "json");
+        var report = JsonNode.Parse(baseline.Output)!;
+
+        baseline.Code.ShouldBe(0, baseline.Diagnostics);
+        report["ignoredCommitCount"]!.GetValue<int>().ShouldBe(0);
+
+        // The fixture's sweep commit really did move both pages' sources, so the honest answer is
+        // drift — the same answer a run without the file gives, byte for byte on the wire shape.
+        report["affectedCount"]!.GetValue<int>().ShouldBe(2, baseline.Diagnostics);
+        report["hasDrift"]!.GetValue<bool>().ShouldBeTrue(baseline.Diagnostics);
+    }
+
+    /// <summary>
+    /// The write path under the revs file: when every change in range came from an ignored commit
+    /// there is nothing to label, and the run says so before it reads a credential or sends a
+    /// request (§9.3, §0.1).
+    /// </summary>
+    [Fact]
+    public void A_mark_run_labels_nothing_when_the_only_drift_is_an_ignored_commit()
+    {
+        var work = Seeded(nameof(A_mark_run_labels_nothing_when_the_only_drift_is_an_ignored_commit));
+
+        var sweep = Git(work, "rev-parse", "HEAD").Trim();
+        ExemptCommits(work, sweep);
+
+        // Nothing stubbed on purpose: a request of any kind would answer 404 and fail the run.
+        var run = Invoke(work, "drift", "--mark");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+        LabelWrites().ShouldBeEmpty(run.Diagnostics);
+        Seen().ShouldBeEmpty(run.Diagnostics);
+
+        var state = State(work);
+        state.Pages[LimitsPath].Stale.ShouldBeFalse(run.Diagnostics);
+        state.Pages[RatesPath].Stale.ShouldBeFalse(run.Diagnostics);
+    }
+
+    /// <summary>
+    /// <c>--format json</c> carries the commit disclosure the same way it carries the exempted
+    /// files: a CI step reading <c>affectedCount: 0</c> can see from the same payload that one
+    /// commit was held out of the attribution rather than that the diff was clean.
+    /// </summary>
+    [Fact]
+    public void A_json_report_carries_the_ignored_commit_count()
+    {
+        var work = Seeded(nameof(A_json_report_carries_the_ignored_commit_count));
+
+        ExemptCommits(work, Git(work, "rev-parse", "HEAD").Trim());
+
+        var run = Invoke(work, "drift", "--format", "json");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        using var document = JsonDocument.Parse(run.Output);
+
+        document.RootElement.GetProperty("ignoredCommitCount").GetInt32().ShouldBe(1, run.Diagnostics);
+        document.RootElement.GetProperty("affectedCount").GetInt32().ShouldBe(0, run.Diagnostics);
+    }
+
+    /// <summary>
+    /// A malformed revs line fails the run, naming the file and the 1-based line, for the reason a
+    /// malformed glob does: a commit list silently half-read would silently un-report drift. In a
+    /// machine format the failure goes to stderr and stdout stays empty of payload.
+    /// </summary>
+    [Fact]
+    public void A_malformed_drift_ignore_revs_line_fails_the_run_naming_its_line()
+    {
+        var work = Seeded(nameof(A_malformed_drift_ignore_revs_line_fails_the_run_naming_its_line));
+
+        // Line 2 is a short sha. Git refuses an abbreviation in blame.ignoreRevsFile too (`fatal:
+        // invalid object name`), and this format draws the line in the same place: an abbreviation
+        // is ambiguous the day the repo grows.
+        ExemptCommits(
+            work,
+            "# a comment parses",
+            "deadbeef");
+
+        var run = Invoke(work, "drift", "--format", "json");
+
+        run.Code.ShouldNotBe(0, run.Diagnostics);
+        run.Error.ShouldContain("line 2", Case.Insensitive, run.Diagnostics);
+        run.Error.ShouldContain("drift-ignore-revs", customMessage: run.Diagnostics);
+        run.Output.ShouldNotContain("{", customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
+    /// Per-commit attribution, not per-file forgiveness: a file the ignored sweep touched drifts
+    /// anyway when a commit that is not ignored touched it too. Only the page whose sole change
+    /// was the sweep goes quiet, so both directions of the attribution show in one report.
+    /// </summary>
+    [Fact]
+    public void A_file_changed_by_both_an_ignored_and_a_real_commit_still_drifts()
+    {
+        var work = Seeded(nameof(A_file_changed_by_both_an_ignored_and_a_real_commit_still_drifts));
+
+        var sweep = Git(work, "rev-parse", "HEAD").Trim();
+
+        Write(work, "src/limits/Limits.cs", "// the limits, rewritten again and for real\n");
+        Commit(work, "a real change on top of the sweep");
+
+        ExemptCommits(work, sweep);
+
+        var run = Invoke(work, "drift", "--format", "json");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        using var document = JsonDocument.Parse(run.Output);
+
+        var pages = document.RootElement.GetProperty("pages");
+
+        pages.GetArrayLength().ShouldBe(1, run.Diagnostics);
+        pages[0].GetProperty("path").GetString().ShouldBe(LimitsPath, run.Diagnostics);
+
+        document.RootElement.GetProperty("ignoredCommitCount").GetInt32().ShouldBe(1, run.Diagnostics);
+    }
+
+    /// <summary>
     /// The per-page Stale cell as <see cref="DocuMe.Core.Dashboard.DashboardPage"/> renders it. Lowercase, which is
     /// what keeps it distinct from <see cref="SummaryStaleCell"/> under an ordinal count.
     /// </summary>
@@ -638,6 +967,23 @@ public sealed class CliDriftTests : IDisposable
 
     private static CliRun Invoke(string workingDirectory, params string[] args) =>
         DocumeCli.Invoke(workingDirectory, args);
+
+    /// <summary>
+    /// Writes the exemption list a consumer repo may keep at <c>&lt;wiki.root&gt;/_meta/drift-ignore</c>
+    /// (§6.4), one entry per line. Not committed on purpose: the command reads the file from disk the
+    /// way it reads state, so the diff between the two revisions is not what finds it.
+    /// </summary>
+    private static void ExemptSources(string work, params string[] lines) =>
+        File.WriteAllLines(Path.Combine(work, "docs", "wiki", "_meta", "drift-ignore"), lines);
+
+    /// <summary>
+    /// Writes the commit list a consumer repo may keep at
+    /// <c>&lt;wiki.root&gt;/_meta/drift-ignore-revs</c> (§6.4), one sha per line. Not committed,
+    /// like <see cref="ExemptSources"/>: the command reads the file from disk the way it reads
+    /// state, so the diff between the two revisions is not what finds it.
+    /// </summary>
+    private static void ExemptCommits(string work, params string[] lines) =>
+        File.WriteAllLines(Path.Combine(work, "docs", "wiki", "_meta", "drift-ignore-revs"), lines);
 
     /// <summary>Flags one page stale in the seeded state, as a previous <c>--mark</c> would have left it.</summary>
     private static void MarkStale(string work, string path)

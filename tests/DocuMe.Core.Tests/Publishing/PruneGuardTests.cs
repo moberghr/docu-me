@@ -97,5 +97,5 @@ public sealed class PruneGuardTests
     }
 
     private static PublishReport Report(string? writeRefusal = null, PublishScope? scope = null) =>
-        new("DOCUMESBX", new DateOnly(2026, 7, 25), [], [], [], writeRefusal, scope);
+        new("DOCUMESBX", new DateOnly(2026, 7, 25), [], [], [], writeRefusal, [], scope);
 }

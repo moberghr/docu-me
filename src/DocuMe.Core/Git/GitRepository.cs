@@ -6,7 +6,8 @@ namespace DocuMe.Core.Git;
 /// <summary>
 /// The two git questions DocuMe asks: which commit a publish was made from (PLAN.md §6.2 step 8, §5.3)
 /// and which files changed since a given commit (<c>publish --changed-since</c> in §6.2, and §6.4's
-/// <c>drift</c>).
+/// <c>drift</c> — as one flat list, or commit by commit when <c>drift-ignore-revs</c> needs to know
+/// who touched what).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -135,6 +136,71 @@ public static class GitRepository
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Every commit in <c>baseline..head</c> with the files it touched under
+    /// <paramref name="directory"/>, newest first as <c>git log</c> answers, paths relative to
+    /// <paramref name="directory"/> with <c>/</c> separators — §6.4's <c>drift</c> attribution for
+    /// when <c>_meta/drift-ignore-revs</c> asks whole commits, not paths, to be held out of the scan.
+    /// </summary>
+    /// <param name="directory">
+    /// The directory the file lists are scoped and relative to — the same directory
+    /// <see cref="ChangedFilesBetweenAsync"/> gets, so the union over surviving commits spells every
+    /// path exactly as the single diff it replaces would, and the two routes through §6.4 can never
+    /// disagree about a file's name.
+    /// </param>
+    /// <param name="baseline">The commit the range opens after (itself excluded).</param>
+    /// <param name="head">The commit the range runs to (itself included).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="GitException">
+    /// git is absent, hung, or could not walk the range — including a revision this repository does
+    /// not have, which a shallow CI clone or a force-pushed branch produces routinely. Like
+    /// <see cref="ChangedFilesBetweenAsync"/> it throws rather than answering empty, because an empty
+    /// answer that really means "git could not resolve the baseline" is the one wrong answer a
+    /// reviewer would believe.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// One <c>git log --format=%H --name-only</c> invocation answers the whole range: the commit
+    /// count of a sweep-heavy branch must not become a process count.
+    /// </para>
+    /// <para>
+    /// <strong>A merge commit contributes no files.</strong> <c>--name-only</c> prints a merge as a
+    /// bare sha with no list, so a merge's work arrives here attributed to the merged commits
+    /// themselves, which are in the range and carry their own lists. What escapes is a change born in
+    /// the merge itself — a conflict resolution — and the attribution path that consumes this answer
+    /// documents that trade where its readers look.
+    /// </para>
+    /// </remarks>
+    public static async Task<IReadOnlyList<CommitChanges>> ChangedFilesByCommitAsync(
+        string directory,
+        string baseline,
+        string head,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(baseline);
+        ArgumentException.ThrowIfNullOrWhiteSpace(head);
+
+        var range = $"{baseline}..{head}";
+
+        // --relative and --no-renames for the same reasons DiffAsync gives them: this answer must
+        // spell every path exactly as the single diff it replaces would, or the revs route through
+        // §6.4 and the plain route would disagree whenever the wiki repo nests its config. No
+        // `-- .` pathspec, deliberately, though DiffAsync passes one: a pathspec simplifies
+        // history and drops out-of-scope commits from the walk entirely, and the ignored-commit
+        // count must see every commit in the range, empty-listed or not.
+        string[] arguments = ["log", "--format=%H", "--name-only", "--relative", "--no-renames", range];
+
+        var output = await RunAsync(directory, arguments, cancellationToken).ConfigureAwait(false);
+
+        if (output.ExitCode != 0)
+        {
+            throw CouldNot($"walk '{range}' commit by commit", directory, range, output.StandardError);
+        }
+
+        return ParseLog(output.StandardOutput);
+    }
+
     private static async Task<IReadOnlyList<string>> DiffAsync(
         string directory,
         string revisions,
@@ -151,16 +217,79 @@ public static class GitRepository
 
         if (output.ExitCode != 0)
         {
-            throw new GitException(
-                $"git could not {attempt} in {directory}. Check that the revisions exist here "
-                + $"(`git -C {directory} rev-parse {revisions}`) and that the directory is a git "
-                + $"checkout. git said: {Describe(output.StandardError)}");
+            throw CouldNot(attempt, directory, revisions, output.StandardError);
         }
 
         return [.. output.StandardOutput.Split(
             '\n',
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
     }
+
+    /// <summary>
+    /// The failure every range question shares, worded for a terminal: what was asked, what to check,
+    /// and what git said. One spelling on purpose, so the "check the revisions exist" guidance cannot
+    /// drift between the flat diff and the per-commit walk.
+    /// </summary>
+    private static GitException CouldNot(
+        string attempt,
+        string directory,
+        string revisions,
+        string standardError) =>
+        new($"git could not {attempt} in {directory}. Check that the revisions exist here "
+            + $"(`git -C {directory} rev-parse {revisions}`) and that the directory is a git "
+            + $"checkout. git said: {Describe(standardError)}");
+
+    /// <summary>
+    /// Parses <c>git log --format=%H --name-only</c> output. The block shape (pinned against git
+    /// 2.54): a commit is its <c>%H</c> line, a blank line, then one path per line; a merge — or a
+    /// commit whose changes all fall outside the asked-about directory — is a bare <c>%H</c> with
+    /// the next one right behind it. So a 40-hex line opens a commit, any other non-blank line is a
+    /// file of the commit above it, and blank lines carry no information. A path spelled as exactly
+    /// forty hex characters would be mistaken for a commit; a line-based format cannot tell them
+    /// apart, and no real tree names its files that way.
+    /// </summary>
+    private static List<CommitChanges> ParseLog(string standardOutput)
+    {
+        var commits = new List<CommitChanges>();
+        string? sha = null;
+        var files = new List<string>();
+
+        foreach (var raw in standardOutput.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            if (IsCommitSha(line))
+            {
+                Flush();
+                sha = line;
+            }
+            else if (sha is not null)
+            {
+                files.Add(line);
+            }
+        }
+
+        Flush();
+
+        return commits;
+
+        void Flush()
+        {
+            if (sha is not null)
+            {
+                commits.Add(new CommitChanges(sha, [.. files]));
+                files.Clear();
+            }
+        }
+    }
+
+    /// <summary>A full 40-character hex object name — how <c>--format=%H</c> spells a commit.</summary>
+    private static bool IsCommitSha(string line) =>
+        line.Length == 40 && line.All(char.IsAsciiHexDigit);
 
     private static string Describe(string standardError)
     {
@@ -246,3 +375,12 @@ public static class GitRepository
 
     private sealed record GitOutput(int ExitCode, string StandardOutput, string StandardError);
 }
+
+/// <summary>One commit in a <c>baseline..head</c> walk and the files it touched.</summary>
+/// <param name="Sha">The commit's full 40-hex object name, lowercase as <c>git log</c> prints it.</param>
+/// <param name="Files">
+/// The files this commit touched under the directory the walk was asked about, relative to it with
+/// <c>/</c> separators. Empty for a merge commit (<c>--name-only</c> gives a merge no list) and for a
+/// commit whose changes all fall outside that directory.
+/// </param>
+public sealed record CommitChanges(string Sha, IReadOnlyList<string> Files);

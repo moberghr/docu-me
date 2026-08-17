@@ -89,6 +89,84 @@ public sealed class DriftPlannerTests
         report.HasDrift.ShouldBeFalse();
     }
 
+    /// <summary>
+    /// <c>publish: false</c> (§5.2): a draft is committed but held back from publishing, so nothing a
+    /// reader sees derives from it and there is nothing to be stale.
+    /// </summary>
+    [Fact]
+    public void Plan_IgnoresADraftWhoseSourcesMatched()
+    {
+        var report = Plan(
+            ["src/Loans/LoanService.cs"],
+            Draft("domains/loans.md", "Loans", "src/Loans/**"));
+
+        report.Pages.ShouldBeEmpty();
+        report.HasDrift.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Plan_DoesNotCountADraftAsAPageMissingSources()
+    {
+        // The undeclared-sources nag defends readers of published pages: a sourceless draft must not
+        // dilute the "N of M declare sources" ratio, let alone flip the nag on.
+        var report = Plan(
+            ["src/Loans/LoanService.cs"],
+            Page("domains/loans.md", "Loans", "src/Loans/**"),
+            Draft("drafts/rates.md", "Rates"));
+
+        report.SourcesUndeclared.ShouldBeFalse();
+        report.PageCount.ShouldBe(1);
+        report.PagesWithSourcesCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public void Plan_ExcludesDraftsFromBothDenominators()
+    {
+        // PageCount and PagesWithSourcesCount print as one ratio, so they must agree about drafts:
+        // both count only the pages drift can see, whatever the draft's frontmatter declares.
+        var report = Plan(
+            ["src/Loans/LoanService.cs"],
+            Page("domains/loans.md", "Loans", "src/Loans/**"),
+            Page("index.md", "Home"),
+            Draft("drafts/one.md", "One", "src/Loans/**"),
+            Draft("drafts/two.md", "Two"));
+
+        report.PageCount.ShouldBe(2);
+        report.PagesWithSourcesCount.ShouldBe(1);
+        report.Pages.ShouldHaveSingleItem().Path.ShouldBe("domains/loans.md");
+    }
+
+    /// <summary>
+    /// A tree whose every page is a draft has no frontmatter for drift to complain about: the
+    /// undeclared-sources nag is a statement about visible pages, and there are none.
+    /// </summary>
+    [Fact]
+    public void Plan_DoesNotDeclareSourcesMissingWhenEveryPageIsADraft()
+    {
+        var report = Plan(
+            ["src/Loans/LoanService.cs"],
+            Draft("drafts/one.md", "One"),
+            Draft("drafts/two.md", "Two"));
+
+        report.PageCount.ShouldBe(0);
+        report.SourcesUndeclared.ShouldBeFalse();
+        report.HasDrift.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// The same holds for a tree with no pages at all: the undeclared-sources nag tells an author to
+    /// add frontmatter, and an empty wiki has no frontmatter to add it to.
+    /// </summary>
+    [Fact]
+    public void Plan_DoesNotDeclareSourcesMissingWhenTheTreeIsEmpty()
+    {
+        var report = Plan(["src/Loans/LoanService.cs"]);
+
+        report.PageCount.ShouldBe(0);
+        report.SourcesUndeclared.ShouldBeFalse();
+        report.HasDrift.ShouldBeFalse();
+    }
+
     [Fact]
     public void Plan_CarriesTheRevisionsAndTheChangedFileCount()
     {
@@ -201,11 +279,79 @@ public sealed class DriftPlannerTests
             Baseline, " ", [], [Page("a.md", "A", "src/**")]));
     }
 
+    [Fact]
+    public void Plan_HoldsAnExemptedFileOutOfEveryPagesMatching()
+    {
+        // The exemption is wiki-level (one drift-ignore file), so it cancels the match for both
+        // pages at once: the broad glob and the narrow one alike see a diff without the file.
+        var report = Plan(
+            ["src/Generated/Api.g.cs"],
+            DriftExemptions.Parse("src/Generated/** # codegen"),
+            Page("domains/loans.md", "Loans", "src/Generated/**"),
+            Page("domains/rates.md", "Rates", "src/**"));
+
+        report.Pages.ShouldBeEmpty();
+        report.HasDrift.ShouldBeFalse();
+        report.Exempted.ShouldHaveSingleItem().Path.ShouldBe("src/Generated/Api.g.cs");
+    }
+
+    [Fact]
+    public void Plan_StillFlagsAPageWhoseOtherSourcesWereTouched()
+    {
+        // An exemption cancels the file, not the page: the page keeps drifting on what remains,
+        // and the exempted pattern is absent from its matches like any glob that fired on nothing.
+        var report = Plan(
+            ["src/Generated/Api.g.cs", "src/Loans/LoanService.cs"],
+            DriftExemptions.Parse("src/Generated/**"),
+            Page("domains/loans.md", "Loans", "src/Generated/**", "src/Loans/**"));
+
+        var page = report.Pages.ShouldHaveSingleItem();
+        page.Matches.ShouldHaveSingleItem().Pattern.ShouldBe("src/Loans/**");
+        report.HasDrift.ShouldBeTrue();
+        report.Exempted.ShouldHaveSingleItem().Pattern.ShouldBe("src/Generated/**");
+    }
+
+    [Fact]
+    public void Plan_ReportsTheExemptedFilesSortedWithTheirReasons()
+    {
+        var report = Plan(
+            ["src/Generated/Zebra.g.cs", "src/Generated/Alpha.g.cs", "vendor/lib.js"],
+            DriftExemptions.Parse("""
+                src/Generated/** # codegen sweep
+                vendor/** # vendored, upstream docs own it
+                """),
+            Page("domains/loans.md", "Loans", "src/**", "vendor/**"));
+
+        report.HasDrift.ShouldBeFalse();
+        report.Pages.ShouldBeEmpty();
+
+        // The headline count keeps reporting the diff as git answered it; Exempted accounts for
+        // the subset held out, so the two are readable together without a third number.
+        report.ChangedFileCount.ShouldBe(3);
+        report.Exempted.Count.ShouldBe(3);
+
+        report.Exempted.Select(change => change.Path).ShouldBe(
+            ["src/Generated/Alpha.g.cs", "src/Generated/Zebra.g.cs", "vendor/lib.js"]);
+        report.Exempted[0].Reason.ShouldBe("codegen sweep");
+        report.Exempted[2].Reason.ShouldBe("vendored, upstream docs own it");
+    }
+
     private static DriftReport Plan(string[] changedFiles, params WikiPage[] pages) =>
         DriftPlanner.Plan(Baseline, Head, changedFiles, pages);
+
+    private static DriftReport Plan(
+        string[] changedFiles,
+        DriftExemptions exemptions,
+        params WikiPage[] pages) =>
+        DriftPlanner.Plan(Baseline, Head, changedFiles, pages, exemptions);
 
     private static WikiPage Page(string path, string title, params string[] sources) => new(
         path,
         title,
         new ParsedPage(new PageFrontmatter { Sources = sources }, title, string.Empty));
+
+    private static WikiPage Draft(string path, string title, params string[] sources) => new(
+        path,
+        title,
+        new ParsedPage(new PageFrontmatter { Sources = sources, Publish = false }, title, string.Empty));
 }

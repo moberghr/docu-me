@@ -95,6 +95,7 @@ public static class FrontmatterParser
             Sources = dto.Sources is { Count: > 0 } ? dto.Sources : [],
             Title = string.IsNullOrWhiteSpace(dto.Title) ? null : dto.Title,
             PageId = string.IsNullOrWhiteSpace(dto.PageId) ? null : dto.PageId,
+            Publish = dto.Publish ?? true,
         };
     }
 
@@ -139,5 +140,7 @@ public static class FrontmatterParser
         public string? Title { get; set; }
 
         public string? PageId { get; set; }
+
+        public bool? Publish { get; set; }
     }
 }

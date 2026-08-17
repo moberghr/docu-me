@@ -612,10 +612,30 @@ internal static class PublishCommand
         }
 
         RenderScope(report);
+        RenderDrafts(report);
         RenderApprovals(report, notifyReviewers);
         RenderOrphans(report);
         RenderFailures(report);
         RenderVerdict(report);
+    }
+
+    /// <summary>
+    /// The drafts this run held back (§5.2, <c>publish: false</c>). Dim like the other held-back
+    /// lists, because a draft is deliberate rather than a problem: what matters is that it is named.
+    /// An unnamed draft would have an author reading the plan and wondering where their page went.
+    /// </summary>
+    private static void RenderDrafts(PublishReport report)
+    {
+        if (report.Drafts.Count == 0)
+        {
+            return;
+        }
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine(
+            $"[grey]DRAFTS[/] — {report.Drafts.Count} page(s) held back by publish: false in their "
+            + "frontmatter; each publishes once the flag flips back");
+        RenderPaths(report.Drafts);
     }
 
     /// <summary>

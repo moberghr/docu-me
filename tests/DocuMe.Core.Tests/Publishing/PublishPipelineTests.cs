@@ -488,6 +488,115 @@ public sealed class PublishPipelineTests : IDisposable
     }
 
     /// <summary>
+    /// The draft contract (§5.2): a page with <c>publish: false</c> is held back before the converter
+    /// ever sees it, so a half-written page cannot fail the run. Both drafts here would matter if they
+    /// leaked: one carries the plantuml fence the converter refuses on sight, and the pair is written
+    /// so publish order and ordinal order disagree, which is what makes the sorted report observable.
+    /// </summary>
+    [Fact]
+    public void A_draft_is_held_back_not_converted_and_never_a_failure()
+    {
+        Write("b/README.md", "---\npublish: false\n---\n\n# Section B\n\nHalf-written index.");
+        Write(
+            "b/10-notes/README.md",
+            "---\npublish: false\n---\n\n# WIP Notes\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```");
+
+        var report = Plan(new DocumeState());
+
+        // Publish order visits b/README.md first (parents before children); the report sorts ordinally.
+        report.Drafts.ShouldBe(["b/10-notes/README.md", "b/README.md"]);
+        report.Pages.Select(page => page.Path).ShouldBe(["README.md", "guides/setup.md"]);
+
+        // The plantuml fence never reached the converter: a draft cannot fail a run (§5.2).
+        report.Failures.ShouldBeEmpty();
+        report.CanPublish.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// <c>--force</c> republishes every page whose hash says skip; it does not overrule an author.
+    /// A draft is a decision recorded in the page, not a stale comparison, so force leaves it parked.
+    /// </summary>
+    [Fact]
+    public void Force_does_not_publish_a_draft()
+    {
+        Write("unfinished.md", "---\npublish: false\n---\n\n# Unfinished\n\nStill being written.");
+
+        var report = Plan(new DocumeState(), force: true);
+
+        report.Drafts.ShouldBe(["unfinished.md"]);
+        report.Pages.Select(page => page.Path).ShouldNotContain("unfinished.md");
+    }
+
+    /// <summary>
+    /// Attachments enter the plan through the converter's resolver callbacks, and a draft is never
+    /// converted, so a draft's image must appear in no page's upload set. Broken silently otherwise:
+    /// the image would upload to whichever page's plan collected it, for a page that does not publish.
+    /// </summary>
+    [Fact]
+    public void A_drafts_attachments_are_not_planned()
+    {
+        WriteBytes("images/unreleased.png", [5, 5, 5]);
+        Write(
+            "draft-gallery.md",
+            "---\npublish: false\n---\n\n# Gallery Draft\n\n![shot](images/unreleased.png)");
+
+        var report = Plan(new DocumeState());
+
+        report.Drafts.ShouldBe(["draft-gallery.md"]);
+        report.Pages
+            .SelectMany(page => page.Attachments)
+            .Select(attachment => attachment.Name)
+            .ShouldNotContain("images_unreleased.png");
+
+        // Only the fixture's own three uploads: the draft added none.
+        report.UploadCount.ShouldBe(3);
+    }
+
+    /// <summary>
+    /// An orphan is a state entry whose FILE is gone (§6.2), and a page flipped to <c>publish: false</c>
+    /// still has its file. The distinction is load-bearing: an orphan is what <c>--prune</c> offers to
+    /// delete (rule §9.6), and a draft an author is mid-rewrite on must never be that offer.
+    /// </summary>
+    [Fact]
+    public void A_published_page_flipped_to_draft_is_a_draft_not_an_orphan()
+    {
+        var state = Published(Plan(new DocumeState()));
+
+        Write(
+            "guides/setup.md",
+            "---\ntitle: Setup Guide\npublish: false\n---\n\n# Setup\n\nBeing rewritten.");
+
+        var report = Plan(state);
+
+        report.Drafts.ShouldBe(["guides/setup.md"]);
+        report.OrphanPages.ShouldBeEmpty();
+        report.Pages.Select(page => page.Path).ShouldBe(["README.md"]);
+        report.CanPublish.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Removing the key restores the default contract of a file under the wiki root (§5.2): the page
+    /// plans against state like any other, here as an update because its body moved while it was a draft.
+    /// </summary>
+    [Fact]
+    public void Flipping_a_draft_back_plans_it_as_an_ordinary_page_again()
+    {
+        var state = Published(Plan(new DocumeState()));
+
+        Write(
+            "guides/setup.md",
+            "---\ntitle: Setup Guide\npublish: false\n---\n\n# Setup\n\nBeing rewritten.");
+        Plan(state).Drafts.ShouldBe(["guides/setup.md"]);
+
+        Write("guides/setup.md", "---\ntitle: Setup Guide\n---\n\n# Setup\n\nRewritten and released.");
+
+        var report = Plan(state);
+
+        report.Drafts.ShouldBeEmpty();
+        Page(report, "guides/setup.md").Action.ShouldBe(PagePublishAction.Update);
+    }
+
+    /// <summary>
     /// The reparent §6.2 names, seen from the plan: an index page added above a page whose markdown did
     /// not change a byte. The new index does not exist in Confluence yet, so the drift is only decidable
     /// in paths — and it has to be decided here, or <c>--dry-run</c> would report a skip and a real run
