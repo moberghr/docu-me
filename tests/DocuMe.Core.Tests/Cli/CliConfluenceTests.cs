@@ -139,6 +139,27 @@ public sealed class CliConfluenceTests : IDisposable
     }
 
     /// <summary>
+    /// The plan names the drafts it holds back (§5.2): a page an author deliberately parked with
+    /// <c>publish: false</c> must show up as held back, or the author reads the plan and wonders
+    /// where their page went.
+    /// </summary>
+    [Fact]
+    public void A_dry_run_names_the_drafts_it_holds_back()
+    {
+        var work = Scaffolded(nameof(A_dry_run_names_the_drafts_it_holds_back));
+
+        File.WriteAllText(
+            Path.Combine(work, "docs", "wiki", "unfinished.md"),
+            "---\npublish: false\n---\n\n# Unfinished\n\nStill being written.\n");
+
+        var run = Invoke(work, "publish", "--dry-run", "--tree");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+        run.Flowed.ShouldContain("DRAFTS", customMessage: run.Diagnostics);
+        run.Flowed.ShouldContain("unfinished.md", customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
     /// A publish Confluence refuses has to exit non-zero. The scaffolded <c>docs-publish.yml</c> reads
     /// nothing but this code, so a refused write that exited 0 is a docs job that goes green having
     /// published nothing.

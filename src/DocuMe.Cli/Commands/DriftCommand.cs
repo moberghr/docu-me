@@ -24,6 +24,14 @@ namespace DocuMe.Cli.Commands;
 /// no space and no network. Only <c>--mark</c> itself talks to Confluence.
 /// </para>
 /// <para>
+/// <strong>Two optional inputs narrow the match:</strong> <c>&lt;wiki.root&gt;/_meta/drift-ignore</c>
+/// lists globs for changes that never mean the docs moved (§6.4); a changed file it matches is
+/// reported as exempt and counted out of the verdict, the exit code and <c>--mark</c>.
+/// <c>&lt;wiki.root&gt;/_meta/drift-ignore-revs</c> lists commits whose changes never do, which
+/// switches the diff to per-commit attribution. Commit exemptions narrow the diff first, then the
+/// globs apply to what is left, and every format discloses how many commits were held out.
+/// </para>
+/// <para>
 /// <strong><c>--mark</c> writes labels, never page bodies</strong> (§6.4, rule §9.3). Staleness is a label
 /// plus a state flag plus a dashboard row; editing a body to say "this may be out of date" would bump the
 /// page version, which invalidates nothing but disturbs the approval history §8 keeps for audit.
@@ -39,6 +47,23 @@ internal static class DriftCommand
 {
     /// <summary>Where <c>docume init</c> scaffolds the state file, relative to the wiki root (§5.3).</summary>
     private const string DefaultStateFile = "_meta/state.json";
+
+    /// <summary>
+    /// Where a consumer repo may list changes drift must ignore, relative to the wiki root (§6.4).
+    /// Resolved the way <see cref="DefaultStateFile"/> is, and kept next to the wiki because which
+    /// changes are mechanical is the repo's knowledge, not the tool's (§9.5).
+    /// </summary>
+    private const string DriftIgnoreFile = "_meta/drift-ignore";
+
+    /// <summary>
+    /// Where a consumer repo may list commits drift must ignore, relative to the wiki root (§6.4).
+    /// One full 40-hex sha per line, git's <c>blame.ignoreRevsFile</c> format, for the sweep that
+    /// touches the very files the docs describe: a <see cref="DriftIgnoreFile"/> glob could only
+    /// exempt that by switching drift off for those paths forever. Kept next to the wiki for the
+    /// reason its sibling is kept there: which commits were mechanical is the repo's knowledge,
+    /// not the tool's (§9.5).
+    /// </summary>
+    private const string DriftIgnoreRevsFile = "_meta/drift-ignore-revs";
 
     private const string TableFormat = "table";
     private const string JsonFormat = "json";
@@ -254,19 +279,95 @@ internal static class DriftCommand
                 quiet);
         }
 
-        IReadOnlyList<string> changed;
+        // The exemption list is optional and its absence is the common case: a repo that never wrote
+        // the file gets exactly the run it had before (§6.4). A malformed line is loud, though: an
+        // exemption list half-read would quietly narrow the match, and "no drift" must never mean
+        // "the list was skipped".
+        var exemptions = DriftExemptions.None;
+        var ignorePath = Path.Combine(wikiRoot, DriftIgnoreFile.Replace('/', Path.DirectorySeparatorChar));
+
+        if (File.Exists(ignorePath))
+        {
+            try
+            {
+                exemptions = DriftExemptions.Parse(
+                    await File.ReadAllTextAsync(ignorePath, cancellationToken).ConfigureAwait(false));
+            }
+            catch (DriftIgnoreFormatException ex)
+            {
+                return Fail($"{ignorePath}: {ex.Message}", quiet);
+            }
+        }
+
+        // The commit list is optional the same way and loud the same way. Its parse failure names
+        // the line but no file (DriftIgnoreRevs knows no paths), so the path is prefixed here,
+        // where it is known.
+        var revs = DriftIgnoreRevs.None;
+        var revsPath = Path.Combine(
+            wikiRoot,
+            DriftIgnoreRevsFile.Replace('/', Path.DirectorySeparatorChar));
+
+        if (File.Exists(revsPath))
+        {
+            try
+            {
+                revs = DriftIgnoreRevs.Parse(
+                    await File.ReadAllTextAsync(revsPath, cancellationToken).ConfigureAwait(false));
+            }
+            catch (DriftIgnoreRevsFormatException ex)
+            {
+                return Fail($"{revsPath}: {ex.Message}", quiet);
+            }
+        }
+
+        IReadOnlyList<string> changed = [];
+        var ignoredCommitCount = 0;
         try
         {
-            changed = await GitRepository
-                .ChangedFilesBetweenAsync(repoRoot, resolvedBaseline, options.Head, cancellationToken)
-                .ConfigureAwait(false);
+            if (revs.Count > 0)
+            {
+                // Per-commit attribution rather than one flat diff: a file counts as changed only
+                // when a commit that is not ignored touched it, so the listed sweep drops out while
+                // a real change to the same file still drifts. A merge commit lists no files under
+                // this attribution (git log --name-only), so ignoring one moves only the count.
+                var commits = await GitRepository
+                    .ChangedFilesByCommitAsync(repoRoot, resolvedBaseline, options.Head, cancellationToken)
+                    .ConfigureAwait(false);
+
+                ignoredCommitCount = commits.Count(commit => revs.Ignores(commit.Sha));
+                changed = commits
+                    .Where(commit => !revs.Ignores(commit.Sha))
+                    .SelectMany(commit => commit.Files)
+                    .Distinct(StringComparer.Ordinal)
+                    .Order(StringComparer.Ordinal)
+                    .ToList();
+            }
+
+            // The walk and the flat diff are different algorithms: a merge's conflict resolution and
+            // a diverged baseline answer differently between `git log` and `git diff`. Those trades
+            // are taken knowingly when a commit was actually held out, and the nonzero count
+            // disclosed in every format is the receipt. When the list named nothing in this range,
+            // there is no trade to take and nothing that would disclose one, so the run answers
+            // exactly as it would have with no file at all. The steady state of a long-lived sweep
+            // list is precisely this: every sha older than the current baseline.
+            if (ignoredCommitCount == 0)
+            {
+                changed = await GitRepository
+                    .ChangedFilesBetweenAsync(repoRoot, resolvedBaseline, options.Head, cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
         catch (GitException ex)
         {
             return Fail(ex.Message, quiet);
         }
 
-        var report = DriftPlanner.Plan(resolvedBaseline, options.Head, changed, tree.Pages);
+        var matched = DriftPlanner.Plan(resolvedBaseline, options.Head, changed, tree.Pages, exemptions);
+
+        // DriftPlanner is a pure matcher over one changed-file list and knows nothing of commits,
+        // so the commit disclosure is stamped on here, where the narrowing happened, rather than
+        // threaded through a signature the planner has no use for.
+        var report = matched with { IgnoredCommitCount = ignoredCommitCount };
 
         Report(report, options.Format, options.Mark);
 
@@ -635,6 +736,8 @@ internal static class DriftCommand
 
         RenderPages(report);
         RenderVerdict(report, mark);
+        RenderExempted(report);
+        RenderIgnoredCommits(report);
     }
 
     /// <summary>
@@ -680,7 +783,7 @@ internal static class DriftCommand
         {
             AnsiConsole.MarkupLine(
                 $"[yellow]No page declares a 'sources:' glob, so drift can never be reported "
-                + $"({report.PageCount} page(s) in the tree). Add 'sources:' to page frontmatter to "
+                + $"({report.PageCount} publishable page(s)). Add 'sources:' to page frontmatter to "
                 + $"link a page to the code it documents (§5.2).[/]");
 
             return;
@@ -702,6 +805,54 @@ internal static class DriftCommand
         AnsiConsole.MarkupLine(
             $"[yellow]{report.AffectedCount} of {report.PagesWithSourcesCount} page(s) with declared "
             + $"sources may need review.[/] [grey]{advisory}[/]");
+    }
+
+    /// <summary>
+    /// The changed files <c>_meta/drift-ignore</c> counted out of the match, one line each with the
+    /// pattern that caught them. Named rather than only counted, and uncapped like
+    /// <see cref="RenderPages"/>: an exemption changes the verdict above it, and a verdict whose
+    /// inputs were quietly narrowed would read as "no drift" when the truth is "no drift left after
+    /// the list" (§6.4).
+    /// </summary>
+    private static void RenderExempted(DriftReport report)
+    {
+        if (report.Exempted.Count == 0)
+        {
+            return;
+        }
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine(
+            $"[grey]EXEMPT — {report.Exempted.Count} changed file(s) ignored by "
+            + $"{DriftIgnoreFile}[/]");
+
+        foreach (var change in report.Exempted)
+        {
+            var by = change.Reason is { Length: > 0 } reason
+                ? $"{change.Pattern} — {reason}"
+                : change.Pattern;
+
+            AnsiConsole.MarkupLine($"  [grey]{change.Path.EscapeMarkup()} ({by.EscapeMarkup()})[/]");
+        }
+    }
+
+    /// <summary>
+    /// The commits <c>_meta/drift-ignore-revs</c> held out of the attribution, disclosed for the
+    /// reason <see cref="RenderExempted"/> names its files: a verdict whose inputs were narrowed
+    /// must say so (§6.4). A count rather than a sha list, because the shas sit in the file this
+    /// line names and the disclosure's subject is that the diff was narrowed, not by which sweep.
+    /// </summary>
+    private static void RenderIgnoredCommits(DriftReport report)
+    {
+        if (report.IgnoredCommitCount == 0)
+        {
+            return;
+        }
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine(
+            $"[grey]IGNORED COMMITS — {report.IgnoredCommitCount} commit(s) held out by "
+            + $"{DriftIgnoreRevsFile}[/]");
     }
 
     /// <summary>

@@ -119,6 +119,15 @@ public sealed record PageConversionFailure(string Path, string Message);
 /// <param name="WriteRefusal">
 /// Why a real run must not write, from <see cref="PublishGuard.WriteRefusal"/>, or <c>null</c>.
 /// </param>
+/// <param name="Drafts">
+/// Pages held back by <c>publish: false</c> in their frontmatter (§5.2), by path, sorted ordinally.
+/// A draft is committed to the tree but not yet meant for Confluence, so the plan never converts it:
+/// a half-written page cannot fail the run, plans no attachments, and never reaches
+/// <see cref="Failures"/>. Named rather than counted, like <see cref="OrphanPages"/>, because the
+/// author who cannot find their page needs it named. A draft is not an orphan either: its file
+/// exists, so a formerly published page flipped to draft stays out of <see cref="OrphanPages"/> and
+/// its Confluence page is left alone until the key flips back.
+/// </param>
 /// <param name="Scope">
 /// The scope that narrowed the write set (<c>--changed-since</c>, <c>--page</c>), or <c>null</c> for a
 /// whole-tree run. Carried so the report can name what narrowed it.
@@ -130,6 +139,7 @@ public sealed record PublishReport(
     IReadOnlyList<PageConversionFailure> Failures,
     IReadOnlyList<string> OrphanPages,
     string? WriteRefusal,
+    IReadOnlyList<string> Drafts,
     PublishScope? Scope = null)
 {
     /// <summary>False when the target space is locked (<see cref="PublishGuard"/>).</summary>

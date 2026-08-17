@@ -3,6 +3,7 @@ sources:
   - src/DocuMe.Core/Config/*.cs
   - src/DocuMe.Core/State/*.cs
   - src/DocuMe.Core/Scaffolding/*.cs
+  - src/DocuMe.Core/Drift/DriftPlanner.cs
   - schema/*.json
 ---
 
@@ -116,6 +117,7 @@ pageId: "123456"
 | `sources` | no, but drift needs it | Code paths the page derives from, as globs relative to the repo root |
 | `title` | no | Overrides the title. Defaults to the first H1, which is dropped from the body because Confluence renders the page title itself |
 | `pageId` | no | Set by publish. Pre-seed it to adopt a page that already exists in Confluence |
+| `publish` | no | Defaults to `true`. Set `publish: false` to hold the page back as a draft: the publish plan reports it but never writes it, drift ignores it, and a previously published copy stays frozen in Confluence until the flag flips back. Not an orphan, because the file still exists |
 
 Frontmatter is stripped before conversion, so none of it appears in the published body or in the
 content hash.

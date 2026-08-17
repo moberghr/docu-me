@@ -114,6 +114,7 @@ public static class PublishPipeline
 
         var pages = new List<PlannedPage>();
         var failures = new List<PageConversionFailure>();
+        var drafts = new List<string>();
 
         // Publish order, not path order: a page named 10-domains/README.md sorts before the README.md it
         // hangs under, and the write path files a child under an id its parent's create produced
@@ -123,6 +124,18 @@ public static class PublishPipeline
         foreach (var path in PageHierarchy.PublishOrder(parents))
         {
             var page = byPath[path];
+
+            // A draft is held back HERE, before the converter ever sees it, and that placement is the
+            // feature: the whole point of publish: false (§5.2) is that a half-written page cannot fail
+            // the run, so it must not convert, cannot land in Failures, and plans no attachments. It
+            // stays in the hierarchy resolution above on purpose: a draft directory index still parents
+            // its published children, and dropping it there would silently reparent them.
+            if (!page.Parsed.Frontmatter.Publish)
+            {
+                drafts.Add(page.Path);
+                continue;
+            }
+
             state.Pages.TryGetValue(page.Path, out var current);
             var parentPath = parents[page.Path];
             var parentMoved = PageHierarchy.ParentMoved(
@@ -135,8 +148,13 @@ public static class PublishPipeline
             }
         }
 
+        // Collected in publish order, reported in path order: the loop's order serves the write path,
+        // but a reader looking for their page wants the collation every other list here uses.
+        drafts.Sort(StringComparer.Ordinal);
+
         // Orphans stay whole-tree even under a scope: an orphan is a state entry whose file is gone, and a
-        // scope hides no file (PublishScope).
+        // scope hides no file (PublishScope). Drafts are deliberately still in that tree walk, so a page
+        // flipped to publish: false is a draft, never an orphan: its file exists (§5.2).
         return new PublishReport(
             config.Confluence.SpaceKey,
             options.GeneratedOn,
@@ -144,6 +162,7 @@ public static class PublishPipeline
             failures,
             PublishPlanner.OrphanPages(state, tree.Pages.Select(page => page.Path)),
             PublishGuard.WriteRefusal(config.Confluence, options.AllowProtectedSpace),
+            drafts,
             options.Scope);
     }
 

@@ -43,15 +43,22 @@ public static class ConversionAcceptance
     }
 
     /// <summary>
-    /// Converts every page of a loaded wiki, each with its own resolvers — the real §4.4 run
-    /// (PLAN.md §4.4, §6.2 steps 1-4 minus the publish).
+    /// Converts every publishable page of a loaded wiki, each with its own resolvers — the real §4.4
+    /// run (PLAN.md §4.4, §6.2 steps 1-4 minus the publish).
     /// </summary>
+    /// <remarks>
+    /// A draft (<c>publish: false</c>, §5.2) is skipped here for the same reason publish holds it
+    /// back: the whole point of committing a half-written page is that its state cannot fail a run,
+    /// and the acceptance bar measures the corpus a reader will actually see.
+    /// </remarks>
     public static AcceptanceReport RunTree(WikiTree tree, AcceptancePolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(tree);
 
         return Run(
-            tree.Pages.Select(page => new AcceptancePage(page.Path, page.Parsed.Body, tree.ResolversFor(page.Path))),
+            tree.Pages
+                .Where(page => page.Parsed.Frontmatter.Publish)
+                .Select(page => new AcceptancePage(page.Path, page.Parsed.Body, tree.ResolversFor(page.Path))),
             policy);
     }
 
