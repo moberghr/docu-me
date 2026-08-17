@@ -62,6 +62,20 @@ public sealed record DriftReport
     /// </summary>
     public IReadOnlyList<ExemptedChange> Exempted { get; init; } = [];
 
+    /// <summary>
+    /// How many commits <c>_meta/drift-ignore-revs</c> held out of the range. Zero means the
+    /// answer came from the ordinary flat diff: when the file is absent, and equally when it names
+    /// nothing in this range, the per-commit walk's answer is discarded rather than trusted, so a
+    /// long-lived list of stale sweep shas cannot silently change which algorithm produced the
+    /// verdict. Nonzero means attribution ran, and this count is the disclosure, carried for the
+    /// reason <see cref="Exempted"/> is: a verdict whose inputs were narrowed must say so. A count
+    /// rather than the shas, which sit in the file itself. One caveat travels with the number:
+    /// attribution is per commit as <c>git log --name-only</c> reports it, and a merge commit
+    /// lists no files there, so ignoring a merge raises this count without changing what any page
+    /// matched.
+    /// </summary>
+    public int IgnoredCommitCount { get; init; }
+
     /// <summary>Affected pages.</summary>
     public int AffectedCount => Pages.Count;
 
