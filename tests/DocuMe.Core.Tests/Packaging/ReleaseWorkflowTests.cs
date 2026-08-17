@@ -770,6 +770,14 @@ public sealed class ReleaseWorkflowTests : IDisposable
         info.Environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
         info.Environment["GIT_CONFIG_SYSTEM"] = "/dev/null";
 
+        // git 2.54 answers an init that no config level gives a branch name with a multi-line advice
+        // on stderr, and this helper nulls every config level, so every init advises. Written into a
+        // redirected pipe that is only read after stdout, that advice has wedged real runs on macOS.
+        // Pinning the name git used all along keeps init silent without changing what any test sees.
+        info.Environment["GIT_CONFIG_COUNT"] = "1";
+        info.Environment["GIT_CONFIG_KEY_0"] = "init.defaultBranch";
+        info.Environment["GIT_CONFIG_VALUE_0"] = "master";
+
         using var process = Process.Start(info)
             ?? throw new InvalidOperationException("git did not start.");
         var output = process.StandardOutput.ReadToEnd();

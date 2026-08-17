@@ -44,3 +44,10 @@
   never quote another's token phrase or branch prefix.
 - **Why:** the both-ways uniqueness check is what keeps the wiki page's derived table honest; a bare word
   rots the day another skill shares vocabulary.
+
+## 2026-08-17 — git 2.54 wedges a config-nulled `git init` spawned with redirected pipes
+
+- What happened: `ReleaseWorkflowTests`' git helper nulls every config level (`GIT_CONFIG_GLOBAL=/dev/null`), so git 2.54+ prints its multi-line `init.defaultBranch` advice on every `git init`; written into a redirected stderr pipe that the helper reads only after draining stdout, the advice wedged the whole test binary for minutes (macOS, brew git bump mid-session).
+- Rule: a test helper that nulls git config levels must also pin `init.defaultBranch` via `GIT_CONFIG_COUNT/KEY_0/VALUE_0` (value `master`, the nulled-config historical default), which keeps init silent and deterministic.
+- Why: an advice message is stderr output that scales with git's version, not with the test; any spawn pattern that reads streams sequentially is one verbose git release away from a deadlock.
+- When it applies: any new helper that spawns git with `Environment.Clear()` + redirected pipes.
