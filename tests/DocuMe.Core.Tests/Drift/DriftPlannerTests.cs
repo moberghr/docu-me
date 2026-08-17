@@ -279,8 +279,71 @@ public sealed class DriftPlannerTests
             Baseline, " ", [], [Page("a.md", "A", "src/**")]));
     }
 
+    [Fact]
+    public void Plan_HoldsAnExemptedFileOutOfEveryPagesMatching()
+    {
+        // The exemption is wiki-level (one drift-ignore file), so it cancels the match for both
+        // pages at once: the broad glob and the narrow one alike see a diff without the file.
+        var report = Plan(
+            ["src/Generated/Api.g.cs"],
+            DriftExemptions.Parse("src/Generated/** # codegen"),
+            Page("domains/loans.md", "Loans", "src/Generated/**"),
+            Page("domains/rates.md", "Rates", "src/**"));
+
+        report.Pages.ShouldBeEmpty();
+        report.HasDrift.ShouldBeFalse();
+        report.Exempted.ShouldHaveSingleItem().Path.ShouldBe("src/Generated/Api.g.cs");
+    }
+
+    [Fact]
+    public void Plan_StillFlagsAPageWhoseOtherSourcesWereTouched()
+    {
+        // An exemption cancels the file, not the page: the page keeps drifting on what remains,
+        // and the exempted pattern is absent from its matches like any glob that fired on nothing.
+        var report = Plan(
+            ["src/Generated/Api.g.cs", "src/Loans/LoanService.cs"],
+            DriftExemptions.Parse("src/Generated/**"),
+            Page("domains/loans.md", "Loans", "src/Generated/**", "src/Loans/**"));
+
+        var page = report.Pages.ShouldHaveSingleItem();
+        page.Matches.ShouldHaveSingleItem().Pattern.ShouldBe("src/Loans/**");
+        report.HasDrift.ShouldBeTrue();
+        report.Exempted.ShouldHaveSingleItem().Pattern.ShouldBe("src/Generated/**");
+    }
+
+    [Fact]
+    public void Plan_ReportsTheExemptedFilesSortedWithTheirReasons()
+    {
+        var report = Plan(
+            ["src/Generated/Zebra.g.cs", "src/Generated/Alpha.g.cs", "vendor/lib.js"],
+            DriftExemptions.Parse("""
+                src/Generated/** # codegen sweep
+                vendor/** # vendored, upstream docs own it
+                """),
+            Page("domains/loans.md", "Loans", "src/**", "vendor/**"));
+
+        report.HasDrift.ShouldBeFalse();
+        report.Pages.ShouldBeEmpty();
+
+        // The headline count keeps reporting the diff as git answered it; Exempted accounts for
+        // the subset held out, so the two are readable together without a third number.
+        report.ChangedFileCount.ShouldBe(3);
+        report.Exempted.Count.ShouldBe(3);
+
+        report.Exempted.Select(change => change.Path).ShouldBe(
+            ["src/Generated/Alpha.g.cs", "src/Generated/Zebra.g.cs", "vendor/lib.js"]);
+        report.Exempted[0].Reason.ShouldBe("codegen sweep");
+        report.Exempted[2].Reason.ShouldBe("vendored, upstream docs own it");
+    }
+
     private static DriftReport Plan(string[] changedFiles, params WikiPage[] pages) =>
         DriftPlanner.Plan(Baseline, Head, changedFiles, pages);
+
+    private static DriftReport Plan(
+        string[] changedFiles,
+        DriftExemptions exemptions,
+        params WikiPage[] pages) =>
+        DriftPlanner.Plan(Baseline, Head, changedFiles, pages, exemptions);
 
     private static WikiPage Page(string path, string title, params string[] sources) => new(
         path,

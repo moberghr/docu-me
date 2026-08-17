@@ -140,6 +140,17 @@ Reports which pages derive from code changed between two revisions.
 | `--dry-run` | With `--mark`: report what would be labelled, write nothing. Needs no credentials |
 | `--allow-protected-space` | With `--mark`: label pages in a space listed in `confluence.protectedSpaces`, for one run |
 
+Drift can be told that a class of change never means the docs moved. An optional
+`<wiki.root>/_meta/drift-ignore` holds one glob per line, matched against changed file paths the same
+way `sources` globs are; a line whose first character is `#` is a comment (an indented `#` is an
+error, not a comment), and a pattern may carry a reason after one (`src/gen/**/*.cs # generated`),
+which the report quotes back. A changed file that any pattern matches never marks a page stale: every
+format discloses it instead — the table's `EXEMPT` section, the JSON's `exempted` list, the PR
+comment's exemption note — and neither the exit code nor `--mark` counts it. Mind the pattern's
+width: an over-broad glob switches drift off for everything it covers, and the disclosure line is
+the only trace. A malformed line fails the run with its line number, because an exemption list that
+is silently half-read would silently un-report drift.
+
 ## `docume dashboard`
 
 Regenerates the status page from state plus the live labels.

@@ -585,6 +585,160 @@ public sealed class CliDriftTests : IDisposable
     }
 
     /// <summary>
+    /// The exemption file end-to-end (§6.4): with every changed file matched by
+    /// <c>_meta/drift-ignore</c>, the run that would have reported both pages reports neither, and
+    /// <c>--fail-on-drift</c> exits 0 because there is no drift left to fail on. The exemptions are
+    /// named rather than swallowed — the count line, the reason a pattern carried, and the file whose
+    /// pattern carried none rendered without a dangling separator.
+    /// </summary>
+    /// <remarks>
+    /// The matcher itself is covered at the Core level (<see cref="Drift.DriftExemptionsTests"/>);
+    /// what only the process can answer is whether the command finds the file next to the state it
+    /// already reads, and what the exempt section looks like on the stream a user gets.
+    /// </remarks>
+    [Fact]
+    public void A_change_the_ignore_file_matches_is_reported_exempt_rather_than_as_drift()
+    {
+        var work = Seeded(nameof(A_change_the_ignore_file_matches_is_reported_exempt_rather_than_as_drift));
+
+        ExemptSources(
+            work,
+            "# mechanical sweeps never mean the docs moved",
+            "src/limits/*.cs # rename-only sweep",
+            "src/rates/*.cs");
+
+        var run = Invoke(work, "drift", "--fail-on-drift");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        // Neither page is reported: with every match exempt the verdict is the no-drift one, which
+        // is what --fail-on-drift turned into the exit 0 above.
+        run.Flowed.ShouldNotContain(LimitsPath, customMessage: run.Diagnostics);
+        run.Flowed.ShouldNotContain(RatesPath, customMessage: run.Diagnostics);
+
+        run.Flowed.ShouldContain(
+            "2 changed file(s) ignored by _meta/drift-ignore",
+            customMessage: run.Diagnostics);
+
+        run.Flowed.ShouldContain(
+            "src/limits/Limits.cs (src/limits/*.cs — rename-only sweep)",
+            customMessage: run.Diagnostics);
+
+        run.Flowed.ShouldContain(
+            "src/rates/Rates.cs (src/rates/*.cs)",
+            customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
+    /// <c>--format json</c> carries the exempted list, next to a count the exemption changed: one
+    /// pattern takes one of the two changed files out of the match, so the same payload says both
+    /// "one page drifted" and "one change was counted out, and here is why". A CI step that posts
+    /// the report can then account for every changed file rather than only the ones that drifted.
+    /// </summary>
+    [Fact]
+    public void A_json_report_carries_the_exempted_files()
+    {
+        var work = Seeded(nameof(A_json_report_carries_the_exempted_files));
+
+        ExemptSources(work, "src/limits/*.cs # rename-only sweep");
+
+        var run = Invoke(work, "drift", "--format", "json");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        using var document = JsonDocument.Parse(run.Output);
+
+        document.RootElement.GetProperty("affectedCount").GetInt32().ShouldBe(1, run.Diagnostics);
+
+        var exempted = document.RootElement.GetProperty("exempted");
+
+        exempted.GetArrayLength().ShouldBe(1, run.Diagnostics);
+
+        var entry = exempted[0];
+
+        entry.GetProperty("path").GetString().ShouldBe("src/limits/Limits.cs", run.Diagnostics);
+        entry.GetProperty("pattern").GetString().ShouldBe("src/limits/*.cs", run.Diagnostics);
+        entry.GetProperty("reason").GetString().ShouldBe("rename-only sweep", run.Diagnostics);
+    }
+
+    /// <summary>
+    /// <c>--mark</c> considers only non-exempt matches (§6.4): with every match exempt there is no
+    /// drift, so the write half has nothing to plan and never builds a client. Asserted as zero
+    /// requests, the way the dry-run fact above is — the failure this guards against is a mark run
+    /// labelling pages whose only "drift" was a sweep the repo declared mechanical.
+    /// </summary>
+    [Fact]
+    public void A_mark_run_labels_nothing_when_every_match_is_exempt()
+    {
+        var work = Seeded(nameof(A_mark_run_labels_nothing_when_every_match_is_exempt));
+
+        ExemptSources(work, "src/limits/*.cs", "src/rates/*.cs");
+
+        var run = Invoke(work, "drift", "--mark");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        LabelWrites().ShouldBeEmpty(run.Diagnostics);
+        Seen().ShouldBeEmpty(run.Diagnostics);
+
+        // The flags stay down too: state that recorded an exempted change as staleness would make
+        // the next sync report labels Confluence never got.
+        var state = State(work);
+
+        state.Pages[LimitsPath].Stale.ShouldBeFalse(run.Diagnostics);
+        state.Pages[RatesPath].Stale.ShouldBeFalse(run.Diagnostics);
+    }
+
+    /// <summary>
+    /// A malformed exemption line fails the run, naming the file and the 1-based line, so the fix is
+    /// an edit rather than a search. Loud beats lenient here: an exemption list silently half-read
+    /// would silently un-report drift, which is worse than reporting too much (§6.4).
+    /// </summary>
+    [Fact]
+    public void A_malformed_drift_ignore_line_fails_the_run_naming_its_line()
+    {
+        var work = Seeded(nameof(A_malformed_drift_ignore_line_fails_the_run_naming_its_line));
+
+        // Line 3 has a reason and no pattern: not a comment, because its `#` is not at line start.
+        ExemptSources(
+            work,
+            "# a comment and a pattern both parse",
+            "src/limits/*.cs # rename-only sweep",
+            " # a reason with no pattern");
+
+        var run = Invoke(work, "drift");
+
+        run.Code.ShouldNotBe(0, run.Diagnostics);
+
+        // De-wrapped before matching: the message opens with the file's full path, one long token the
+        // console wraps mid-word, so "drift-ignore" can arrive split across a padded line break.
+        var unwrapped = string.Concat(run.FlowedAll.Where(c => !char.IsWhiteSpace(c)));
+        unwrapped.ShouldContain("drift-ignore", customMessage: run.Diagnostics);
+        unwrapped.ShouldContain("line3", Case.Insensitive, run.Diagnostics);
+    }
+
+    /// <summary>
+    /// The machine formats route the failure to stderr, and that is a wire contract: a CI step piping
+    /// stdout into a PR comment must never post a parse error as the comment body.
+    /// </summary>
+    [Fact]
+    public void A_malformed_drift_ignore_line_stays_off_stdout_in_a_machine_format()
+    {
+        var work = Seeded(nameof(A_malformed_drift_ignore_line_stays_off_stdout_in_a_machine_format));
+
+        ExemptSources(
+            work,
+            "src/limits/*.cs # rename-only sweep",
+            " # a reason with no pattern");
+
+        var run = Invoke(work, "drift", "--format", "json");
+
+        run.Code.ShouldNotBe(0, run.Diagnostics);
+        run.Error.ShouldContain("line 2", Case.Insensitive, run.Diagnostics);
+        run.Output.ShouldNotContain("{", customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
     /// The per-page Stale cell as <see cref="DocuMe.Core.Dashboard.DashboardPage"/> renders it. Lowercase, which is
     /// what keeps it distinct from <see cref="SummaryStaleCell"/> under an ordinal count.
     /// </summary>
@@ -638,6 +792,14 @@ public sealed class CliDriftTests : IDisposable
 
     private static CliRun Invoke(string workingDirectory, params string[] args) =>
         DocumeCli.Invoke(workingDirectory, args);
+
+    /// <summary>
+    /// Writes the exemption list a consumer repo may keep at <c>&lt;wiki.root&gt;/_meta/drift-ignore</c>
+    /// (§6.4), one entry per line. Not committed on purpose: the command reads the file from disk the
+    /// way it reads state, so the diff between the two revisions is not what finds it.
+    /// </summary>
+    private static void ExemptSources(string work, params string[] lines) =>
+        File.WriteAllLines(Path.Combine(work, "docs", "wiki", "_meta", "drift-ignore"), lines);
 
     /// <summary>Flags one page stale in the seeded state, as a previous <c>--mark</c> would have left it.</summary>
     private static void MarkStale(string work, string path)

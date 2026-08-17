@@ -24,6 +24,11 @@ namespace DocuMe.Cli.Commands;
 /// no space and no network. Only <c>--mark</c> itself talks to Confluence.
 /// </para>
 /// <para>
+/// <strong>One optional input narrows the match:</strong> <c>&lt;wiki.root&gt;/_meta/drift-ignore</c>
+/// lists globs for changes that never mean the docs moved (§6.4). A changed file it matches is
+/// reported as exempt and counted out of the verdict, the exit code and <c>--mark</c>.
+/// </para>
+/// <para>
 /// <strong><c>--mark</c> writes labels, never page bodies</strong> (§6.4, rule §9.3). Staleness is a label
 /// plus a state flag plus a dashboard row; editing a body to say "this may be out of date" would bump the
 /// page version, which invalidates nothing but disturbs the approval history §8 keeps for audit.
@@ -39,6 +44,13 @@ internal static class DriftCommand
 {
     /// <summary>Where <c>docume init</c> scaffolds the state file, relative to the wiki root (§5.3).</summary>
     private const string DefaultStateFile = "_meta/state.json";
+
+    /// <summary>
+    /// Where a consumer repo may list changes drift must ignore, relative to the wiki root (§6.4).
+    /// Resolved the way <see cref="DefaultStateFile"/> is, and kept next to the wiki because which
+    /// changes are mechanical is the repo's knowledge, not the tool's (§9.5).
+    /// </summary>
+    private const string DriftIgnoreFile = "_meta/drift-ignore";
 
     private const string TableFormat = "table";
     private const string JsonFormat = "json";
@@ -254,6 +266,26 @@ internal static class DriftCommand
                 quiet);
         }
 
+        // The exemption list is optional and its absence is the common case: a repo that never wrote
+        // the file gets exactly the run it had before (§6.4). A malformed line is loud, though: an
+        // exemption list half-read would quietly narrow the match, and "no drift" must never mean
+        // "the list was skipped".
+        var exemptions = DriftExemptions.None;
+        var ignorePath = Path.Combine(wikiRoot, DriftIgnoreFile.Replace('/', Path.DirectorySeparatorChar));
+
+        if (File.Exists(ignorePath))
+        {
+            try
+            {
+                exemptions = DriftExemptions.Parse(
+                    await File.ReadAllTextAsync(ignorePath, cancellationToken).ConfigureAwait(false));
+            }
+            catch (DriftIgnoreFormatException ex)
+            {
+                return Fail($"{ignorePath}: {ex.Message}", quiet);
+            }
+        }
+
         IReadOnlyList<string> changed;
         try
         {
@@ -266,7 +298,7 @@ internal static class DriftCommand
             return Fail(ex.Message, quiet);
         }
 
-        var report = DriftPlanner.Plan(resolvedBaseline, options.Head, changed, tree.Pages);
+        var report = DriftPlanner.Plan(resolvedBaseline, options.Head, changed, tree.Pages, exemptions);
 
         Report(report, options.Format, options.Mark);
 
@@ -635,6 +667,7 @@ internal static class DriftCommand
 
         RenderPages(report);
         RenderVerdict(report, mark);
+        RenderExempted(report);
     }
 
     /// <summary>
@@ -702,6 +735,35 @@ internal static class DriftCommand
         AnsiConsole.MarkupLine(
             $"[yellow]{report.AffectedCount} of {report.PagesWithSourcesCount} page(s) with declared "
             + $"sources may need review.[/] [grey]{advisory}[/]");
+    }
+
+    /// <summary>
+    /// The changed files <c>_meta/drift-ignore</c> counted out of the match, one line each with the
+    /// pattern that caught them. Named rather than only counted, and uncapped like
+    /// <see cref="RenderPages"/>: an exemption changes the verdict above it, and a verdict whose
+    /// inputs were quietly narrowed would read as "no drift" when the truth is "no drift left after
+    /// the list" (§6.4).
+    /// </summary>
+    private static void RenderExempted(DriftReport report)
+    {
+        if (report.Exempted.Count == 0)
+        {
+            return;
+        }
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine(
+            $"[grey]EXEMPT — {report.Exempted.Count} changed file(s) ignored by "
+            + $"{DriftIgnoreFile}[/]");
+
+        foreach (var change in report.Exempted)
+        {
+            var by = change.Reason is { Length: > 0 } reason
+                ? $"{change.Pattern} — {reason}"
+                : change.Pattern;
+
+            AnsiConsole.MarkupLine($"  [grey]{change.Path.EscapeMarkup()} ({by.EscapeMarkup()})[/]");
+        }
     }
 
     /// <summary>

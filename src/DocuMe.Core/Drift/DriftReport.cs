@@ -29,7 +29,11 @@ public sealed record DriftReport
     /// <summary>The revision the diff ended at — <c>--head</c>, else <c>HEAD</c>.</summary>
     public required string Head { get; init; }
 
-    /// <summary>How many changed files the diff answered with, before any glob was applied.</summary>
+    /// <summary>
+    /// How many changed files the diff answered with, before any glob was applied: a page's
+    /// <c>sources</c> or a <c>drift-ignore</c> exemption alike. Files in <see cref="Exempted"/>
+    /// are counted here too.
+    /// </summary>
     public required int ChangedFileCount { get; init; }
 
     /// <summary>
@@ -46,6 +50,17 @@ public sealed record DriftReport
 
     /// <summary>The affected pages, ordered by wiki-relative path.</summary>
     public IReadOnlyList<DriftedPage> Pages { get; init; } = [];
+
+    /// <summary>
+    /// Changed files a <c>_meta/drift-ignore</c> pattern held out of the matching, ordinal by path.
+    /// A subset of the files <see cref="ChangedFileCount"/> counts: the count keeps reporting the
+    /// diff as git answered it, and this list accounts for the part no page was allowed to match.
+    /// Nothing here contributes to <see cref="Pages"/> or <see cref="HasDrift"/>, which is the
+    /// point of an exemption; the files are still carried, per pattern and reason, because a report
+    /// that dropped them silently would leave a reviewer unable to tell an exempted change from an
+    /// unmatched one.
+    /// </summary>
+    public IReadOnlyList<ExemptedChange> Exempted { get; init; } = [];
 
     /// <summary>Affected pages.</summary>
     public int AffectedCount => Pages.Count;

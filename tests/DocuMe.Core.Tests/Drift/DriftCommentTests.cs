@@ -58,6 +58,38 @@ public sealed class DriftCommentTests
         comment.ShouldNotContain("No documented sources were touched.");
     }
 
+    /// <summary>
+    /// The disclosure that keeps "nothing drifted" honest (§6.4): when <c>_meta/drift-ignore</c>
+    /// narrowed the inputs, the comment says so — a reviewer reading a quiet verdict must be able to
+    /// tell an exempted change from an unmatched one.
+    /// </summary>
+    [Fact]
+    public void Render_DisclosesTheExemptionsBehindAQuietVerdict()
+    {
+        var report = Report() with
+        {
+            Exempted =
+            [
+                new ExemptedChange("src/Generated/Api.cs", "src/Generated/**", "codegen sweep"),
+                new ExemptedChange("vendor/lib.js", "vendor/**", null),
+            ],
+        };
+
+        var comment = DriftComment.Render(report);
+
+        comment.ShouldContain("No documented sources were touched.");
+        comment.ShouldContain("2 changed files were exempted by `_meta/drift-ignore`:");
+        comment.ShouldContain("`src/Generated/Api.cs` (`src/Generated/**` — codegen sweep)");
+        comment.ShouldContain("`vendor/lib.js` (`vendor/**`)");
+        comment.ShouldContain("9 changed files, 2 exempted.");
+    }
+
+    [Fact]
+    public void Render_SaysNothingAboutExemptionsWhenThereAreNone()
+    {
+        DriftComment.Render(Report()).ShouldNotContain("exempted");
+    }
+
     [Fact]
     public void Render_StatesTheOverflowRatherThanTrimmingQuietly()
     {

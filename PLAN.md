@@ -292,6 +292,8 @@ Exit code 0 always (advisory), unless `--fail-on-drift` for teams that want bloc
 
 Two glob spellings an author will reasonably write are normalized rather than silently matching nothing: a **trailing slash** gets `**` appended (`src/Loans/` means `src/Loans/**`), and a **leading slash** is stripped (`/src/Loans/**` is repo-relative like every other pattern). Backslashes become forward slashes. A rename shows up as both paths and both count — deleting a documented file is drift too.
 
+An optional **`<wiki.root>/_meta/drift-ignore`** names changes that never mean the docs moved: one glob per line (same dialect and normalizations as `sources`), `#` at the start of a line is a comment, and a pattern may carry a trailing ` # reason`. A changed file any pattern matches is held out of the matching for every page and reported as exempt — in the table, the JSON (`exempted`) and the PR comment alike, because a verdict whose inputs were narrowed must say so. Exempt files count toward neither the exit code nor `--mark`. A malformed line fails the run with its line number: an exemption that silently never fires reads as protection that does not exist.
+
 ### 6.5 `docume dashboard`
 Regenerates the "Documentation Status" Confluence page from state + live labels: coverage stats (approved / needs-review / stale counts, % approved), table per page (status, approver, date, staleness, open feedback count, link), legend for ⚠️ markers. Machine-owned page.
 

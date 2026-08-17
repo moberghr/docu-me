@@ -44,10 +44,41 @@ public static class DriftComment
         text.AppendLine("### 📄 Documentation drift");
         text.AppendLine();
         WriteBody(text, report);
+        WriteExempted(text, report);
         text.AppendLine();
         text.AppendLine(Provenance(report));
 
         return text.ToString();
+    }
+
+    /// <summary>
+    /// The exemption disclosure (§6.4): a verdict whose inputs `_meta/drift-ignore` narrowed must say
+    /// so in the same comment, or "nothing drifted" reads as a clean diff when the truth is "nothing
+    /// drifted that the list let through".
+    /// </summary>
+    private static void WriteExempted(StringBuilder text, DriftReport report)
+    {
+        if (report.Exempted.Count == 0)
+        {
+            return;
+        }
+
+        var files = report.Exempted.Count == 1 ? "changed file was" : "changed files were";
+        text.AppendLine();
+        text.AppendLine($"{report.Exempted.Count} {files} exempted by `_meta/drift-ignore`:");
+        text.AppendLine();
+
+        foreach (var exempted in report.Exempted.Take(MaxFilesPerPattern))
+        {
+            var reason = exempted.Reason is { Length: > 0 } why ? $" — {Escape(why)}" : string.Empty;
+            text.AppendLine($"- `{exempted.Path}` (`{exempted.Pattern}`{reason})");
+        }
+
+        var hidden = report.Exempted.Count - MaxFilesPerPattern;
+        if (hidden > 0)
+        {
+            text.AppendLine($"- and {hidden} more");
+        }
     }
 
     private static void WriteBody(StringBuilder text, DriftReport report)
@@ -101,9 +132,10 @@ public static class DriftComment
     private static string Provenance(DriftReport report)
     {
         var files = report.ChangedFileCount == 1 ? "changed file" : "changed files";
+        var exempted = report.Exempted.Count > 0 ? $", {report.Exempted.Count} exempted" : string.Empty;
 
         return $"<sub>`docume drift` — baseline `{Escape(report.Baseline)}` → head "
-            + $"`{Escape(report.Head)}`, {report.ChangedFileCount} {files}.</sub>";
+            + $"`{Escape(report.Head)}`, {report.ChangedFileCount} {files}{exempted}.</sub>";
     }
 
     /// <summary>
