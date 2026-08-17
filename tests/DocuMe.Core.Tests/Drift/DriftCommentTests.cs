@@ -90,6 +90,20 @@ public sealed class DriftCommentTests
         DriftComment.Render(Report()).ShouldNotContain("exempted");
     }
 
+    /// <summary>
+    /// The other disclosure (§6.4), mirrored from the exemption one: when
+    /// <c>_meta/drift-ignore-revs</c> narrowed the attribution, the provenance line says how many
+    /// commits were held out, and a report that ignored none says nothing about commits at all.
+    /// </summary>
+    [Fact]
+    public void Render_DisclosesTheIgnoredCommitsInTheProvenance()
+    {
+        var comment = DriftComment.Render(Report() with { IgnoredCommitCount = 2 });
+
+        comment.ShouldContain("9 changed files, 2 commits ignored.");
+        DriftComment.Render(Report()).ShouldNotContain("commit");
+    }
+
     [Fact]
     public void Render_StatesTheOverflowRatherThanTrimmingQuietly()
     {

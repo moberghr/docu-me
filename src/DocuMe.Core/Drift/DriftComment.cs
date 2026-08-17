@@ -134,8 +134,15 @@ public static class DriftComment
         var files = report.ChangedFileCount == 1 ? "changed file" : "changed files";
         var exempted = report.Exempted.Count > 0 ? $", {report.Exempted.Count} exempted" : string.Empty;
 
+        // The commit disclosure (§6.4), in the same breath as the path one: a quiet verdict over a
+        // narrowed diff must say the diff was narrowed.
+        var commits = report.IgnoredCommitCount == 1 ? "commit" : "commits";
+        var ignored = report.IgnoredCommitCount > 0
+            ? $", {report.IgnoredCommitCount} {commits} ignored"
+            : string.Empty;
+
         return $"<sub>`docume drift` — baseline `{Escape(report.Baseline)}` → head "
-            + $"`{Escape(report.Head)}`, {report.ChangedFileCount} {files}{exempted}.</sub>";
+            + $"`{Escape(report.Head)}`, {report.ChangedFileCount} {files}{exempted}{ignored}.</sub>";
     }
 
     /// <summary>
