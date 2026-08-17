@@ -1,9 +1,9 @@
 {
   "first_session": "2026-07-24",
   "last_session": "2026-08-17",
-  "sessions": 315,
-  "total_operations": 551966,
-  "total_modifications": 147128,
+  "sessions": 316,
+  "total_operations": 552042,
+  "total_modifications": 147129,
   "specs_created": 6,
   "lessons_captured": 5,
   "scope_guard_warnings": 212,
@@ -12,6 +12,6 @@
   "queue_writes": 3,
   "queue_drains": 1,
   "queue_expired": 0,
-  "bytes_read": 303453607,
-  "estimated_context_tokens": 75863401
+  "bytes_read": 303517612,
+  "estimated_context_tokens": 75879403
 }

@@ -112,7 +112,7 @@ The repository is its own marketplace, so it installs directly:
 From the root of the repository you want documented:
 
 ```bash
-docume init --space DOCS --base-url https://your-domain.atlassian.net/wiki
+docume init --space DOCS --base-url https://your-domain.atlassian.net/wiki --agent claude
 ```
 
 Thirteen targets, and it is idempotent: a file DocuMe owns is never overwritten, and the two files it
@@ -122,7 +122,7 @@ instead of Claude Code; the choice is recorded in `docume.json` and a re-run kee
 
 | Target | What it is |
 |---|---|
-| `docume.json` | Config: space, base URL, wiki root, label names, mermaid renderer path |
+| `docume.json` | Config: space, base URL, workflow agent rail, wiki root, label names, mermaid renderer path |
 | `docs/wiki/README.md` | The wiki's root page |
 | `docs/wiki/_meta/STYLE.md` | Your authoring conventions. **Fill this in** — it is what the skills read |
 | `docs/wiki/_meta/state.json` | Machine-owned: page ids, versions, content hashes, approvals. Committed |
@@ -148,8 +148,9 @@ export DOCUME_CONFLUENCE_EMAIL="you@example.com"
 export DOCUME_CONFLUENCE_TOKEN="<your Atlassian API token>"
 ```
 
-For the workflows, as repository secrets: `DOCUME_CONFLUENCE_EMAIL`, `DOCUME_CONFLUENCE_TOKEN`, and
-`ANTHROPIC_API_KEY` for the two that call a skill (`docs-feedback`, `docs-refresh`).
+For the workflows, set repository secrets `DOCUME_CONFLUENCE_EMAIL` and `DOCUME_CONFLUENCE_TOKEN`.
+The Claude rail needs `ANTHROPIC_API_KEY`; `docume init --agent copilot` instead scaffolds the Copilot
+rail, which needs `COPILOT_GITHUB_TOKEN` from a user with a Copilot seat.
 
 One more, and only from outside Moberg: `DOCUME_PACKAGES_TOKEN`, a PAT with `read:packages`. Every
 scaffolded workflow adds the GitHub Packages feed before restoring the pinned CLI, and it falls back to
