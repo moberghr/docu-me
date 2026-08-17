@@ -91,6 +91,23 @@ public sealed class ContentHashTests
     }
 
     [Fact]
+    public void OfBody_CitationCommentLineNumberMoved_DoesNotChangeHash()
+    {
+        // The business tier's approval-survives-refactor guarantee (business-tier.md mechanism 2,
+        // third property): a citation-only edit — a line number moved by a refactor — must never
+        // invalidate an approval, because the comment never reaches the body PublishPipeline hashes.
+        const string Before = "Leave earned today is available to book tomorrow.\n"
+            + "<!-- cites: src/Jobs/AccrualJob.cs:22 -->\n";
+        const string After = "Leave earned today is available to book tomorrow.\n"
+            + "<!-- cites: src/Jobs/AccrualJob.cs:41 -->\n";
+
+        var before = ContentHash.OfBody(ConfluenceStorageConverter.Convert(Before));
+        var after = ContentHash.OfBody(ConfluenceStorageConverter.Convert(After));
+
+        after.ShouldBe(before);
+    }
+
+    [Fact]
     public void OfBody_Null_Throws()
     {
         Should.Throw<ArgumentNullException>(() => ContentHash.OfBody(null!));
