@@ -8,6 +8,34 @@ One version covers everything: the `DocuMe.Cli` and `DocuMe.Core` packages and t
 ship off a single `vX.Y.Z` tag, so a heading here describes all three. The version at the top of this file
 is the one `Directory.Build.props` declares, whether or not its tag has been pushed yet.
 
+## [0.2.0] - 2026-08-14
+
+Until now every page DocuMe generated spoke to an engineer. This release adds a second documentation
+audience: a business & process tier, generated with the same verified-claims discipline and pointed at
+readers who never open the source. Nothing in the CLI, converter or schema changed — business pages are
+ordinary pages in an ordinary subtree, which is what makes the whole tier possible in a skills-only
+release.
+
+### Added
+
+- **`/docs-processes`, the fourth plugin skill.** It generates business and process pages — what a process
+  is for, who can do what, what a refusal means — into a consumer-named subtree of the same wiki
+  (`40-business/` when `_meta/STYLE.md` does not choose one), so publish, drift, approval, dashboard and
+  feedback all apply to them unchanged. Its unit is a process rather than a code unit, inventoried in
+  `_meta/PROGRESS-BUSINESS.md`, and its PRs arrive on `docs/processes-<date>` branches.
+- **Citations a reader never sees.** Every claim on a business page is still cited, but the citation is an
+  HTML comment (`<!-- cites: … -->`) directly under the paragraph it backs: dropped by the converter,
+  greppable by `/docs-refresh` and `/docs-feedback`, and outside `contentHash`, so a citation-only edit —
+  a line number moved by a refactor — never invalidates an approval. The `⚠️` markers are banned on this
+  tier: a claim is verified or absent, and open questions go to `_meta/GAPS.md`.
+- **`_meta/BUSINESS.md`**, a consumer-owned seed-facts file for what code cannot state: legal intent,
+  policy rationale, organisational context. The skill creates an instructional stub when the file is
+  missing and never writes facts into it.
+- **The three existing skills learned the tier.** `/docs-loop` now stamps `baselineSha` as the oldest
+  generation sha across both progress files, `/docs-refresh` regenerates a stale business page in that
+  tier's register without introducing markers, and `/docs-feedback` answers a business-page comment in
+  plain language while its PR still carries the code evidence.
+
 ## [0.1.1] - 2026-08-12
 
 The first release met its first consumer repo and half the CI it scaffolds did not run. Both bugs are in

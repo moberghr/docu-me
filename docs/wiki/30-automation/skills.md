@@ -51,7 +51,6 @@ sequences one actor walks in one sitting. The result opens as a pull request so 
 because which process a reader needs first is a product judgement, and correcting one list costs less
 than correcting twenty pages written against it. Until this skill runs, the tier does not exist; no
 other skill creates it as a side effect.
-
 Citations do not disappear on this tier, they move. Every claim carries an HTML comment on its own line
 under the paragraph it backs, `<!-- cites: path/file.cs:31 -->`, and the converter drops comments, so a
 business reader never sees a file path while `/docs-refresh` and `/docs-feedback` still see the evidence.
