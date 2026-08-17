@@ -195,9 +195,13 @@ public sealed class GitRepositoryTests : IDisposable
         }
 
         using var process = Process.Start(startInfo).ShouldNotBeNull();
+
+        // stderr drained concurrently with stdout: a sequential double read deadlocks once the
+        // child fills the unread pipe (see ReleaseWorkflowTests.GitResult).
+        var errorTask = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
         var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
+        var error = errorTask.GetAwaiter().GetResult();
 
         process.ExitCode.ShouldBe(0, $"git {string.Join(' ', arguments)} failed: {error}{output}");
 
