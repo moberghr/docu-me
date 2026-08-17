@@ -16,7 +16,7 @@ Confluence, so nothing a model does can change a page there; and of the CLI's ow
 
 ```mermaid
 flowchart LR
-  generate[generate: /docs-loop] --> publish[publish: docume publish]
+  generate[generate: /docs-loop + /docs-processes] --> publish[publish: docume publish]
   publish --> approve[approve: label in Confluence]
   approve --> feedback[feedback: comment in Confluence]
   feedback --> refresh[refresh: /docs-refresh]
@@ -25,10 +25,14 @@ flowchart LR
 
 ## 1. Generate
 
-`/docs-loop` inventories the code, picks one undocumented unit, verifies every claim against the
-source, writes the page with its `sources` frontmatter, and opens or extends a `docs/loop-<date>`
-pull request. One unit per run, so a human reviews pages in readable batches rather than a hundred at
-once.
+Generation is two skills, one per audience. `/docs-loop` writes the technical tier: it inventories the
+code, picks one undocumented unit, verifies every claim against the source, writes the page with its
+`sources` frontmatter, and opens or extends a `docs/loop-<date>` pull request. `/docs-processes` writes
+the business and process tier the same way, one process per run on a `docs/processes-<date>` pull
+request, for readers who never open the code. Each skill's first run writes its inventory
+(`_meta/PROGRESS.md`, `_meta/PROGRESS-BUSINESS.md`) and no page, so a human corrects the list before
+pages are generated against it. One unit per run, so a human reviews pages in readable batches rather
+than a hundred at once.
 
 Nothing is published from this stage. A page reaches Confluence only after the pull request merges.
 

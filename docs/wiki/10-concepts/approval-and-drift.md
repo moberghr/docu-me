@@ -22,6 +22,18 @@ Two independent questions about a page, tracked two different ways.
 A page can be approved and drifted at the same time. That combination is exactly the one worth
 finding: somebody signed off on a description that is no longer true.
 
+The approval half is a state machine, and staleness deliberately appears nowhere in it — a stale
+label never moves an approval:
+
+```mermaid
+stateDiagram-v2
+    [*] --> needs_review: first publish
+    needs_review --> approved: approved label seen by sync
+    approved --> needs_review: republish with a changed content hash
+    approved --> needs_review: label removed by a reviewer
+    approved --> approved: republish, hash unchanged
+```
+
 ## How approval is recorded
 
 A reviewer adds the `approved` label in Confluence. `docume sync --labels` reads it and writes an

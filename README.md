@@ -117,7 +117,8 @@ docume init --space DOCS --base-url https://your-domain.atlassian.net/wiki
 
 Thirteen targets, and it is idempotent: a file DocuMe owns is never overwritten, and the two files it
 shares with you (`.gitignore`, `.config/dotnet-tools.json`) are merged rather than replaced. Re-running
-reports skips.
+reports skips. Pass `--agent copilot` if the two model workflows should run the GitHub Copilot CLI
+instead of Claude Code; the choice is recorded in `docume.json` and a re-run keeps it.
 
 | Target | What it is |
 |---|---|
@@ -184,11 +185,21 @@ title: Loans Domain     # optional; defaults to the first H1
 stale, and what `/docs-refresh` regenerates from. A page with no `sources` is never reported as drifted.
 
 **To generate the pages instead of writing them, run `/docs-loop` in Claude Code.** Fill in
-`docs/wiki/_meta/STYLE.md` first — its four bullets (audience, tone, structure, verification) are what the
-skill reads instead of carrying assumptions about your repo. The first run builds an inventory of what the
-wiki should cover, into `docs/wiki/_meta/PROGRESS.md`, and writes no page: correct that list before forty
-pages get generated against it. Each run after that takes one unit, reads its code, writes the page with its
-`sources` and a citation behind every claim, and adds a commit to a `docs/loop-<date>` pull request.
+`docs/wiki/_meta/STYLE.md` first: its seven bullets (audience, tone, structure, scope, diagrams, business,
+verification) are what the skill reads instead of carrying assumptions about your repo, and they decide
+what you get. A wiki with thin pages and no diagrams is usually a style guide that never asked for them.
+The first run builds an inventory of what the wiki should cover, into `docs/wiki/_meta/PROGRESS.md`, and
+writes no page: correct that list before forty pages get generated against it. Each run after that takes
+one unit, reads its code, writes the page with its `sources` and a citation behind every claim, and adds a
+commit to a `docs/loop-<date>` pull request.
+
+The second audience has its own generator. `/docs-processes` writes the business and process tier, the
+pages for the people who use the system rather than the people who build it, and it follows the same
+shape: its first run writes no page either, it derives the process inventory into
+`docs/wiki/_meta/PROGRESS-BUSINESS.md` for you to reorder, and every run after that documents one process
+on a `docs/processes-<date>` pull request. The facts no code states (why a limit is what it is, which
+policy a refusal implements) go in `docs/wiki/_meta/BUSINESS.md`, and its pages cite them. Until that
+skill runs, the business tier does not exist; nothing generates it as a side effect.
 
 ### 6. Check before you publish
 
@@ -251,11 +262,12 @@ writes labels. Everything else is read-only.
 | Skill | What it does |
 |---|---|
 | `/docs-loop` | Writes the pages. One unit per run, read from the code, every claim cited; opens `docs/loop-<date>`. |
+| `/docs-processes` | Writes the business and process tier, one process per run, citations in HTML comments the reader never sees; opens `docs/processes-<date>`. |
 | `/docs-refresh` | Rewrites the pages whose `sources` changed since the baseline; opens `docs/refresh-<date>`. |
 | `/docs-feedback` | Verifies a reviewer's comment against the code; opens `docs/feedback-<date>` or declines with a citation. |
 
-All three end by putting `docume status --json` in the PR body, so the state of the wiki is visible in the
-pull request a reviewer is already reading. All three also have the other ending, the one a nightly job has
+All four end by putting `docume status --json` in the PR body, so the state of the wiki is visible in the
+pull request a reviewer is already reading. All four also have the other ending, the one a nightly job has
 most nights: they stop without a branch, a commit or a pull request. An empty PR costs a reviewer more than
 it tells them.
 

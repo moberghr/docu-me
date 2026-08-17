@@ -26,6 +26,16 @@ usually means something on an existing page should have been a table.
 - No marketing. No "simply", "just", "powerful", "seamless".
 - Avoid the em-dash as a comma substitute; prefer a comma, a colon, or a new sentence.
 
+## Diagrams
+
+A page whose subject is a flow or a state machine opens with one mermaid fence that shows it: the
+lifecycle gets a flowchart, approval gets a state diagram. Reference pages draw only what a table
+cannot carry. Stay inside the supported families — flowchart and graph, sequenceDiagram,
+stateDiagram-v2, classDiagram, erDiagram, xychart-beta — and avoid `pie`, YAML frontmatter and a `;`
+after `graph TD`, all of which reject (the conversion reference names them). Check an added or edited
+fence by running `docume convert docs/wiki` with `--render-mermaid` before opening the pull request: a
+diagram the renderer refuses fails that page's publish.
+
 ## Structure
 
 - One H1 per page, which becomes the Confluence title and is dropped from the body. *Every* H1 is

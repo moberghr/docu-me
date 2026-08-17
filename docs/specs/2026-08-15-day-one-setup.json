@@ -1,0 +1,58 @@
+{
+  "slug": "day-one-setup",
+  "date": "2026-08-15",
+  "scope": "small-feature",
+  "spec_markdown": "docs/specs/2026-08-15-day-one-setup.md",
+  "spec_adopted": "requested interactively by the engineer in a remote session; not an autonomous-loop milestone",
+  "security_impact": "none",
+  "change_manifest": [
+    { "path": "src/DocuMe.Core/Scaffolding/ProjectScaffolder.cs", "action": "modify", "purpose": "BuildStyleGuide: four ask-only bullets become seven (adds Scope, Diagrams, Business); invitation sentence and single-heading shape preserved" },
+    { "path": "README.md", "action": "modify", "purpose": "the 'STYLE.md first' paragraph names the seven bullets; a sibling paragraph introduces /docs-processes and its inventory-first behavior" },
+    { "path": "plugin/skills/docs-loop/SKILL.md", "action": "modify", "purpose": "the scaffold description paragraph follows the new seven-bullet shape" },
+    { "path": "docs/wiki/README.md", "action": "modify", "purpose": "new 'How this wiki grows' section: STYLE.md is the lever, two tiers, inventory-first runs" },
+    { "path": "docs/wiki/10-concepts/lifecycle.md", "action": "modify", "purpose": "stage 1 covers both generation skills; flowchart label follows" },
+    { "path": "docs/wiki/20-reference/cli.md", "action": "modify", "purpose": "init section says the scaffolded STYLE.md is a questionnaire and names its topics" },
+    { "path": "docs/wiki/30-automation/skills.md", "action": "modify", "purpose": "/docs-processes section states the first run writes the inventory and no page" },
+    { "path": "tests/DocuMe.Core.Tests/Packaging/ReleaseWorkflowTests.cs", "action": "modify", "purpose": "AMENDED during verification: GitResult and Shell read stderr concurrently instead of after stdout — the sequential double read deadlocked the full suite once git 2.54 began writing init.defaultBranch advice to stderr (found hung 41h in a stale run and reproduced; stack: git blocked in write(2) under vadvise)" },
+    { "path": "tests/DocuMe.Core.Tests/Packaging/CompositeActionTests.cs", "action": "modify", "purpose": "AMENDED (engineer-directed 'fix all' sweep, 2026-08-16): same concurrent-stderr fix as ReleaseWorkflowTests" },
+    { "path": "tests/DocuMe.Core.Tests/Cli/DocumeCli.cs", "action": "modify", "purpose": "AMENDED (sweep): same concurrent-stderr fix" },
+    { "path": "tests/DocuMe.Core.Tests/Cli/CliDriftTests.cs", "action": "modify", "purpose": "AMENDED (sweep): same concurrent-stderr fix" },
+    { "path": "tests/DocuMe.Core.Tests/Git/GitRepositoryTests.cs", "action": "modify", "purpose": "AMENDED (sweep): same concurrent-stderr fix" },
+    { "path": "tests/DocuMe.Core.Tests/Templates/WorkflowShellTests.cs", "action": "modify", "purpose": "AMENDED (sweep): same concurrent-stderr fix" },
+    { "path": "src/DocuMe.Cli/Commands/InitCommand.cs", "action": "modify", "purpose": "AMENDED (sweep, M10 batch 3 completion): --agent option, out-of-range value refused before any write" },
+    { "path": "schema/docume.schema.json", "action": "modify", "purpose": "AMENDED (sweep, M10 batch 3): agent enum [claude, copilot]" },
+    { "path": "docs/wiki/30-automation/workflows.md", "action": "modify", "purpose": "AMENDED (sweep, M10 batch 5): the two rails and what each produces; lifecycle diagram if the page gains one" },
+    { "path": "docs/wiki/30-automation/README.md", "action": "modify", "purpose": "AMENDED (sweep, M10): automation index counts follow the railed template set" },
+    { "path": "docs/wiki/20-reference/configuration.md", "action": "modify", "purpose": "AMENDED (sweep, M10 batch 5): agent key documented if not already" },
+    { "path": "PLAN.md", "action": "modify", "purpose": "AMENDED (sweep, M10): claims updated to the railed template filenames" },
+    { "path": "CHANGELOG.md", "action": "modify", "purpose": "AMENDED (sweep, M10): workflow-template count matches the tree" },
+    { "path": "tests/DocuMe.Core.Tests/Build/ToolchainPinningTests.cs", "action": "modify", "purpose": "AMENDED (sweep, M10): FloatingByDesign entries follow the railed filenames" },
+    { "path": "tasks/todo.md", "action": "modify", "purpose": "AMENDED (sweep): M10 checkboxes updated to what is actually done" },
+    { "path": "docs/wiki/_meta/STYLE.md", "action": "modify", "purpose": "AMENDED (sweep, dogfood voice): Diagrams section so future generation runs draw" },
+    { "path": "tests/DocuMe.Core.Tests/Acceptance/ConsumerKnowledgeCoverageTests.cs", "action": "modify", "purpose": "AMENDED (sweep): ConsumerTopics gains Diagrams so the new dogfood section is scanned" },
+    { "path": "docs/wiki/10-concepts/approval-and-drift.md", "action": "modify", "purpose": "AMENDED (sweep): approval state diagram, render-verified" },
+    { "path": "src/DocuMe.Core/Config/AgentRail.cs", "action": "modify", "purpose": "AMENDED (sweep, M10): JsonStringEnumConverter with claude/copilot member names — scaffolded docume.json wrote \"agent\": 0 before" },
+    { "path": "tests/DocuMe.Core.Tests/Acceptance/WikiIndexPageTests.cs", "action": "modify", "purpose": "AMENDED (sweep, M10): ModelDrivenWorkflows counts both rails, not only claude" },
+    { "path": "tests/DocuMe.Core.Tests/Acceptance/PlanWorkflowTraceTests.cs", "action": "modify", "purpose": "AMENDED (sweep, M10): trace consts point at the claude template spellings" },
+    { "path": "tests/DocuMe.Core.Tests/Acceptance/PlanSemanticsTraceTests.cs", "action": "modify", "purpose": "AMENDED (sweep, M10): trace sites point at docs-feedback.claude.yml" },
+    { "path": "tests/DocuMe.Core.Tests/Templates/WorkflowsReferencePageTests.cs", "action": "modify", "purpose": "AMENDED (sweep, M10): Count() number words extended to eight" },
+    { "path": "tests/DocuMe.Core.Tests/Packaging/ChangelogTests.cs", "action": "modify", "purpose": "AMENDED (sweep, M10): Cardinal() learns eight" },
+    { "path": "tests/DocuMe.Core.Tests/Packaging/PackageFeedTests.cs", "action": "modify", "purpose": "AMENDED (sweep, M10): feed-read count six to eight" }
+  ],
+  "public_contracts": [
+    { "kind": "scaffold-content", "signature": "_meta/STYLE.md scaffolded body (seven bullets)", "change": "modify", "surface": "external" }
+  ],
+  "test_manifest": [
+    "ReadmeCliContractTests.The_style_guide_topics_the_README_names_are_the_ones_init_scaffolds: derives topics and count from the scaffold, so it enforces the README paragraph edit",
+    "ConsumerKnowledgeCoverageTests.The_scaffolded_style_guide_asks_the_consumer_and_answers_nothing: invitation sentence + Audience/Tone/Structure coverage",
+    "ConsumerKnowledgeCoverageTests.No_shipped_file_reproduces_this_repos_own_answers: new scaffold prose must not lift phrases from the dogfood STYLE.md",
+    "SkillsReferencePageTests / SkillContractTests: skills.md and docs-loop SKILL.md edits stay inside pinned tokens",
+    "Acceptance sweep: docs/wiki converts cleanly; the lifecycle mermaid edit render-checked with templates/tools/render-mermaid.mjs",
+    "Suite baseline: run against the tree as found on feat/agent-rail-selection (M10 WIP); acceptance bar is no NEW failures"
+  ],
+  "open_decisions": [
+    "interactive `docume init --interview` (follow-up, not built)",
+    "dogfood STYLE.md voice change + /docs-refresh regeneration (follow-up, engineer-owned)",
+    "/docs-processes first run on this repo (queued behind the M10 gate)"
+  ]
+}
