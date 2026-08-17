@@ -255,6 +255,165 @@ public sealed class PublishExecutorTests : IDisposable
     }
 
     /// <summary>
+    /// Rule §9.1 in daylight: a live version ahead of the one state recorded means somebody edited the
+    /// page in Confluence, and this run is about to overwrite that edit. Overwriting is the design;
+    /// doing it without a word was the gap. The warning names both versions so the reader can open the
+    /// page history and judge what is being lost.
+    /// </summary>
+    [Fact]
+    public async Task Warns_when_the_page_was_hand_edited_since_the_last_publish()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+
+        Write("README.md", "# Home\n\nRewritten, with no image at all.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 7);
+        StubUpdate(server);
+        StubNoInlineComments(server);
+
+        var second = await ExecuteAsync(server, first.State);
+
+        second.Succeeded.ShouldBeTrue();
+        second.UpdatedCount.ShouldBe(1);
+
+        var warning = second.Warnings.ShouldHaveSingleItem();
+        warning.ShouldStartWith("README.md");
+        warning.ShouldContain("version 7");
+        warning.ShouldContain("wrote version 1");
+        warning.ShouldContain("overwrites");
+    }
+
+    /// <summary>
+    /// The warning's other half: a page whose live version is exactly the one the last publish wrote has
+    /// no hand edits to lose, and a republish that cried wolf on every page would train readers to
+    /// ignore the one warning that matters.
+    /// </summary>
+    [Fact]
+    public async Task Says_nothing_about_hand_edits_when_confluence_holds_the_version_this_tool_wrote()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+
+        Write("README.md", "# Home\n\nRewritten, with no image at all.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 1);
+        StubUpdate(server);
+        StubNoInlineComments(server);
+
+        var second = await ExecuteAsync(server, first.State);
+
+        second.Succeeded.ShouldBeTrue();
+        second.UpdatedCount.ShouldBe(1);
+        second.Warnings.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Every body update stamps its provenance into the version message: which tool wrote the version,
+    /// from which commit, of which content. That makes the page history legible next to hand edits — a
+    /// version without the stamp was not written by DocuMe — and it costs one field on a request that
+    /// is being sent anyway.
+    /// </summary>
+    [Fact]
+    public async Task Stamps_the_repo_sha_and_content_hash_into_the_version_message_of_a_body_update()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        var pageId = PageId(first, "README.md");
+
+        Write("README.md", "# Home\n\nRewritten, with no image at all.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 1);
+        StubUpdate(server);
+        StubNoInlineComments(server);
+
+        var second = await ExecuteAsync(server, first.State, repoSha: "c0ffee");
+
+        second.Succeeded.ShouldBeTrue();
+
+        var payload = Payload(Requests(server, "PUT", $"/wiki/api/v2/pages/{pageId}").Single());
+        var message = payload.GetProperty("version").GetProperty("message").GetString();
+
+        message.ShouldBe(
+            $"docume publish — repo c0ffee, content {second.State.Pages["README.md"].ContentHash}");
+    }
+
+    /// <summary>
+    /// A publish outside a git checkout has no sha to name, and the stamp says what it knows rather
+    /// than nothing at all: the tool and the content hash still identify the write.
+    /// </summary>
+    [Fact]
+    public async Task Stamps_the_content_hash_alone_when_no_repo_sha_was_passed()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+        var pageId = PageId(first, "README.md");
+
+        Write("README.md", "# Home\n\nRewritten, with no image at all.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 1);
+        StubUpdate(server);
+        StubNoInlineComments(server);
+
+        var second = await ExecuteAsync(server, first.State);
+
+        second.Succeeded.ShouldBeTrue();
+
+        var payload = Payload(Requests(server, "PUT", $"/wiki/api/v2/pages/{pageId}").Single());
+        var message = payload.GetProperty("version").GetProperty("message").GetString();
+
+        message.ShouldBe($"docume publish — content {second.State.Pages["README.md"].ContentHash}");
+    }
+
+    /// <summary>
+    /// §5.2's draft contract at the write path: a draft page sends no request at all, and a published
+    /// child filed under a never-published draft parent fails with a message that names the draft
+    /// rather than blaming a parent failure that never happened.
+    /// </summary>
+    [Fact]
+    public async Task A_draft_sends_nothing_and_a_child_under_a_never_published_draft_says_why()
+    {
+        Write("b/README.md", "---\npublish: false\n---\n\n# Unfinished Section\n\nStill being written.\n");
+        Write("b/child.md", "# Child Of A Draft\n\nReady before its parent.\n");
+
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        StubNoChildren(server);
+
+        var outcome = await ExecuteAsync(server, new DocumeState());
+
+        var failure = outcome.Failures.ShouldHaveSingleItem();
+        failure.Path.ShouldBe("b/child.md");
+        failure.Message.ShouldContain("is a draft (publish: false)");
+        failure.Message.ShouldNotContain("Fix the parent's failure");
+
+        var createdTitles = Requests(server, "POST", "/wiki/api/v2/pages")
+            .Select(request => Payload(request).GetProperty("title").GetString())
+            .ToArray();
+
+        createdTitles.ShouldNotContain("Unfinished Section");
+        createdTitles.ShouldContain("Home");
+    }
+
+    /// <summary>
     /// Rule §9.1's other half, asserted on the wire at the call site that would carry the breach: the
     /// version read asks Confluence for a version, and does not bring the page body back with it.
     /// </summary>
@@ -363,7 +522,7 @@ public sealed class PublishExecutorTests : IDisposable
 
         Write("README.md", "# Home\n\nRewritten after approval.\n");
         server.ResetLogEntries();
-        StubRead(server, version: 3);
+        StubRead(server, version: 1);
         StubUpdate(server);
         StubLabelRemoval(server);
         StubNoInlineComments(server);
@@ -996,7 +1155,7 @@ public sealed class PublishExecutorTests : IDisposable
 
         Write("README.md", "# Home\n\nRewritten, so this run writes something.\n");
         server.ResetLogEntries();
-        StubRead(server, version: 2);
+        StubRead(server, version: 1);
         StubUpdate(server);
         StubMove(server, tree);
         StubNoInlineComments(server);
@@ -1180,7 +1339,7 @@ public sealed class PublishExecutorTests : IDisposable
 
         Write("README.md", "# Home\n\nRewritten, so this run writes something.\n");
         server.ResetLogEntries();
-        StubRead(server, version: 2);
+        StubRead(server, version: 1);
         StubUpdate(server);
 
         // A move endpoint that answers 200 and rearranges nothing: whatever the real reason would be, this

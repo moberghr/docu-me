@@ -252,6 +252,27 @@ public sealed class ConversionAcceptanceTests : IDisposable
         report.MeetsAcceptanceBar.ShouldBeTrue();
     }
 
+    /// <summary>
+    /// §5.2's draft contract holds for the acceptance run too: the whole point of committing a
+    /// half-written page is that its state cannot fail a run, and the bar measures the corpus a
+    /// reader will actually see. Without the skip, this repo's own dogfood suite would go red the
+    /// first time a draft landed in its wiki.
+    /// </summary>
+    [Fact]
+    public void RunTree_skips_a_draft_so_its_half_written_body_cannot_miss_the_bar()
+    {
+        Write("README.md", "# Home\n\nA finished page.\n");
+        Write(
+            "unfinished.md",
+            "---\npublish: false\n---\n\n# Unfinished\n\n```plantuml\n@startuml\n@enduml\n```\n");
+
+        var report = ConversionAcceptance.RunTree(WikiTree.Load(_dir));
+
+        report.PageCount.ShouldBe(1);
+        report.FailedPageCount.ShouldBe(0, FailureSummary(report));
+        report.MeetsAcceptanceBar.ShouldBeTrue();
+    }
+
     private static AcceptanceReport RunGolden() =>
         ConversionAcceptance.RunDirectory(GoldenCorpus.Directory, GoldenCorpus.Resolvers);
 

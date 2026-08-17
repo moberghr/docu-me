@@ -220,6 +220,7 @@ public sealed class PublishExecutor
         var excludedByScope = report.ExcludedByScope
             .Select(page => page.Path)
             .ToHashSet(StringComparer.Ordinal);
+        var drafts = report.Drafts.ToHashSet(StringComparer.Ordinal);
 
         var writes = report.Pages.Count(page => page.Action != PagePublishAction.Skip);
         var spaceId = string.Empty;
@@ -283,15 +284,10 @@ public sealed class PublishExecutor
 
             if (!TryResolveParentId(planned, pageIds, config.Confluence.RootPageId, out var parentId))
             {
-                var orphaned = excludedByScope.Contains(planned.ParentPath!)
-                    ? $"its parent page '{planned.ParentPath}' has never been published and this run's "
-                        + "scope excludes it, so there is nothing to file this page under. Widen the scope "
-                        + "to include the parent, or publish the whole tree once."
-                    : $"its parent page '{planned.ParentPath}' was not published in this run, so filing "
-                        + "this page would put it somewhere the tree does not say. Fix the parent's "
-                        + "failure and re-run.";
+                failures.Add(
+                    new PagePublishFailure(
+                        planned.Path, MissingParentMessage(planned.ParentPath!, drafts, excludedByScope)));
 
-                failures.Add(new PagePublishFailure(planned.Path, orphaned));
                 continue;
             }
 
@@ -446,6 +442,11 @@ public sealed class PublishExecutor
 
         var creating = plan.Action == PagePublishAction.Create || recreate;
 
+        if (!creating && plan.WritesBody)
+        {
+            WarnOnHandEdits(planned, current, remoteVersion, warnings);
+        }
+
         // §6.2 step 6, and this early on purpose: a page that is about to be held back must not render a
         // diagram or upload a byte first. Only a body rewrite can strand a comment's anchor — a create has
         // no comments to strand, and a move or an attachment-only publish leaves the text alone.
@@ -505,7 +506,12 @@ public sealed class PublishExecutor
             var updated = await _client
                 .UpdatePageAsync(
                     new ConfluencePageRevision(
-                        pageId!, planned.Title, RequireBody(planned, body), remoteVersion, parentId),
+                        pageId!,
+                        planned.Title,
+                        RequireBody(planned, body),
+                        remoteVersion,
+                        parentId,
+                        ProvenanceMessage(options.RepoSha, plan.ContentHash)),
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -986,6 +992,84 @@ public sealed class PublishExecutor
         parentId = id;
 
         return resolved;
+    }
+
+    /// <summary>
+    /// Why a page whose parent id would not resolve cannot publish. Three reasons a parent can be
+    /// missing, and only one of them is a failure to fix: a draft parent (§5.2) was held back on
+    /// purpose, a scoped-out parent was excluded on purpose, and anything else is a parent whose own
+    /// publish went wrong. Blaming a deliberate draft for "failing" would send the reader hunting for
+    /// an error that never happened.
+    /// </summary>
+    private static string MissingParentMessage(
+        string parentPath,
+        HashSet<string> drafts,
+        HashSet<string> excludedByScope)
+    {
+        if (drafts.Contains(parentPath))
+        {
+            return $"its parent page '{parentPath}' is a draft (publish: false) that has never been "
+                + "published, so there is nothing to file this page under. Publish the parent, or move "
+                + "this page out from under it.";
+        }
+
+        if (excludedByScope.Contains(parentPath))
+        {
+            return $"its parent page '{parentPath}' has never been published and this run's scope "
+                + "excludes it, so there is nothing to file this page under. Widen the scope to include "
+                + "the parent, or publish the whole tree once.";
+        }
+
+        return $"its parent page '{parentPath}' was not published in this run, so filing this page "
+            + "would put it somewhere the tree does not say. Fix the parent's failure and re-run.";
+    }
+
+    /// <summary>
+    /// The version message every body update carries: which tool wrote the version, from which commit,
+    /// of which content — the page-side half of <see cref="WarnOnHandEdits"/>, since a version without
+    /// this stamp in the history was not written by DocuMe.
+    /// </summary>
+    /// <remarks>
+    /// The sha is the run's, not the page's: <see cref="PublishExecutionOptions.RepoSha"/> is optional
+    /// (a publish outside a git checkout has none), and the stamp says what it knows. The content hash
+    /// is §5.3's banner-excluded <see cref="ContentHash"/>, so the history entry names the same value
+    /// state records — recoverable from Confluence alone if state.json is ever lost. The model notes an
+    /// unverified community report of v2 dropping <c>version.message</c>; the stamp is provenance, not
+    /// a mechanism anything depends on, so sending it costs nothing either way.
+    /// </remarks>
+    private static string ProvenanceMessage(string? repoSha, string contentHash) =>
+        repoSha is { Length: > 0 } sha
+            ? $"docume publish — repo {sha}, content {contentHash}"
+            : $"docume publish — content {contentHash}";
+
+    /// <summary>
+    /// Rule §9.1 said out loud: a live version ahead of the one the last publish wrote means somebody
+    /// edited the page in Confluence, and the body write that follows discards that edit.
+    /// </summary>
+    /// <remarks>
+    /// A warning and never a refusal, on purpose. Overwriting hand edits is the design — the repo is the
+    /// source of truth, and preserving a browser edit would need the page body read that rule §9.1
+    /// forbids. What was missing is the word: the versions are already in hand (the optimistic-lock read
+    /// above), so naming them costs no request, and the page history holds the diff for whoever wants
+    /// to bring the edit back through a pull request. A page state without a recorded version — an
+    /// adopted wiki before its first publish records one — proves nothing either way, so it stays quiet.
+    /// </remarks>
+    private static void WarnOnHandEdits(
+        PlannedPage planned,
+        PageState? current,
+        int remoteVersion,
+        List<string> warnings)
+    {
+        if (current is not { PublishedVersion: > 0 } recorded || remoteVersion <= recorded.PublishedVersion)
+        {
+            return;
+        }
+
+        warnings.Add(
+            $"{planned.Path} was edited in Confluence after the last publish: the page is at version "
+            + $"{remoteVersion} and the last publish wrote version {recorded.PublishedVersion}. The repo "
+            + "is the source of truth, so this run overwrites those edits — the page history holds them "
+            + "if something there is worth bringing back through a pull request.");
     }
 
     /// <summary>

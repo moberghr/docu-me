@@ -191,6 +191,7 @@ sources:                # code paths this page derives from → drives drift det
 # optional overrides:
 title: Loans Domain     # default: first H1
 pageId: "123456"        # set by publish; may be pre-seeded for adopted pages
+publish: false          # draft: held back by publish (reported, never written), ignored by drift
 ---
 ```
 
@@ -291,6 +292,10 @@ Default baseline: `state.baselineSha`; head: `HEAD`. `git diff --name-only` → 
 Exit code 0 always (advisory), unless `--fail-on-drift` for teams that want blocking.
 
 Two glob spellings an author will reasonably write are normalized rather than silently matching nothing: a **trailing slash** gets `**` appended (`src/Loans/` means `src/Loans/**`), and a **leading slash** is stripped (`/src/Loans/**` is repo-relative like every other pattern). Backslashes become forward slashes. A rename shows up as both paths and both count — deleting a documented file is drift too.
+
+An optional **`<wiki.root>/_meta/drift-ignore`** names changes that never mean the docs moved: one glob per line (same dialect and normalizations as `sources`), `#` at the start of a line is a comment, and a pattern may carry a trailing ` # reason`. A changed file any pattern matches is held out of the matching for every page and reported as exempt — in the table, the JSON (`exempted`) and the PR comment alike, because a verdict whose inputs were narrowed must say so. Exempt files count toward neither the exit code nor `--mark`. A malformed line fails the run with its line number: an exemption that silently never fires reads as protection that does not exist.
+
+An optional **`<wiki.root>/_meta/drift-ignore-revs`** names commits that never mean the docs moved, for the sweep that touches the very files the docs describe: one full 40-character commit sha per line, comments behind `#` (leading or trailing), case-insensitive — git's `blame.ignoreRevsFile` format as git itself reads it. When a listed commit is in the compared range the diff is attributed per commit, and a file counts as changed only when a commit that is not listed touched it: a file touched by both a listed and an unlisted commit still drifts, and a merge commit carries no file list under this attribution (`git log --name-only` semantics), so listing one changes only the disclosed count. A file that names nothing in the range changes nothing — the run answers from the ordinary diff, exactly as if the file were absent, because the two algorithms differ at the margins and only an actual exemption, disclosed, is licence to switch. The held-out commits are disclosed in every format (the table's `IGNORED COMMITS` line, the JSON's `ignoredCommitCount`, the PR comment's provenance), the path exemptions above then apply to what is left, and a malformed line fails the run with its line number for the same reason a malformed glob does.
 
 ### 6.5 `docume dashboard`
 Regenerates the "Documentation Status" Confluence page from state + live labels: coverage stats (approved / needs-review / stale counts, % approved), table per page (status, approver, date, staleness, open feedback count, link), legend for ⚠️ markers. Machine-owned page.
