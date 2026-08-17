@@ -37,11 +37,18 @@ public static class DriftPlanner
     /// Every page in the tree. Drafts (<c>publish: false</c>, §5.2) are invisible to every number in
     /// the report; of the rest, pages declaring no <c>sources</c> are counted and skipped.
     /// </param>
+    /// <param name="exemptions">
+    /// The parsed <c>_meta/drift-ignore</c>, or null when the wiki has none. An exempted file is
+    /// invisible to every page's globs but stays in <see cref="DriftReport.ChangedFileCount"/>: the
+    /// count keeps reporting the diff as git answered it, and <see cref="DriftReport.Exempted"/>
+    /// accounts for the subset held out.
+    /// </param>
     public static DriftReport Plan(
         string baseline,
         string head,
         IReadOnlyCollection<string> changedFiles,
-        IReadOnlyCollection<WikiPage> pages)
+        IReadOnlyCollection<WikiPage> pages,
+        DriftExemptions? exemptions = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(baseline);
         ArgumentException.ThrowIfNullOrWhiteSpace(head);
@@ -49,6 +56,7 @@ public static class DriftPlanner
         ArgumentNullException.ThrowIfNull(pages);
 
         var files = Normalize(changedFiles);
+        var (matchable, exempted) = ApplyExemptions(files, exemptions);
 
         // Drafts drop out on the first line (§5.2): a draft is not published, so nothing a reader
         // sees can be stale. They are held out of the counts too, not just the matching, because the
@@ -56,7 +64,7 @@ public static class DriftPlanner
         // draft with no sources is not a page missing them.
         var visible = pages.Where(page => page.Parsed.Frontmatter.Publish).ToList();
         var withSources = visible.Where(page => page.Parsed.Frontmatter.Sources.Count > 0).ToList();
-        var matchesByPattern = MatchesByPattern(withSources, files);
+        var matchesByPattern = MatchesByPattern(withSources, matchable);
 
         var affected = new List<DriftedPage>();
 
@@ -84,7 +92,43 @@ public static class DriftPlanner
             PageCount = visible.Count,
             PagesWithSourcesCount = withSources.Count,
             Pages = affected,
+            Exempted = exempted,
         };
+    }
+
+    /// <summary>
+    /// Splits the diff into the files pages may match and the files <c>drift-ignore</c> holds out,
+    /// each claimed by its first matching pattern as <see cref="DriftExemptions.Match"/> promises.
+    /// The exemption comes off before any page looks, so a page can never drift on an exempted
+    /// file, whichever of its globs would have claimed it. The exempted side is ordinal by path for
+    /// the same reason the affected pages are: the list ends up in a PR comment a bot rewrites in
+    /// place, so it has to be a function of the diff and nothing else.
+    /// </summary>
+    private static (List<string> Matchable, List<ExemptedChange> Exempted) ApplyExemptions(
+        List<string> files,
+        DriftExemptions? exemptions)
+    {
+        if (exemptions is null)
+        {
+            return (files, []);
+        }
+
+        var matchable = new List<string>();
+        var exempted = new List<ExemptedChange>();
+
+        foreach (var file in files)
+        {
+            if (exemptions.Match(file) is { } change)
+            {
+                exempted.Add(change);
+            }
+            else
+            {
+                matchable.Add(file);
+            }
+        }
+
+        return (matchable, [.. exempted.OrderBy(change => change.Path, StringComparer.Ordinal)]);
     }
 
     /// <summary>
@@ -112,8 +156,7 @@ public static class DriftPlanner
 
         foreach (var pattern in patterns)
         {
-            var matcher = new Matcher(StringComparison.Ordinal);
-            matcher.AddInclude(NormalizePattern(pattern));
+            var matcher = BuildMatcher(pattern);
 
             // Ordinal-ordered rather than trusting Matcher's traversal order, which is not part of its
             // contract: this list ends up in a PR comment a bot rewrites in place, so it has to be a
@@ -132,6 +175,19 @@ public static class DriftPlanner
     }
 
     /// <summary>
+    /// One matcher, built the only way drift builds one for a repo-relative glob.
+    /// <see cref="DriftExemptions"/> comes through here too: an exemption exists to cancel a
+    /// <c>sources</c> match, and a second construction would eventually disagree with this one
+    /// about which files that is.
+    /// </summary>
+    internal static Matcher BuildMatcher(string pattern)
+    {
+        var matcher = new Matcher(StringComparison.Ordinal);
+        matcher.AddInclude(NormalizePattern(pattern));
+        return matcher;
+    }
+
+    /// <summary>
     /// The two glob spellings <see cref="Matcher"/> would silently match nothing for, straightened out.
     /// </summary>
     /// <remarks>
@@ -141,9 +197,10 @@ public static class DriftPlanner
     /// that can never fire is the one failure mode of an advisory check that gets believed: nobody
     /// investigates a green run. Nothing else is rewritten — a pattern with no wildcard names one file,
     /// per glob semantics, and guessing otherwise would make <c>sources</c> mean something different
-    /// from <c>wiki.exclude</c>.
+    /// from <c>wiki.exclude</c>. Internal rather than private because <see cref="DriftExemptions.Parse"/>
+    /// refuses, naming the line, any pattern this leaves empty.
     /// </remarks>
-    private static string NormalizePattern(string pattern)
+    internal static string NormalizePattern(string pattern)
     {
         var trimmed = pattern.Trim().Replace('\\', '/').TrimStart('/');
 

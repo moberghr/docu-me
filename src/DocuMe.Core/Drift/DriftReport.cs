@@ -29,7 +29,11 @@ public sealed record DriftReport
     /// <summary>The revision the diff ended at — <c>--head</c>, else <c>HEAD</c>.</summary>
     public required string Head { get; init; }
 
-    /// <summary>How many changed files the diff answered with, before any glob was applied.</summary>
+    /// <summary>
+    /// How many changed files the diff answered with, before any glob was applied: a page's
+    /// <c>sources</c> or a <c>drift-ignore</c> exemption alike. Files in <see cref="Exempted"/>
+    /// are counted here too.
+    /// </summary>
     public required int ChangedFileCount { get; init; }
 
     /// <summary>
@@ -46,6 +50,31 @@ public sealed record DriftReport
 
     /// <summary>The affected pages, ordered by wiki-relative path.</summary>
     public IReadOnlyList<DriftedPage> Pages { get; init; } = [];
+
+    /// <summary>
+    /// Changed files a <c>_meta/drift-ignore</c> pattern held out of the matching, ordinal by path.
+    /// A subset of the files <see cref="ChangedFileCount"/> counts: the count keeps reporting the
+    /// diff as git answered it, and this list accounts for the part no page was allowed to match.
+    /// Nothing here contributes to <see cref="Pages"/> or <see cref="HasDrift"/>, which is the
+    /// point of an exemption; the files are still carried, per pattern and reason, because a report
+    /// that dropped them silently would leave a reviewer unable to tell an exempted change from an
+    /// unmatched one.
+    /// </summary>
+    public IReadOnlyList<ExemptedChange> Exempted { get; init; } = [];
+
+    /// <summary>
+    /// How many commits <c>_meta/drift-ignore-revs</c> held out of the range. Zero means the
+    /// answer came from the ordinary flat diff: when the file is absent, and equally when it names
+    /// nothing in this range, the per-commit walk's answer is discarded rather than trusted, so a
+    /// long-lived list of stale sweep shas cannot silently change which algorithm produced the
+    /// verdict. Nonzero means attribution ran, and this count is the disclosure, carried for the
+    /// reason <see cref="Exempted"/> is: a verdict whose inputs were narrowed must say so. A count
+    /// rather than the shas, which sit in the file itself. One caveat travels with the number:
+    /// attribution is per commit as <c>git log --name-only</c> reports it, and a merge commit
+    /// lists no files there, so ignoring a merge raises this count without changing what any page
+    /// matched.
+    /// </summary>
+    public int IgnoredCommitCount { get; init; }
 
     /// <summary>Affected pages.</summary>
     public int AffectedCount => Pages.Count;
