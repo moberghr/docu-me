@@ -1,4 +1,5 @@
 using System.CommandLine;
+using DocuMe.Core.Config;
 using DocuMe.Core.Scaffolding;
 using Spectre.Console;
 
@@ -37,6 +38,12 @@ internal static class InitCommand
             Description = "Path to a JSON '<page path>': '<page id>' map from whatever published the "
                 + "wiki before, to seed pageIds from. Requires --adopt.",
         };
+        var agentOption = new Option<string>("--agent")
+        {
+            Description = "Which coding agent the model-running workflows are written for: claude or "
+                + "copilot. Recorded in docume.json; omitted, a recorded value wins and a fresh repo "
+                + "gets claude.",
+        };
 
         var command = new Command(
             "init",
@@ -46,6 +53,7 @@ internal static class InitCommand
             baseUrlOption,
             adoptOption,
             legacyMapOption,
+            agentOption,
         };
 
         command.SetAction(parseResult =>
@@ -54,6 +62,7 @@ internal static class InitCommand
             var baseUrl = parseResult.GetValue(baseUrlOption);
             var adopt = parseResult.GetValue(adoptOption);
             var legacyMap = parseResult.GetValue(legacyMapOption);
+            var agentValue = parseResult.GetValue(agentOption);
 
             if (!adopt && legacyMap is { Length: > 0 })
             {
@@ -66,12 +75,31 @@ internal static class InitCommand
                 return 1;
             }
 
+            AgentRail? agent = null;
+            if (agentValue is { Length: > 0 })
+            {
+                // Refused before any write, like --legacy-map above: the value selects an embedded
+                // template by name, and a guessed rail would scaffold workflows for an agent the
+                // repo does not run.
+                if (!Enum.TryParse(agentValue, ignoreCase: true, out AgentRail parsed))
+                {
+                    AnsiConsole.MarkupLine(
+                        $"[red]--agent {agentValue.EscapeMarkup()} is not a rail this build knows.[/] "
+                        + "Use claude or copilot.");
+
+                    return 1;
+                }
+
+                agent = parsed;
+            }
+
             var results = ProjectScaffolder.Scaffold(
                 Directory.GetCurrentDirectory(),
                 space,
                 baseUrl,
                 adopt,
-                legacyMap);
+                legacyMap,
+                agent);
 
             Render(results);
 

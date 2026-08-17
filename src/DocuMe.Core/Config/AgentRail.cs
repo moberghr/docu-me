@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace DocuMe.Core.Config;
 
 /// <summary>
@@ -16,6 +18,7 @@ namespace DocuMe.Core.Config;
 /// <c>docs-refresh.yml</c> is silent: nothing fails, the nightly job simply never exists.
 /// </para>
 /// </remarks>
+[JsonConverter(typeof(JsonStringEnumConverter<AgentRail>))]
 public enum AgentRail
 {
     /// <summary>
@@ -24,6 +27,7 @@ public enum AgentRail
     /// scaffolded before the Copilot rail existed received, so an existing consumer re-running
     /// <c>init</c> keeps what it has.
     /// </summary>
+    [JsonStringEnumMemberName("claude")]
     Claude = 0,
 
     /// <summary>
@@ -31,5 +35,6 @@ public enum AgentRail
     /// finding the skill through a copy under a directory it scans. Chosen by teams who hold Copilot
     /// seats and would rather not own a second model credential.
     /// </summary>
+    [JsonStringEnumMemberName("copilot")]
     Copilot = 1,
 }

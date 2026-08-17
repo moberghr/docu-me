@@ -28,6 +28,7 @@ environment and from nowhere else.
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/moberghr/docu-me/main/schema/docume.schema.json",
+  "agent": "claude",
   "confluence": {
     "baseUrl": "https://example.atlassian.net/wiki",
     "spaceKey": "DOCS",
@@ -65,6 +66,11 @@ the real default for each is empty:
 | `wiki.extraPages` | `[]` | one re-included file |
 
 Every other field does default to the value shown.
+
+**`agent`** is read by `docume init` and by nothing else: it records which agent the two model-running
+workflows were scaffolded for (`claude` or `copilot`), so a re-run without `--agent` keeps the repo's
+choice. Absent also means `claude`, which is the rail every repo scaffolded before the copilot rail
+existed is on.
 
 Two are worth a second look:
 

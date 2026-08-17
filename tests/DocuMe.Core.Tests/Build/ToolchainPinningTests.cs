@@ -96,9 +96,13 @@ public sealed partial class ToolchainPinningTests
     /// </remarks>
     private static readonly Dictionary<string, string> FloatingByDesign = new(StringComparer.Ordinal)
     {
-        ["templates/workflows/docs-feedback.yml"] =
+        ["templates/workflows/docs-feedback.claude.yml"] =
             "shipped template; the consumer picks the pin, and the step's own comment says so",
-        ["templates/workflows/docs-refresh.yml"] =
+        ["templates/workflows/docs-refresh.claude.yml"] =
+            "shipped template; the consumer picks the pin, and the step's own comment says so",
+        ["templates/workflows/docs-feedback.copilot.yml"] =
+            "shipped template; the consumer picks the pin, and the step's own comment says so",
+        ["templates/workflows/docs-refresh.copilot.yml"] =
             "shipped template; the consumer picks the pin, and the step's own comment says so",
     };
 

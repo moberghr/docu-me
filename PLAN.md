@@ -115,8 +115,8 @@ docu-me/
 │   └── action.yml
 ├── templates/                        # embedded into DocuMe.Core, written out by `docume init`
 │   ├── tools/render-mermaid.mjs      # beautiful-mermaid wrapper
-│   └── workflows/{docs-drift.yml,docs-drift-pr.yml,docs-publish.yml,
-│                 docs-sync.yml,docs-refresh.yml,docs-feedback.yml}
+│   └── workflows/{docs-drift,docs-drift-pr,docs-publish,docs-sync,
+│                 docs-refresh.{claude,copilot},docs-feedback.{claude,copilot}}.yml
 ├── schema/docume.schema.json         # what every scaffolded docume.json points `$schema` at
 ├── docs/wiki/                        # DocuMe's own wiki — dogfood the tool on itself
 ├── .github/workflows/                # build, test, validate both plugin manifests, release
@@ -156,6 +156,7 @@ Three things the tree above deliberately does *not* say, each of which an earlie
 ```jsonc
 {
   "$schema": "https://raw.githubusercontent.com/moberghr/docu-me/main/schema/docume.schema.json",
+  "agent": "claude",                    // model-workflow rail; absent = claude
   "confluence": {
     "baseUrl": "https://kvika.atlassian.net/wiki",
     "spaceKey": "AUR",
@@ -373,9 +374,10 @@ The highest-risk component. Requirements (derived from the actual AurServices wi
 
 ## 11. Claude Code plugin
 
-- `plugin/.claude-plugin/plugin.json` — name `docume`. It **declares no `skills` field on purpose**: Claude Code scans `skills/`, so listing them in the manifest would be a second copy of the same truth that can drift. The three skills are the three directories. Distributed through the existing Moberg marketplace (same as MTK), with this repo's own `.claude-plugin/marketplace.json` as the git-subdir source.
+- `plugin/.claude-plugin/plugin.json` — name `docume`. It **declares no `skills` field on purpose**: Claude Code scans `skills/`, so listing them in the manifest would be a second copy of the same truth that can drift. The four skills are the four directories. Distributed through the existing Moberg marketplace (same as MTK), with this repo's own `.claude-plugin/marketplace.json` as the git-subdir source.
 - **`docs-loop`** — the generic generation engine: (a) generic process — inventory, section taxonomy, verification rules ("every claim needs a code citation"), ⚠️ marker conventions, one-unit-per-run loop discipline, PROGRESS/GAPS bookkeeping — and (b) repo-specifics, which live in the consumer's `_meta/STYLE.md` + `docume.json` (domain list, tone, audience, structure). The skill reads both at start. *(Written generically rather than extracted from the AurServices skill: those files are deliberately not on the build machine — see §7's revision note.)* It opens **`docs/loop-<date>`**, extending that branch and its PR when it already exists rather than opening a second one, and takes `baselineSha` from the oldest generation sha still listed in `PROGRESS.md`, not from `HEAD`.
-- **`docs-refresh`**, **`docs-feedback`** — as specified in §9/§10. All three end with: run `docume status --json` and include it in the PR body.
+- **`docs-processes`** — the same engine pointed at the business/process tier: inventory in `_meta/PROGRESS-BUSINESS.md`, plain-language register, citations as `<!-- cites: -->` comments (dropped by the converter, so outside `contentHash`), no ⚠️ markers, `_meta/BUSINESS.md` as the consumer-owned second ground truth. Spec: `.claude/references/business-tier.md`. Opens **`docs/processes-<date>`**; `baselineSha` is the oldest sha across both progress files.
+- **`docs-refresh`**, **`docs-feedback`** — as specified in §9/§10. All four end with: run `docume status --json` and include it in the PR body.
 - Skills invoke the CLI via Bash (`docume …`); they never call the Confluence API themselves.
 - Headless CI usage: `claude -p "/docs-refresh" --permission-mode acceptEdits` in a workflow with `ANTHROPIC_API_KEY`; PR creation via `gh`.
 
@@ -419,10 +421,11 @@ Run once in the new repo: **`/mtk:setup-bootstrap`** (tech stack: dotnet). Then 
 
 | **M7a** | `publication-targets.md` | The target seam only: target discriminator in config + target-conditional validation, capability declaration + loud refusals, interfaces at the five reader/executor boundaries. No second implementation | Behaviour-preserving: every Confluence-mode test stays green **without being edited** | S |
 | **M8** | `publication-targets.md` | GitHub-native target: PR-review approval against `contentHash`, PR + issue comments into the §5.4 inbox, `_meta/STATUS.md`, repo-mode workflow templates, S8/S9 answered | A repo with no Confluence credentials runs generate → approve → feedback → stale → refresh end to end | M |
+| **M9** | `business-tier.md` | Business & process tier: `docs-processes` skill (process inventory, business register, citations as HTML comments, `_meta/BUSINESS.md` seed facts), register amendments to the three existing skills. No CLI, converter, schema or state change | First business subtree live on a real consumer: inventory PR, then overview + one process page published and human-reviewed; the benchmark page covers every rule its hand-written counterpart states, each claim code-cited | M |
 
 **M7a lands before M7** (Mirko, 2026-08-05). "Refactor first" is usually the wrong call, so the reason is worth stating: M7 writes `--adopt` against a real consumer, and code written against a concrete `ConfluenceClient` is code M8 has to revisit. Only the seam comes early — an interface with one caller is still a guess about the second, so M7a adds no implementation.
 
-Dependencies: M1→M2→M3→M4/M5 (4 and 5 parallel) →M6→M7a→M7→M8. First externally visible win: end of M2 — *(corrected iter151: this used to read "(the Aur wiki is finally live in Confluence)", which the M2 row above had already contradicted since 2026-07-25. The Aur bulk publish moved to M7, so M2's visible win is DocuMe's own docs plus the golden corpus in the sandbox space, and the Aur wiki goes live at M7 with §15's first item.)*
+Dependencies: M1→M2→M3→M4/M5 (4 and 5 parallel) →M6→M7a→M7→M8. M9 needs only M6 and runs beside the M7a→M8 chain; its acceptance needs a live consumer space, which Inventhor already provides. First externally visible win: end of M2 — *(corrected iter151: this used to read "(the Aur wiki is finally live in Confluence)", which the M2 row above had already contradicted since 2026-07-25. The Aur bulk publish moved to M7, so M2's visible win is DocuMe's own docs plus the golden corpus in the sandbox space, and the Aur wiki goes live at M7 with §15's first item.)*
 
 ## 15. Definition of done (v1.0)
 

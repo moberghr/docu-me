@@ -945,11 +945,14 @@ public sealed class WorkflowShellTests : IDisposable
 
         using var process = Process.Start(info)
             ?? throw new InvalidOperationException($"{file} did not start.");
+
+        // stderr drained concurrently with stdout: a sequential double read deadlocks once the
+        // child fills the unread pipe (see ReleaseWorkflowTests.GitResult).
+        var errorTask = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
         var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
 
-        return new ProcessResult(process.ExitCode, output, error);
+        return new ProcessResult(process.ExitCode, output, errorTask.GetAwaiter().GetResult());
     }
 
     private string NewScratch(string prefix)

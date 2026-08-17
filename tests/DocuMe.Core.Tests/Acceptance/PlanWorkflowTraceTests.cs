@@ -84,8 +84,11 @@ public sealed partial class PlanWorkflowTraceTests
     private const string DriftPrYml = "templates/workflows/docs-drift-pr.yml";
     private const string PublishYml = "templates/workflows/docs-publish.yml";
     private const string SyncYml = "templates/workflows/docs-sync.yml";
-    private const string RefreshYml = "templates/workflows/docs-refresh.yml";
-    private const string FeedbackYml = "templates/workflows/docs-feedback.yml";
+
+    // The claude spellings carry the canonical claims; WorkflowShellTests holds the copilot
+    // spellings to the same behavior, so tracing one rail here does not leave the other unchecked.
+    private const string RefreshYml = "templates/workflows/docs-refresh.claude.yml";
+    private const string FeedbackYml = "templates/workflows/docs-feedback.claude.yml";
     private const string RefreshSkill = "plugin/skills/docs-refresh/SKILL.md";
 
     private static readonly Claim[] Claims =
