@@ -68,6 +68,20 @@ public sealed record PageState
 
     public bool Stale { get; init; }
 
+    /// <summary>
+    /// Whether the page carries the <c>docume</c> managed-marker property (§5.3,
+    /// <see cref="Publishing.ManagedMarker"/>), stamped at create and self-healed on the next body
+    /// update of a page published before the marker existed.
+    /// </summary>
+    /// <remarks>
+    /// A cache of the stamp, never the authority: <c>--prune</c> reads the live property before every
+    /// delete, so a hand-edited <c>true</c> here cannot delete an unstamped page. What the flag buys is
+    /// the read it saves; a publish never has to ask Confluence whether a page is already stamped.
+    /// Default false, which is also what every pre-marker state file says implicitly, and such a page
+    /// is stamped by its next body update.
+    /// </remarks>
+    public bool Marked { get; init; }
+
     /// <summary>Newest comment already ingested (feedback loop cursor).</summary>
     public string? FeedbackCursor { get; init; }
 }

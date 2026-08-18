@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace DocuMe.Core.Confluence;
@@ -158,6 +159,21 @@ internal sealed record ContentMoveResponse(string? PageId);
 
 /// <summary>The v1 <c>Label</c> schema, whose four members are all required.</summary>
 internal sealed record LabelBulk(string? Prefix, string? Name, string? Id, string? Label);
+
+/// <summary>
+/// The v2 <c>ContentProperty</c> schema, narrowed to what the managed-page marker reads
+/// (docs/specs/2026-08-18-managed-marker.md). <c>value</c> is a bare <see cref="JsonElement"/> rather
+/// than a typed shape because the schema types it as nothing at all: a content property's value is
+/// whatever JSON its writer stored, and the caller owns its meaning.
+/// </summary>
+/// <remarks>
+/// The one member in this file that is not a nullable reference, deviating from the convention above
+/// on purpose: a <c>JsonElement?</c> reads an absent member and a stored JSON <c>null</c> identically,
+/// and the two must part ways in the mapper. Absent is off-schema and fails loud; <c>null</c> is a
+/// value somebody stored, carried through as the literal it is. A missing member leaves the default
+/// element, whose <see cref="JsonValueKind.Undefined"/> is what the mapper checks.
+/// </remarks>
+internal sealed record PagePropertyBulk(string? Id, string? Key, JsonElement Value = default);
 
 internal sealed record BodyBulk(BodyType? Storage);
 

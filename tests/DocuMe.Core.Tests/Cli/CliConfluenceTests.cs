@@ -1084,9 +1084,13 @@ public sealed class CliConfluenceTests : IDisposable
 
     /// <summary>
     /// Answers a create with an id this side invents at request time and remembers, so a test can assert
-    /// the CLI persisted what the server said rather than a value the test also knew.
+    /// the CLI persisted what the server said rather than a value the test also knew. Also answers the
+    /// managed-marker stamp that follows every create (<see cref="StubMarkerStamp"/>).
     /// </summary>
-    private void StubCreate() =>
+    private void StubCreate()
+    {
+        StubMarkerStamp();
+
         _server
             .Given(Request.Create().WithPath("/wiki/api/v2/pages").UsingPost())
             .RespondWith(Json(request =>
@@ -1109,6 +1113,20 @@ public sealed class CliConfluenceTests : IDisposable
                     }
                     """;
             }));
+    }
+
+    /// <summary>
+    /// Answers the managed-marker stamp every create is followed by, so a first publish records
+    /// <c>marked: true</c> and a later republish has nothing to heal. Registered with the create stub
+    /// because the two arrive together: a create whose stamp 404s would leave state unmarked and every
+    /// footprint test downstream would see a healing POST it did not stub.
+    /// </summary>
+    private void StubMarkerStamp() =>
+        _server
+            .Given(Request.Create()
+                .WithPath(new WireMock.Matchers.WildcardMatcher("/wiki/api/v2/pages/*/properties"))
+                .UsingPost())
+            .RespondWith(Json(_ => """{ "id": "9001", "key": "docume", "value": { "managed": true } }"""));
 
     /// <summary>
     /// Creates every page but one, which Confluence refuses by title. The refusal is a 400 because that

@@ -319,6 +319,31 @@ public sealed class StateUpdatesTests
     }
 
     [Fact]
+    public void RecordMarked_SetsAndClearsTheFlag()
+    {
+        var state = StateWith(new PageState { PageId = "123456" });
+
+        var stamped = StateUpdates.RecordMarked(state, Path, marked: true);
+        stamped.Pages[Path].Marked.ShouldBeTrue();
+
+        // False must be recordable, not assumed away: a recreate whose stamp failed has to be able to
+        // say the fresh page carries no marker, whatever the old entry recorded.
+        StateUpdates.RecordMarked(stamped, Path, marked: false).Pages[Path].Marked.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void RecordMarked_NoChange_ReturnsTheSameStateInstance()
+    {
+        // Same contract as SetStale, and it matters for the same downstream reason: StateChanged is
+        // reference equality, and most pages a publish touches are already stamped, so "nothing new"
+        // has to mean no state write rather than a rewrite with identical content.
+        var state = StateWith(new PageState { PageId = "123456", Marked = true });
+
+        StateUpdates.RecordMarked(state, Path, marked: true).ShouldBeSameAs(state);
+        StateUpdates.RecordMarked(state, "nope.md", marked: true).ShouldBeSameAs(state);
+    }
+
+    [Fact]
     public void RecordLastPublishedSha_StampsSha()
     {
         StateUpdates.RecordLastPublishedSha(new DocumeState(), "abc123").LastPublishedSha.ShouldBe("abc123");
