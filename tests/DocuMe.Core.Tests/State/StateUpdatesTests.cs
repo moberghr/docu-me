@@ -344,6 +344,60 @@ public sealed class StateUpdatesTests
     }
 
     [Fact]
+    public void AdoptPage_UnknownPage_AddsIdTitleAndMarkAndNothingElse()
+    {
+        var page = StateUpdates.AdoptPage(new DocumeState(), Path, "123456", "Loans Domain").Pages[Path];
+
+        page.PageId.ShouldBe("123456");
+        page.Title.ShouldBe("Loans Domain");
+        page.Marked.ShouldBeTrue();
+
+        // No hash and no version, on purpose: the next publish must see the page as changed, update
+        // it, and re-record both honestly. Approval stays with reviewers, as always.
+        page.ContentHash.ShouldBeNull();
+        page.PublishedVersion.ShouldBe(0);
+        page.ParentPageId.ShouldBeNull();
+        page.Approval.ShouldBeNull();
+        page.Stale.ShouldBeFalse();
+        page.FeedbackCursor.ShouldBeNull();
+        page.Attachments.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AdoptPage_EntryAlreadyNamesAnId_ReturnsTheSameStateInstance()
+    {
+        // Adoption fills gaps and never overwrites a claim. A different id on offer is the rebuild's
+        // conflict verdict, decided upstream, so this transform must not be where it leaks through.
+        // The no-op has to be the same instance, in the family style of RecordMarked.
+        var state = StateWith(new PageState { PageId = "123456" });
+
+        StateUpdates.AdoptPage(state, Path, "999999", "Impostor").ShouldBeSameAs(state);
+        state.Pages[Path].PageId.ShouldBe("123456");
+    }
+
+    [Fact]
+    public void AdoptPage_IdlessEntry_IsFilledInPlaceAndKeepsItsOtherFields()
+    {
+        // An entry can exist without an id (hand-edited, or a partial restore), and whatever it already
+        // holds is somebody's record: adoption fills the gap and touches nothing else.
+        var state = StateWith(new PageState
+        {
+            Stale = true,
+            FeedbackCursor = "2026-08-01T10:00:00Z",
+            Approval = ApprovedByJonas(),
+        });
+
+        var page = StateUpdates.AdoptPage(state, Path, "123456", "Loans Domain").Pages[Path];
+
+        page.PageId.ShouldBe("123456");
+        page.Title.ShouldBe("Loans Domain");
+        page.Marked.ShouldBeTrue();
+        page.Stale.ShouldBeTrue();
+        page.FeedbackCursor.ShouldBe("2026-08-01T10:00:00Z");
+        page.Approval!.ApprovedBy.ShouldBe("jonas");
+    }
+
+    [Fact]
     public void RecordLastPublishedSha_StampsSha()
     {
         StateUpdates.RecordLastPublishedSha(new DocumeState(), "abc123").LastPublishedSha.ShouldBe("abc123");

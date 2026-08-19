@@ -135,10 +135,26 @@ half runs both read halves.
 | `--comments` | Ingest page comments into the feedback inbox |
 | `--reply` | Post a reply under every triaged inbox item and resolve the inline comments it answers. The only half that writes to Confluence |
 | `--output-dir` | Where to write inbox items. Defaults to `<wiki.root>/_meta/feedback/inbox` |
+| `--rebuild-state` | Rebuild the page map in `_meta/state.json` from the managed markers in the space. Runs alone, composes only with `--dry-run` |
 | `--dry-run` | Report what would change and write none of it |
 
 Committing the result is the caller's job. In CI that means a `docs/sync` pull request, so a human sees
 state changes before they land.
+
+`--rebuild-state` is the recovery path for a state file that was lost, forked without its history, or
+hand-edited into nonsense. It lists every page in the space and reads the `docume` marker each publish
+stamps, then prints a manifest: a stamped page whose path names a file in this repo is adopted (page
+id, title, and the marked flag; no content hash, so the next publish updates the page and re-records
+it), a page state already tracks is confirmed, a disagreement over the id and a path stamped on two
+pages are both reported as conflicts with nothing written, and a stamped path with no file is listed
+and left out of state, where a prune cannot reach it. Unstamped pages are counted, never listed, since
+a shared space can hold thousands that are not this repo's business. The walk itself has a ceiling:
+the space listing reads 250 pages a request and stops at 50 requests, so a space holding more than
+12,500 pages fails the run loudly rather than adopting from a truncated listing. That file check is
+also the only thing separating two repos that share a space, so read the manifest before trusting it.
+Approvals and hashes are never rebuilt: approvals belong to reviewers, and the next publish re-records
+the hashes. The rebuild writes no Confluence byte, which is why the protected-space lock has nothing to
+refuse in it.
 
 ## `docume drift`
 

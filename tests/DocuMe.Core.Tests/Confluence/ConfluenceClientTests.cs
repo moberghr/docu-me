@@ -1143,6 +1143,130 @@ public sealed class ConfluenceClientTests
     }
 
     /// <summary>
+    /// The state rebuild's space walk (docs/specs/2026-08-19-state-rebuild.md): every page in the
+    /// space, across as many responses as Confluence needs, in the order Confluence answers. The
+    /// cursor is lifted out of <c>_links.next</c> — which arrives relative, carrying the site's own
+    /// <c>/wiki/</c> base segment — and re-sent on the client's own path, so the follow-up request
+    /// still carries the pinned <c>limit</c> too.
+    /// </summary>
+    [Fact]
+    public async Task Walks_a_space_across_the_cursor_until_confluence_stops_offering_one()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(SpacePagesPath).UsingGet())
+            .RespondWith(Json(request => request.Query!.ContainsKey("cursor")
+                ? LastSpacePagesBody
+                : FirstSpacePagesBody));
+
+        using var client = CreateClient(server);
+        var pages = await client.ListSpacePagesAsync(SpaceId, TestContext.Current.CancellationToken);
+
+        pages.Select(page => page.Id).ShouldBe(["65601", "65700", "65800"]);
+        server.LogEntries.Count.ShouldBe(2);
+
+        // The listing reuses the page mapping whole: what the rebuild adopts into state.json is the
+        // same id/title/version/parent a lookup by id would answer. A root page's parent is absent.
+        pages[0].Title.ShouldBe("Domain model");
+        pages[0].SpaceId.ShouldBe(SpaceId);
+        pages[0].ParentId.ShouldBe("131074");
+        pages[0].Version.ShouldBe(7);
+        pages[2].ParentId.ShouldBeNull();
+
+        // The cursor arrives percent-encoded inside next and has to reach Confluence decoded-then-
+        // encoded once, not twice — the same base64-padding trap the children walk pins.
+        var followed = server.LogEntries[1].RequestMessage;
+        followed.ShouldNotBeNull();
+        followed.Query!["cursor"].Single().ShouldBe("c3BhY2U9Mg==");
+        followed.Query!["limit"].Single().ShouldBe("250");
+    }
+
+    /// <summary>
+    /// A configured space that holds nothing yet answers an empty walk, not a failure: a rebuild
+    /// against a fresh space has nothing to adopt and says so.
+    /// </summary>
+    [Fact]
+    public async Task An_empty_space_walks_to_an_empty_list()
+    {
+        using var server = WireMockServer.Start();
+        var body = EmptyResultsBody;
+        server
+            .Given(Request.Create().WithPath(SpacePagesPath).UsingGet())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        var pages = await client.ListSpacePagesAsync(SpaceId, TestContext.Current.CancellationToken);
+
+        pages.ShouldBeEmpty();
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Bodyless on purpose (rule §9.1): the walk carries the pinned page size and nothing else — no
+    /// <c>body-format</c> above all, because the rebuild adopts pages from their marker property,
+    /// never from their text, and a walk that fetched bodies would hand a §9.1 violation to whoever
+    /// holds its result.
+    /// </summary>
+    [Fact]
+    public async Task Walks_the_space_without_asking_for_bodies()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(SpacePagesPath).UsingGet())
+            .RespondWith(Json(LastSpacePagesBody));
+
+        using var client = CreateClient(server);
+        var pages = await client.ListSpacePagesAsync(SpaceId, TestContext.Current.CancellationToken);
+
+        var query = LastRequest(server).Query!;
+        query.ShouldNotContainKey("body-format");
+        query.Keys.ShouldBe(["limit"]);
+        query["limit"].Single().ShouldBe("250");
+
+        pages.ShouldAllBe(page => page.Storage == null);
+    }
+
+    /// <summary>
+    /// A space Confluence does not answer for is a misconfiguration, not an empty wiki: the id came
+    /// from resolving the configured space, so the walk fails loud rather than handing the rebuild a
+    /// space with "nothing to adopt" (docs/specs/2026-08-19-state-rebuild.md).
+    /// </summary>
+    [Fact]
+    public async Task A_space_that_does_not_exist_fails_rather_than_walking_as_empty()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(SpacePagesPath).UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NotFound).WithBody("{}"));
+
+        using var client = CreateClient(server);
+        var exception = await Should.ThrowAsync<ConfluenceApiException>(
+            () => client.ListSpacePagesAsync(SpaceId, TestContext.Current.CancellationToken));
+
+        exception.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// A 401 mid-walk is the same one-attempt hard stop every sibling read gets (rule §1.2): an
+    /// expired token is not an empty space, and a rebuild that shrugged it off would adopt nothing
+    /// and call the state rebuilt.
+    /// </summary>
+    [Fact]
+    public async Task Stops_dead_when_the_space_walk_is_unauthorized()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(SpacePagesPath).UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Unauthorized));
+
+        using var client = CreateClient(server);
+        _ = await Should.ThrowAsync<ConfluenceAuthenticationException>(
+            () => client.ListSpacePagesAsync(SpaceId, TestContext.Current.CancellationToken));
+
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
+    /// <summary>
     /// The open-comment guard's read (PLAN.md §6.2 step 6). Resolution state is carried verbatim, and a
     /// comment that arrives without one reads as unresolved rather than closed.
     /// </summary>
@@ -2143,6 +2267,40 @@ public sealed class ConfluenceClientTests
               "spaceId": "{{SpaceId}}", "childPosition": 7 },
             { "id": "111", "status": "current", "title": "Migrated page", "type": "page",
               "spaceId": "{{SpaceId}}", "childPosition": null }
+          ],
+          "_links": { "base": "https://example.atlassian.net/wiki" }
+        }
+        """;
+
+    private static string SpacePagesPath => ApiPath($"spaces/{SpaceId}/pages");
+
+    /// <summary>
+    /// A first response of the space walk that offers another. The cursor carries base64 padding,
+    /// percent-encoded the way Confluence writes it into the relative <c>_links.next</c> URL.
+    /// </summary>
+    private static string FirstSpacePagesBody =>
+        $$"""
+        {
+          "results": [
+            { "id": "65601", "status": "current", "title": "Domain model", "spaceId": "{{SpaceId}}",
+              "parentId": "131074", "version": { "number": 7 } }
+          ],
+          "_links": { "next": "/wiki/api/v2/spaces/{{SpaceId}}/pages?limit=250&cursor=c3BhY2U9Mg%3D%3D" }
+        }
+        """;
+
+    /// <summary>
+    /// The last response: two pages — one of them a root page with no parent — and a <c>_links</c>
+    /// block with no <c>next</c> in it.
+    /// </summary>
+    private static string LastSpacePagesBody =>
+        $$"""
+        {
+          "results": [
+            { "id": "65700", "status": "current", "title": "Payments", "spaceId": "{{SpaceId}}",
+              "parentId": "131074", "version": { "number": 3 } },
+            { "id": "65800", "status": "current", "title": "Wiki home", "spaceId": "{{SpaceId}}",
+              "version": { "number": 12 } }
           ],
           "_links": { "base": "https://example.atlassian.net/wiki" }
         }

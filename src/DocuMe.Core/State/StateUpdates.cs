@@ -195,6 +195,43 @@ public static class StateUpdates
     }
 
     /// <summary>
+    /// Creates the entry a state rebuild adopts for a stamped page (PLAN.md §6.3 <c>--rebuild-state</c>,
+    /// docs/specs/2026-08-19-state-rebuild.md): page id, title and <see cref="PageState.Marked"/>, and
+    /// deliberately nothing else.
+    /// </summary>
+    /// <remarks>
+    /// Total in the family style of <see cref="RecordMarked"/>: a path whose entry already names a page
+    /// id comes back unchanged, because adoption fills gaps and never overwrites a claim — a
+    /// disagreement is the rebuild's conflict verdict, not a write. No content hash and no version are
+    /// recorded on purpose, so the next publish sees the page as changed, updates it, and re-records
+    /// both honestly. Approval is untouched for the same reason it always is: it belongs to reviewers
+    /// (§8), not to bookkeeping.
+    /// </remarks>
+    public static DocumeState AdoptPage(DocumeState state, string path, string pageId, string title)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        ArgumentException.ThrowIfNullOrEmpty(pageId);
+        ArgumentException.ThrowIfNullOrEmpty(title);
+
+        state.Pages.TryGetValue(path, out var existing);
+
+        if (existing?.PageId is { Length: > 0 })
+        {
+            return state;
+        }
+
+        var adopted = (existing ?? new PageState()) with
+        {
+            PageId = pageId,
+            Title = title,
+            Marked = true,
+        };
+
+        return WithPage(state, path, adopted);
+    }
+
+    /// <summary>
     /// Moves an approved page to <see cref="ApprovalStatus.NeedsReview"/>, preserving the approval that
     /// was invalidated as a history entry (§6.2 step 7, §8).
     /// </summary>
