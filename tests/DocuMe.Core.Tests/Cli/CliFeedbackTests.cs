@@ -23,7 +23,9 @@ namespace DocuMe.Core.Tests.Cli;
 /// The reader, the planner and the executor under these halves are already covered at the Core level
 /// (<see cref="Feedback.FeedbackReaderTests"/>, <see cref="Feedback.FeedbackReplyPassTests"/>), and none
 /// of that reaches the defaulting rule in <c>SyncCommand</c>, the option binding, or the paths the
-/// command derives from <c>docume.json</c>.
+/// command derives from <c>docume.json</c>. <c>--rebuild-state</c> is tested here for the same reason:
+/// its walk is <see cref="Sync.StateRebuilderTests"/>'s subject, and what only the command can answer
+/// is the flag refusal, the <c>--dry-run</c> composition, and the state file the run leaves behind.
 /// </para>
 /// <para>
 /// The repo is scaffolded by <c>docume init</c> pointed at this server, then its state file is given a
@@ -63,6 +65,17 @@ public sealed class CliFeedbackTests : IDisposable
     private const string CommentId = "5001";
 
     private const string CommentCreatedAt = "2026-08-02T14:11:00.000Z";
+
+    /// <summary>The id the space answers for its key, which the rebuild lists pages by.</summary>
+    private const string SpaceId = "98304";
+
+    /// <summary>The stamped page the rebuild tests adopt, kept clear of <see cref="PageId"/>.</summary>
+    private const string AdoptedPageId = "880001";
+
+    private const string AdoptedTitle = "Guides";
+
+    /// <summary>The wiki-relative path the marker names; the tests write the file it points at.</summary>
+    private const string AdoptedPath = "guides.md";
 
     private readonly WireMockServer _server = WireMockServer.Start();
 
@@ -645,6 +658,217 @@ public sealed class CliFeedbackTests : IDisposable
             $"The default inbox was written to anyway.{Environment.NewLine}{run.Diagnostics}");
     }
 
+    /// <summary>
+    /// docs/specs/2026-08-19-state-rebuild.md: one run, one intent. <c>--rebuild-state</c> replaces the
+    /// page map the other halves reconcile onto, so combining it with any of them, or with the
+    /// <c>--output-dir</c> that belongs to the comments half, is refused by name, before any request is
+    /// sent and before anything is read off disk beyond the command line.
+    /// </summary>
+    [Theory]
+    [InlineData("--labels")]
+    [InlineData("--comments")]
+    [InlineData("--reply")]
+    [InlineData("--output-dir", "somewhere")]
+    public void Sync_rebuild_state_refuses_to_run_with_another_half(params string[] refused)
+    {
+        var work = Seeded(nameof(Sync_rebuild_state_refuses_to_run_with_another_half));
+
+        var run = Invoke(work, ["sync", "--rebuild-state", .. refused]);
+
+        run.Code.ShouldNotBe(0, run.Diagnostics);
+
+        // Named, both of them: the person at the terminal has to know which pair the command objected
+        // to, not just that some flags disagree.
+        run.FlowedAll.ShouldContain("--rebuild-state", customMessage: run.Diagnostics);
+        run.FlowedAll.ShouldContain(refused[0], customMessage: run.Diagnostics);
+
+        var asked = Seen().Select(request => $"{request.Method} {request.Path}").ToList();
+        var because = $"`sync --rebuild-state {refused[0]}` reached Confluence before refusing: "
+            + $"[{string.Join(", ", asked)}].{Environment.NewLine}{run.Diagnostics}";
+
+        asked.ShouldBeEmpty(because);
+    }
+
+    /// <summary>
+    /// <c>--rebuild-state --dry-run</c> is how a human reads the adoption manifest before letting the
+    /// run write it, and the promise is the same one every sync dry run makes: the reads happen, the
+    /// plan is printed, and the state file is untouched to the byte.
+    /// </summary>
+    [Fact]
+    public void A_rebuild_state_dry_run_prints_the_manifest_and_rewrites_nothing()
+    {
+        var work = Seeded(nameof(A_rebuild_state_dry_run_prints_the_manifest_and_rewrites_nothing));
+
+        File.WriteAllText(
+            Path.Combine(work, "docs", "wiki", AdoptedPath),
+            "# Guides\n\nAdoptable.\n");
+
+        StubSpace();
+        StubSpacePage(AdoptedPageId, AdoptedTitle);
+        StubMarker(AdoptedPageId, AdoptedPath);
+
+        var before = File.ReadAllBytes(StatePath(work));
+
+        var run = Invoke(work, "sync", "--rebuild-state", "--dry-run");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+        run.Flowed.ShouldContain("--dry-run", customMessage: run.Diagnostics);
+
+        // The manifest is the point of the run: the page is named with its verdict.
+        run.Flowed.ShouldContain("adopted", customMessage: run.Diagnostics);
+        run.Flowed.ShouldContain(AdoptedPath, customMessage: run.Diagnostics);
+
+        var rewrote = $"`sync --rebuild-state --dry-run` rewrote the state file.{Environment.NewLine}"
+            + run.Diagnostics;
+
+        File.ReadAllBytes(StatePath(work)).ShouldBe(before, rewrote);
+    }
+
+    /// <summary>
+    /// The recovery path end-to-end (PLAN.md §6.3): a page carrying the managed marker for a file this
+    /// repo has becomes a state entry with the page's id, its title and the marked flag, and nothing
+    /// else — no content hash in particular, so the next publish re-records it honestly. The entry the
+    /// state file already held is untouched.
+    /// </summary>
+    [Fact]
+    public void Sync_rebuild_state_adopts_a_stamped_page_into_the_state_file()
+    {
+        var work = Seeded(nameof(Sync_rebuild_state_adopts_a_stamped_page_into_the_state_file));
+
+        File.WriteAllText(
+            Path.Combine(work, "docs", "wiki", AdoptedPath),
+            "# Guides\n\nAdoptable.\n");
+
+        StubSpace();
+        StubSpacePage(AdoptedPageId, AdoptedTitle);
+        StubMarker(AdoptedPageId, AdoptedPath);
+
+        var run = Invoke(work, "sync", "--rebuild-state");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        // The one-line honesty the spec pins: a rebuild restores the page map and nothing more.
+        run.Flowed.ShouldContain("Approvals and hashes are not rebuilt", customMessage: run.Diagnostics);
+
+        var state = State(work);
+        var adopted = state.Pages[AdoptedPath];
+        var because = $"The stamped page was not adopted into state.json.{Environment.NewLine}"
+            + run.Diagnostics;
+
+        adopted.PageId.ShouldBe(AdoptedPageId, because);
+        adopted.Title.ShouldBe(AdoptedTitle, run.Diagnostics);
+        adopted.Marked.ShouldBeTrue(run.Diagnostics);
+
+        // No hash, so the next publish plans an update rather than a skip, and re-records it.
+        adopted.ContentHash.ShouldBeNull(run.Diagnostics);
+
+        // The page state already tracked is exactly as the fixture seeded it.
+        state.Pages[HomePath].PageId.ShouldBe(PageId, run.Diagnostics);
+    }
+
+    /// <summary>
+    /// The scenario the rebuild exists for, at its bleakest: the state file is gone. Every other sync
+    /// half refuses that outright, because they reconcile onto pages a publish recorded; the rebuild
+    /// says so out loud, starts from an empty page map, and leaves a fresh file holding exactly what
+    /// it adopted.
+    /// </summary>
+    [Fact]
+    public void Sync_rebuild_state_recovers_from_a_deleted_state_file()
+    {
+        var work = Seeded(nameof(Sync_rebuild_state_recovers_from_a_deleted_state_file));
+
+        File.WriteAllText(
+            Path.Combine(work, "docs", "wiki", AdoptedPath),
+            "# Guides\n\nAdoptable.\n");
+
+        File.Delete(StatePath(work));
+
+        StubSpace();
+        StubSpacePage(AdoptedPageId, AdoptedTitle);
+        StubMarker(AdoptedPageId, AdoptedPath);
+
+        var run = Invoke(work, "sync", "--rebuild-state");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+        run.Flowed.ShouldContain("rebuilding from an empty page map", customMessage: run.Diagnostics);
+
+        // The fresh file holds the adoption and nothing else: an empty map is the opening position,
+        // not a merge base, so the entry the deleted file used to track is not resurrected.
+        var pages = State(work).Pages;
+        var entry = pages.ShouldHaveSingleItem(
+            $"The rebuilt state file holds the wrong page map.{Environment.NewLine}{run.Diagnostics}");
+
+        entry.Key.ShouldBe(AdoptedPath, run.Diagnostics);
+        entry.Value.PageId.ShouldBe(AdoptedPageId, run.Diagnostics);
+        entry.Value.Marked.ShouldBeTrue(run.Diagnostics);
+    }
+
+    /// <summary>
+    /// The other loss the rebuild recovers from: a state file hand-edited into something that is not
+    /// JSON. The unreadable file is not silently discarded. The run names it, rebuilds from an empty
+    /// page map, and leaves a loadable file where the garbage was. Without <c>--rebuild-state</c> the
+    /// same bytes are a hard failure, so this is the recovery path proving it is one.
+    /// </summary>
+    [Fact]
+    public void Sync_rebuild_state_recovers_from_a_corrupt_state_file()
+    {
+        var work = Seeded(nameof(Sync_rebuild_state_recovers_from_a_corrupt_state_file));
+
+        File.WriteAllText(
+            Path.Combine(work, "docs", "wiki", AdoptedPath),
+            "# Guides\n\nAdoptable.\n");
+
+        File.WriteAllText(StatePath(work), "{ not json");
+
+        StubSpace();
+        StubSpacePage(AdoptedPageId, AdoptedTitle);
+        StubMarker(AdoptedPageId, AdoptedPath);
+
+        var run = Invoke(work, "sync", "--rebuild-state");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+        run.Flowed.ShouldContain("is not valid JSON", customMessage: run.Diagnostics);
+        run.Flowed.ShouldContain("rebuilding from an empty page map", customMessage: run.Diagnostics);
+
+        // The garbage was replaced by a state file StateStore can load, holding the adoption.
+        State(work).Pages[AdoptedPath].PageId.ShouldBe(
+            AdoptedPageId,
+            $"The rebuilt state file does not hold the adoption.{Environment.NewLine}{run.Diagnostics}");
+    }
+
+    /// <summary>
+    /// A rebuild whose whole manifest is conflicts must not call itself in sync: nothing was adopted
+    /// while entries wait on a human, and that is the one outcome CI has to surface rather than file
+    /// away as clean. The state file stays untouched to the byte, and the exit is still 0, because a
+    /// conflict is a manifest for a human, not a failure of the walk.
+    /// </summary>
+    [Fact]
+    public void A_conflict_only_rebuild_says_nothing_adopted_and_rewrites_nothing()
+    {
+        var work = Seeded(nameof(A_conflict_only_rebuild_says_nothing_adopted_and_rewrites_nothing));
+
+        // A stamped page claiming the path state already maps elsewhere: the seeded state tracks
+        // README.md as page 770001, and this page is not it.
+        StubSpace();
+        StubSpacePage(AdoptedPageId, "A Second Documentation");
+        StubMarker(AdoptedPageId, HomePath);
+
+        var before = File.ReadAllBytes(StatePath(work));
+
+        var run = Invoke(work, "sync", "--rebuild-state");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+        run.Flowed.ShouldContain("NOTHING ADOPTED", customMessage: run.Diagnostics);
+
+        // The manifest names the disagreement, so a human can settle it from the output alone.
+        run.Flowed.ShouldContain("conflict", customMessage: run.Diagnostics);
+        run.Flowed.ShouldContain(PageId, customMessage: run.Diagnostics);
+
+        File.ReadAllBytes(StatePath(work)).ShouldBe(
+            before,
+            $"A conflict-only rebuild rewrote the state file.{Environment.NewLine}{run.Diagnostics}");
+    }
+
     private static string InboxPath(string work) =>
         Path.Combine(work, "docs", "wiki", "_meta", "feedback", "inbox");
 
@@ -935,6 +1159,42 @@ public sealed class CliFeedbackTests : IDisposable
             .Given(Request.Create().WithPath("/wiki/api/v2/inline-comments").UsingPost())
             .RespondWith(Json(body));
     }
+
+    /// <summary>The space lookup the rebuild resolves its key through, as <c>publish</c>'s suite stubs it.</summary>
+    private void StubSpace() =>
+        _server
+            .Given(Request.Create().WithPath("/wiki/api/v2/spaces").UsingGet())
+            .RespondWith(Json($$"""
+                {
+                  "results": [{ "id": "{{SpaceId}}", "key": "{{SpaceKey}}", "name": "DocuMe Sandbox" }],
+                  "_links": {}
+                }
+                """));
+
+    /// <summary>The space's page listing, answering one page and no further cursor.</summary>
+    private void StubSpacePage(string pageId, string title) =>
+        _server
+            .Given(Request.Create().WithPath($"/wiki/api/v2/spaces/{SpaceId}/pages").UsingGet())
+            .RespondWith(Json($$"""
+                {
+                  "results": [{ "id": "{{pageId}}", "status": "current", "title": {{Quoted(title)}},
+                                "spaceId": "{{SpaceId}}", "version": { "number": 1 } }],
+                  "_links": {}
+                }
+                """));
+
+    /// <summary>One page's <c>docume</c> property, stamped as owning <paramref name="path"/> (§6.2).</summary>
+    private void StubMarker(string pageId, string path) =>
+        _server
+            .Given(Request.Create().WithPath($"/wiki/api/v2/pages/{pageId}/properties").UsingGet())
+            .RespondWith(Json($$"""
+                {
+                  "results": [{ "id": "prop-1", "key": "docume",
+                                "value": { "managed": true, "path": {{Quoted(path)}} },
+                                "version": { "number": 1 } }],
+                  "_links": {}
+                }
+                """));
 
     private void StubResolve(string commentId) =>
         _server

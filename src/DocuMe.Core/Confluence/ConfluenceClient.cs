@@ -11,7 +11,8 @@ namespace DocuMe.Core.Confluence;
 /// Thin client over the Confluence Cloud REST API (PLAN.md §4): the page reads, the page upsert, the
 /// attachment upsert and the label add/remove the publish and approval pipelines are built on
 /// (§6.2 step 5, §6.3, §8), plus the content-property read and write that carry the managed-page
-/// marker (docs/specs/2026-08-18-managed-marker.md).
+/// marker (docs/specs/2026-08-18-managed-marker.md) and the space-pages walk the state rebuild reads
+/// the marker registry back through (docs/specs/2026-08-19-state-rebuild.md).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -129,6 +130,15 @@ public sealed class ConfluenceClient : IDisposable
     /// step. 50 is inside v1's documented 200 maximum with room to spare.
     /// </summary>
     private const int SearchPageSize = 50;
+
+    /// <summary>
+    /// The page size sent to the space-pages walk (docs/specs/2026-08-19-state-rebuild.md) — the one
+    /// v2 read here that states a limit, because this endpoint, unlike the collections
+    /// <see cref="ReadPagedAsync{TWire,TModel}"/> serves size-less, documents its maximum outright:
+    /// 250. A walk visits every page a shared space holds, so the documented default of 25 would cost
+    /// ten times the requests for the same answer.
+    /// </summary>
+    private const int SpaceWalkPageSize = 250;
 
     /// <summary>
     /// Web defaults: camelCase, case-insensitive, and a number readable from a JSON string. The
@@ -322,6 +332,74 @@ public sealed class ConfluenceClient : IDisposable
         return await ReadPagedAsync<ChildPageBulk, ConfluenceChildPage>(
                 endpoint,
                 MapChildPage,
+                overrun,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Lists every current page in a space, following pagination to the end. The space walk the state
+    /// rebuild is built on (docs/specs/2026-08-19-state-rebuild.md): <c>sync --rebuild-state</c> reads
+    /// each listed page's marker property and reconstructs <c>state.json</c> from what the space
+    /// actually holds, so this read is what makes a lost or corrupted state file recoverable at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Bodyless on purpose (rule §9.1).</strong> No <c>body-format</c> parameter is sent, so
+    /// <see cref="ConfluencePage.Storage"/> is <c>null</c> on every page this answers. The repo is the
+    /// source of truth and Confluence bodies are never read back as a content source; the rebuild
+    /// adopts pages from their <c>docume</c> marker property — a separate read — and needs an id, a
+    /// title and a version, never text. A walk that downloaded a shared space's worth of bodies would
+    /// be waste at best and a §9.1 violation handed to whoever holds its result at worst.
+    /// </para>
+    /// <para>
+    /// <strong>The order is whatever Confluence answers, and no caller may lean on it.</strong> The
+    /// endpoint documents a <c>sort</c> parameter and none is sent: the rebuild orders its manifest by
+    /// path itself (the spec pins entries ordinal by path), so an ordering promise here would be a
+    /// promise nobody needs, kept by a server this side cannot verify.
+    /// </para>
+    /// <para>
+    /// <strong><c>limit=250</c> is sent, unlike the sibling v2 reads.</strong> They guess no page size
+    /// because their schemas document no maximum and a wrong guess is a 400
+    /// (<see cref="ReadPagedAsync{TWire,TModel}"/>); this endpoint documents 250 as its maximum
+    /// outright, and the spec pins it. The difference is scale: a child listing holds one parent's
+    /// children, while a space walk visits everything — thousands of pages in a shared space, most of
+    /// them not DocuMe's business — and walking that at the default of 25 would spend ten requests
+    /// where one suffices.
+    /// </para>
+    /// <para>
+    /// <strong>A 404 on the space is a real failure, not a <c>null</c>.</strong> The id a caller can
+    /// pass comes from resolving the configured space (<c>docume.json</c> → §5.1), so a space
+    /// Confluence does not answer for is a misconfiguration worth stopping on — deliberately unlike
+    /// <see cref="FindPageByIdAsync"/>, where "somebody deleted it" is an answer the caller weighs.
+    /// </para>
+    /// </remarks>
+    /// <param name="spaceId">The numeric space id from <see cref="FindSpaceByKeyAsync"/>.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired or revoked.</exception>
+    /// <exception cref="ConfluenceApiException">
+    /// Any other non-success status, including a space that does not exist (404).
+    /// </exception>
+    /// <exception cref="ConfluenceProtocolException">
+    /// The response body is not the documented shape, or the endpoint kept offering another page of
+    /// results past <see cref="PagedRequestLimit"/> requests.
+    /// </exception>
+    public async Task<IReadOnlyList<ConfluencePage>> ListSpacePagesAsync(
+        string spaceId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(spaceId);
+
+        var endpoint = $"api/v2/spaces/{Uri.EscapeDataString(spaceId)}/{PagesSegment}"
+            + $"?limit={SpaceWalkPageSize}";
+        var overrun = $"it offered another page of results after {PagedRequestLimit} requests. At "
+            + $"{SpaceWalkPageSize} a page that is the walk's ceiling of "
+            + $"{PagedRequestLimit * SpaceWalkPageSize} pages: either the space genuinely holds more, "
+            + "which this walk does not support yet, or Confluence is answering a cursor loop";
+
+        return await ReadPagedAsync<PageBulk, ConfluencePage>(
+                endpoint,
+                MapPage,
                 overrun,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -1513,11 +1591,13 @@ public sealed class ConfluenceClient : IDisposable
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>No <c>limit</c> is sent.</strong> The v2 schema documents the parameter for these
+    /// <strong>No <c>limit</c> is added here.</strong> The v2 schema documents the parameter for these
     /// endpoints but neither its default nor its maximum, and a guessed value that turns out to be over
     /// the cap is a 400 on a read the caller cannot do without. The documented cursor pagination is
     /// followed instead, so a collection larger than one page costs an extra request rather than a
-    /// failure.
+    /// failure. An endpoint whose maximum <em>is</em> documented may state its own limit on the path it
+    /// passes in, which the space walk does (<see cref="SpaceWalkPageSize"/>) — the cursor is then
+    /// appended, so every follow-up request keeps carrying it.
     /// </para>
     /// <para>
     /// Running past <see cref="PagedRequestLimit"/> requests ends in a

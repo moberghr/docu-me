@@ -79,6 +79,49 @@ public static class ManagedMarker
         }
     }
 
+    /// <summary>
+    /// Reads the owning path out of <paramref name="rawValue"/>: <c>true</c> only when the JSON parses,
+    /// says <c>managed: true</c>, and carries a non-empty <c>path</c>. Everything else reads as "no
+    /// path", with <see cref="IsManaged"/>'s tolerance for malformed JSON and foreign values.
+    /// </summary>
+    /// <remarks>
+    /// This is the read the type remarks promised: the marker as the registry a state rebuild queries
+    /// (PLAN.md §6.3 <c>--rebuild-state</c>, docs/specs/2026-08-19-state-rebuild.md). It checks the flag
+    /// as well as the path on purpose — the caller is deciding whether to adopt a page into
+    /// <c>state.json</c>, and a foreign property that happens to carry a <c>path</c> member must never
+    /// hand it one to adopt.
+    /// </remarks>
+    /// <param name="rawValue">The property value as the wire carries it.</param>
+    /// <param name="path">The wiki-relative path the marker names, or empty when there is none.</param>
+    public static bool TryReadPath(string rawValue, out string path)
+    {
+        path = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return false;
+        }
+
+        MarkerValue? value;
+        try
+        {
+            value = JsonSerializer.Deserialize<MarkerValue>(rawValue, Compact);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        if (value is not { Managed: true, Path: { Length: > 0 } owned })
+        {
+            return false;
+        }
+
+        path = owned;
+
+        return true;
+    }
+
     /// <summary>The value's JSON shape.</summary>
     /// <param name="Managed">The claim <see cref="IsManaged"/> checks.</param>
     /// <param name="Path">The owning file, for a human reading the page's properties. Tolerated absent

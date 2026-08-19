@@ -82,6 +82,15 @@ public sealed class RemoteBodyReadTests
     private static readonly string[] PageWrites =
         [nameof(ConfluenceClient.CreatePageAsync), nameof(ConfluenceClient.UpdatePageAsync)];
 
+    /// <summary>
+    /// The read that answers with pages and cannot fetch a body at all: the state rebuild's space walk
+    /// (docs/specs/2026-08-19-state-rebuild.md), rule §9.1 bodyless by construction rather than by
+    /// default — it takes no <c>includeBody</c> parameter, so there is no body decision on it to
+    /// default and nothing for the call-site scans to count.
+    /// <see cref="The_space_walk_offers_no_body_opt_in_at_all"/> is what keeps that construction true.
+    /// </summary>
+    private static readonly string[] BodylessPageReads = [nameof(ConfluenceClient.ListSpacePagesAsync)];
+
     [Fact]
     public void Only_the_dashboard_asks_Confluence_for_a_page_body()
     {
@@ -117,6 +126,31 @@ public sealed class RemoteBodyReadTests
                 + "wants it or not — including the publish and label paths, which need version and labels only.";
 
             parameter.DefaultValue.ShouldBe(false, flipped);
+        }
+    }
+
+    /// <summary>
+    /// The space walk stays bodyless the strong way: no <c>includeBody</c> parameter exists on it to
+    /// opt into. The WireMock test pins that the default request carries no <c>body-format</c>, but a
+    /// parameter added with a <c>false</c> default would leave that test green while opening a body
+    /// opt-in the call-site scans never count — they match the PageReads names only.
+    /// </summary>
+    [Fact]
+    public void The_space_walk_offers_no_body_opt_in_at_all()
+    {
+        foreach (var read in BodylessPageReads)
+        {
+            var method = typeof(ConfluenceClient).GetMethod(read, BindingFlags.Public | BindingFlags.Instance);
+            method.ShouldNotBeNull($"ConfluenceClient no longer declares {read}.");
+
+            var grown = $"{read} is declared bodyless by construction (rule §9.1: the state rebuild "
+                + "adopts pages from their marker property, never from their text), but it now takes an "
+                + $"{Parameter} parameter. Either remove it, or move the read into PageReads so the "
+                + "body-default check and both call-site scans start counting it.";
+
+            method!.GetParameters().ShouldAllBe(
+                parameter => !string.Equals(parameter.Name, Parameter, StringComparison.Ordinal),
+                grown);
         }
     }
 
@@ -231,14 +265,16 @@ public sealed class RemoteBodyReadTests
             .Order(StringComparer.Ordinal)
             .ToList();
 
-        const string added = "ConfluenceClient answers with a page from a method that neither PageReads "
-            + "nor PageWrites names, so nothing in this class can see it: both call-site scans match the "
-            + "two names in PageReads, and the default check reflects over the same two. Decide which it "
-            + "is and declare it. A read goes in PageReads, which subjects it to the body-default check "
-            + "and both scans; a write goes in PageWrites. Rule §9.1 is about what comes back from "
-            + "Confluence, not about which verb the request used.";
+        const string added = "ConfluenceClient answers with a page from a method that neither PageReads, "
+            + "PageWrites nor BodylessPageReads names, so nothing in this class can see it: both "
+            + "call-site scans match the two names in PageReads, and the default check reflects over the "
+            + "same two. Decide which it is and declare it. A read with a body opt-in goes in PageReads, "
+            + "which subjects it to the body-default check and both scans; a write goes in PageWrites; a "
+            + "read with no includeBody parameter at all goes in BodylessPageReads, which pins that the "
+            + "parameter stays absent. Rule §9.1 is about what comes back from Confluence, not about "
+            + "which verb the request used.";
 
-        var declared = PageReads.Concat(PageWrites).Order(StringComparer.Ordinal);
+        var declared = PageReads.Concat(PageWrites).Concat(BodylessPageReads).Order(StringComparer.Ordinal);
 
         // Joined rather than compared as sequences: Shouldly resolves a two-list ShouldBe over strings
         // to its Case-sensitivity overload, and the joined form reads better in the failure anyway.
@@ -378,11 +414,27 @@ public sealed class RemoteBodyReadTests
         lines[index].Contains("CommentsSegment}", StringComparison.Ordinal)
         || (index > 0 && lines[index - 1].Contains("CommentsSegment}", StringComparison.Ordinal));
 
-    /// <summary>Whether a method hands its caller a page, whatever it had to do to get one.</summary>
+    /// <summary>
+    /// Whether a method hands its caller a page — or a whole listing of them, which is how the space
+    /// walk answers — whatever it had to do to get one. The listing shape is matched on purpose:
+    /// measured before it was, a <c>Task&lt;IReadOnlyList&lt;ConfluencePage&gt;&gt;</c> read sat outside
+    /// this population entirely, so a body opt-in added to one would have slipped every scan here.
+    /// </summary>
     private static bool AnswersWithAPage(Type returnType) =>
         returnType.IsGenericType
         && returnType.GetGenericTypeDefinition() == typeof(Task<>)
-        && returnType.GetGenericArguments()[0] == typeof(ConfluencePage);
+        && MentionsAPage(returnType.GetGenericArguments()[0]);
+
+    /// <summary>
+    /// Whether a type carries a <see cref="ConfluencePage"/> anywhere in its shape — the page itself,
+    /// or any generic or array wrapping of one. Matched by principle rather than by enumerating
+    /// wrappers, because <c>Task&lt;ConfluencePage[]&gt;</c> or a new collection flavor would otherwise
+    /// reopen the exact population hole this class closed.
+    /// </summary>
+    private static bool MentionsAPage(Type type) =>
+        type == typeof(ConfluencePage)
+        || (type.IsArray && MentionsAPage(type.GetElementType()!))
+        || (type.IsGenericType && type.GetGenericArguments().Any(MentionsAPage));
 
     /// <summary>An argument list split into its arguments, whitespace removed so spelling cannot hide.</summary>
     private static IEnumerable<string> Arguments(string arguments) => arguments

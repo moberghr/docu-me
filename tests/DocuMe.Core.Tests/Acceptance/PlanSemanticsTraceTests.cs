@@ -284,7 +284,7 @@ public sealed partial class PlanSemanticsTraceTests
             [
 
                 // Never in the default set, so the six-hourly cron of §10 posts nothing.
-                new() { File = SyncPath, Performs = @"var syncReply = requested\.Reply;" },
+                new() { File = SyncPath, Performs = @"var syncReply = !rebuildState && requested\.Reply;" },
 
                 // The decision against a flag on publish. Its absence is the whole evidence.
                 new()

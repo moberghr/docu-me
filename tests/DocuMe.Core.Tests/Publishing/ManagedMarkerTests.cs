@@ -44,4 +44,53 @@ public sealed class ManagedMarkerTests
     [InlineData("   ")]
     public void Reads_everything_that_is_not_its_own_stamp_as_unmanaged(string rawValue)
         => ManagedMarker.IsManaged(rawValue).ShouldBeFalse();
+
+    /// <summary>
+    /// The read half of the registry the type remarks promise: a page stamped by
+    /// <see cref="ManagedMarker.ValueFor"/> answers back the exact path it was stamped with, or a state
+    /// rebuild could never tell which file the page it found belongs to.
+    /// </summary>
+    [Fact]
+    public void Reads_back_the_path_its_own_stamp_carries()
+    {
+        ManagedMarker.TryReadPath(ManagedMarker.ValueFor("10-concepts/lifecycle.md"), out var path)
+            .ShouldBeTrue();
+
+        path.ShouldBe("10-concepts/lifecycle.md");
+    }
+
+    /// <summary>
+    /// Everything short of a complete marker reads as "no path", and the out value is empty rather than
+    /// stale: malformed JSON, a flag saying false, a marker with a missing or empty path, JSON null, and
+    /// a foreign object that happens to carry a <c>path</c> member. The caller is deciding whether to
+    /// adopt a page into state.json, so a value that cannot prove itself must hand it nothing to adopt.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"managed":true,""")]
+    [InlineData("""{"managed":false,"path":"a.md"}""")]
+    [InlineData("""{"managed":true}""")]
+    [InlineData("""{"managed":true,"path":""}""")]
+    [InlineData("null")]
+    [InlineData("""{"path":"a.md"}""")]
+    public void Reads_no_path_out_of_anything_short_of_a_complete_marker(string rawValue)
+    {
+        ManagedMarker.TryReadPath(rawValue, out var path).ShouldBeFalse();
+
+        path.ShouldBe(string.Empty);
+    }
+
+    /// <summary>
+    /// The path comes back exactly as stamped, with no normalization on the way out. Judging a path is
+    /// the rebuild's job, done against the set the wiki tree walk produced
+    /// (<c>StateRebuilder.WikiFilePaths</c>), and a read that cleaned the string up on the way through
+    /// would make a hostile spelling indistinguishable from the file it aliases.
+    /// </summary>
+    [Fact]
+    public void Hands_the_stamped_string_back_untouched()
+    {
+        ManagedMarker.TryReadPath("""{"managed":true,"path":"sub/../A.MD"}""", out var path)
+            .ShouldBeTrue();
+
+        path.ShouldBe("sub/../A.MD");
+    }
 }

@@ -14,7 +14,9 @@ namespace DocuMe.Cli.Commands;
 /// <c>docume sync</c> — PLAN.md §6.3, plus §9 step 5. Two reads reconciled into the repo — the
 /// <c>approved</c>/<c>stale</c> labels into <c>_meta/state.json</c> and each page's comments into
 /// <c>_meta/feedback/inbox/</c> — and, only when asked, the replies that close the feedback loop.
-/// Passing no flag runs the two reads, which is §6.3's documented default.
+/// Passing no flag runs the two reads, which is §6.3's documented default. <c>--rebuild-state</c> is
+/// the recovery path beside them: it rebuilds the page map from the managed markers (§6.2) and runs
+/// alone, because the other halves reconcile onto the very map it replaces.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -72,6 +74,12 @@ internal static class SyncCommand
             Description = "Where to write inbox items. Defaults to <wiki.root>/"
                 + FeedbackInbox.RelativeDirectory + ".",
         };
+        var rebuildStateOption = new Option<bool>("--rebuild-state")
+        {
+            Description = "Rebuild state.json's page map from the managed marker every DocuMe-written "
+                + "page carries. Runs alone, because it rebuilds the map the other halves reconcile "
+                + "onto; composes only with --dry-run.",
+        };
         var dryRunOption = new Option<bool>("--dry-run")
         {
             Description = "Report what would change in state.json and the inbox and what would be posted "
@@ -91,6 +99,7 @@ internal static class SyncCommand
             commentsOption,
             replyOption,
             outputDirOption,
+            rebuildStateOption,
             dryRunOption,
         };
 
@@ -102,6 +111,7 @@ internal static class SyncCommand
                 parseResult.GetValue(commentsOption),
                 parseResult.GetValue(replyOption)),
             parseResult.GetValue(outputDirOption),
+            parseResult.GetValue(rebuildStateOption),
             parseResult.GetValue(dryRunOption),
             cancellationToken));
 
@@ -113,15 +123,30 @@ internal static class SyncCommand
         string? statePath,
         SyncHalves requested,
         string? outputDir,
+        bool rebuildState,
         bool dryRun,
         CancellationToken cancellationToken)
     {
+        if (rebuildState && (requested.Labels || requested.Comments || requested.Reply || outputDir is not null))
+        {
+            // Refused rather than sequenced, the same call --changed-since/--page gets in publish: the
+            // halves reconcile labels and comments onto the very page map --rebuild-state is still
+            // rebuilding, and one run has one intent (docs/specs/2026-08-19-state-rebuild.md).
+            // --output-dir belongs to the comments half, so it is refused with them rather than
+            // accepted and ignored.
+            return Fail(
+                "--rebuild-state cannot be combined with --labels, --comments, --reply or --output-dir: "
+                + "those belong to the halves that reconcile onto the page map the rebuild is replacing. "
+                + "Run it alone, then sync.");
+        }
+
         // §6.3's "Default: both", extended by one rule rather than rewritten: naming any half selects
         // exactly the halves named, and naming none runs the two that only read. --reply is never in the
-        // default set — a bare `sync` on a six-hourly cron must not post comments into Confluence.
-        var syncLabels = requested.Labels || (!requested.Comments && !requested.Reply);
-        var syncComments = requested.Comments || (!requested.Labels && !requested.Reply);
-        var syncReply = requested.Reply;
+        // default set — a bare `sync` on a six-hourly cron must not post comments into Confluence. A
+        // rebuild runs alone, so it selects no half at all.
+        var syncLabels = !rebuildState && (requested.Labels || (!requested.Comments && !requested.Reply));
+        var syncComments = !rebuildState && (requested.Comments || (!requested.Labels && !requested.Reply));
+        var syncReply = !rebuildState && requested.Reply;
 
         var fullConfigPath = Path.GetFullPath(configPath);
 
@@ -145,13 +170,13 @@ internal static class SyncCommand
 
         // Belt and braces: ConfigLoader already requires confluence.spaceKey, so this reads as a guard
         // against that requirement being relaxed later. The comments half genuinely needs no space — it
-        // reads comments per page id from state — so only the labels half checks.
+        // reads comments per page id from state — so only the labels half and the rebuild walk check.
         var spaceKey = config.Confluence.SpaceKey;
-        if (syncLabels && spaceKey is not { Length: > 0 })
+        if ((syncLabels || rebuildState) && spaceKey is not { Length: > 0 })
         {
             return Fail(
-                "confluence.spaceKey is not set in docume.json, and a label search is scoped to a space "
-                + "(PLAN.md §6.3: `space = X AND label = approved`).");
+                "confluence.spaceKey is not set in docume.json, and both the label search and a state "
+                + "rebuild are scoped to a space (PLAN.md §6.3).");
         }
 
         var repoRoot = Path.GetDirectoryName(fullConfigPath) ?? Directory.GetCurrentDirectory();
@@ -171,13 +196,35 @@ internal static class SyncCommand
         }
         catch (FileNotFoundException)
         {
-            return Fail(
-                $"No state file at {resolvedStatePath}. A sync reconciles labels and comments onto pages "
-                + "a publish recorded, so there is nothing to reconcile until `docume publish` has run.");
+            // The one command allowed to start from nothing is the one that exists for exactly this
+            // moment: a lost state file is the rebuild's opening position, not its failure. The other
+            // halves still refuse — they reconcile onto pages a publish recorded.
+            if (rebuildState)
+            {
+                AnsiConsole.MarkupLine(
+                    $"[yellow]No state file at {resolvedStatePath.EscapeMarkup()}[/] — rebuilding from "
+                    + "an empty page map.");
+                state = new DocumeState();
+            }
+            else
+            {
+                return Fail(
+                    $"No state file at {resolvedStatePath}. A sync reconciles labels and comments onto pages "
+                    + "a publish recorded, so there is nothing to reconcile until `docume publish` has run.");
+            }
         }
         catch (StateVersionException ex)
         {
             return Fail(ex.Message);
+        }
+        catch (JsonException ex) when (rebuildState)
+        {
+            // Hand-edited into nonsense is the other scenario the rebuild is for. The unreadable file
+            // is not silently discarded: the run says so, and --dry-run still leaves it untouched.
+            AnsiConsole.MarkupLine(
+                $"[yellow]{resolvedStatePath.EscapeMarkup()} is not valid JSON[/] ({ex.Message.EscapeMarkup()}) "
+                + "— rebuilding from an empty page map.");
+            state = new DocumeState();
         }
         catch (JsonException ex)
         {
@@ -230,6 +277,19 @@ internal static class SyncCommand
 
         try
         {
+            if (rebuildState)
+            {
+                return await RebuildStateAsync(
+                        client,
+                        state,
+                        spaceKey!,
+                        wikiRoot,
+                        resolvedStatePath,
+                        dryRun,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             return await SyncAsync(
                     client,
                     config,
@@ -334,6 +394,112 @@ internal static class SyncCommand
             + "a docs/sync branch and opens a PR.[/]");
 
         return 0;
+    }
+
+    /// <summary>
+    /// The whole of <c>--rebuild-state</c> (PLAN.md §6.3, docs/specs/2026-08-19-state-rebuild.md): list
+    /// the space, read each page's managed marker (§6.2), print the adoption manifest, and persist the
+    /// state only when something adopted.
+    /// </summary>
+    /// <remarks>
+    /// Reads plus at most one state-file write, which is why the §1.4 write lock is a note upstream
+    /// rather than a refusal here: a rebuild writes no Confluence byte. The state write reuses the one
+    /// seam every half shares — <see cref="StateStore.Save"/> once, after the report — and <c>--dry-run</c>
+    /// composes exactly as it does there: manifest printed, file left alone.
+    /// </remarks>
+    private static async Task<int> RebuildStateAsync(
+        ConfluenceClient client,
+        DocumeState state,
+        string spaceKey,
+        string wikiRoot,
+        string statePath,
+        bool dryRun,
+        CancellationToken cancellationToken)
+    {
+        var space = await client.FindSpaceByKeyAsync(spaceKey, cancellationToken).ConfigureAwait(false);
+        if (space is null)
+        {
+            return Fail(
+                $"Space '{spaceKey}' was not found in Confluence, so there is no space to rebuild "
+                + "state from. Check confluence.spaceKey in docume.json.");
+        }
+
+        AnsiConsole.MarkupLine($"Rebuilding the page map from [blue]{spaceKey.EscapeMarkup()}[/]…");
+
+        // The whole traversal defense in one line: adoption only ever matches paths this enumeration
+        // produced, so a hostile marker value never touches the filesystem (StateRebuilder.WikiFilePaths).
+        var wikiFiles = StateRebuilder.WikiFilePaths(wikiRoot);
+
+        var report = await new StateRebuilder(client)
+            .RebuildAsync(space.Id, state, wikiFiles.Contains, cancellationToken)
+            .ConfigureAwait(false);
+
+        RenderRebuild(report);
+
+        if (dryRun)
+        {
+            AnsiConsole.MarkupLine(
+                $"[yellow]--dry-run[/] — {statePath.EscapeMarkup()} left alone.");
+
+            return 0;
+        }
+
+        if (!report.StateChanged)
+        {
+            // "IN SYNC" only when it is true: a manifest full of conflicts adopted nothing, and calling
+            // that in-sync would tell CI the one case that needs a human is the clean one.
+            var unresolved = report.Entries.Count(entry =>
+                entry.Disposition is RebuildDisposition.Conflicted or RebuildDisposition.PathMissing);
+
+            AnsiConsole.MarkupLine(unresolved > 0
+                ? $"[yellow]NOTHING ADOPTED[/] — {unresolved} entr(y/ies) need a human (see the manifest "
+                    + "above). Nothing written."
+                : "[green]IN SYNC[/] — nothing to adopt; state already matches the space. Nothing written.");
+
+            return 0;
+        }
+
+        StateStore.Save(statePath, report.State);
+
+        AnsiConsole.MarkupLine($"State written: [blue]{statePath.EscapeMarkup()}[/]");
+        AnsiConsole.MarkupLine(
+            "[grey]Committing is not this command's job (§6.3) — the sync workflow commits the change to "
+            + "a docs/sync branch and opens a PR.[/]");
+
+        return 0;
+    }
+
+    /// <summary>
+    /// The adoption manifest: one line per stamped page with its verdict, the two counts, and the line
+    /// naming what a rebuild deliberately does not restore. Unstamped pages are counted rather than
+    /// listed — a shared space can hold thousands that are none of this repo's business.
+    /// </summary>
+    private static void RenderRebuild(RebuildReport report)
+    {
+        AnsiConsole.WriteLine();
+
+        foreach (var entry in report.Entries)
+        {
+            var verdict = entry.Disposition switch
+            {
+                RebuildDisposition.Adopted => "[green]adopted[/]",
+                RebuildDisposition.AlreadyTracked => "[grey]tracked[/]",
+                RebuildDisposition.Conflicted => "[red]conflict[/]",
+                _ => "[yellow]no file[/]",
+            };
+
+            var note = entry.Note is { Length: > 0 } why ? $" [grey]({why.EscapeMarkup()})[/]" : string.Empty;
+
+            AnsiConsole.MarkupLine(
+                $"  {verdict} {entry.Path.EscapeMarkup()} [grey]— page {entry.PageId.EscapeMarkup()}, "
+                + $"'{entry.Title.EscapeMarkup()}'[/]{note}");
+        }
+
+        AnsiConsole.MarkupLine(
+            $"  [grey]{report.UnstampedCount} unstamped page(s) counted, not listed; "
+            + $"{report.SkippedVanishedCount} vanished mid-walk, skipped.[/]");
+        AnsiConsole.MarkupLine(
+            "[grey]Approvals and hashes are not rebuilt; the next publish re-records them.[/]");
     }
 
     /// <summary>The two label searches, the version fill-in, and the plan (§6.3's Labels bullet).</summary>
