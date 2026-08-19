@@ -18,6 +18,19 @@ namespace DocuMe.Core.State;
 /// (<see cref="PageState.DiagramWidths"/>). Positional rather than an optional property so a caller
 /// cannot forget it and silently erase what the last publish remembered.
 /// </param>
+/// <param name="SourceSeal">
+/// The fingerprint of the files this page's <c>sources</c> globs matched at the moment this publish
+/// generated the body (<see cref="PageState.Verdict"/>), or <c>null</c> for a publish that generated no
+/// body and for a run that was given nothing to seal against. Positional for the same reason
+/// <paramref name="DiagramWidths"/> is: this is the caller's whole opportunity to record it, and an
+/// optional property is one a caller forgets in silence.
+/// </param>
+/// <remarks>
+/// <c>null</c> in <paramref name="SourceSeal"/> means "carry the previous seal", never "erase it" —
+/// see <see cref="StateUpdates.RecordPublish"/>. Nothing else here has that reading, and it is not a
+/// leniency: a move, an attachment upload and a run with no repo to read all leave the live body exactly
+/// as the older sources produced it, so the seal that describes those sources is still the true one.
+/// </remarks>
 public sealed record PublishedPage(
     string PageId,
     string Title,
@@ -25,7 +38,8 @@ public sealed record PublishedPage(
     string ContentHash,
     int PublishedVersion,
     IReadOnlyDictionary<string, string> Attachments,
-    IReadOnlyDictionary<string, string> DiagramWidths);
+    IReadOnlyDictionary<string, string> DiagramWidths,
+    SealedVerdict? SourceSeal);
 
 /// <summary>
 /// Pure transitions on <see cref="DocumeState"/> for the publish pipeline's bookkeeping
@@ -40,12 +54,22 @@ public static class StateUpdates
     /// never seen the page.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Publish owns <c>pageId</c>, <c>title</c>, <c>parentPageId</c>, <c>contentHash</c>,
-    /// <c>publishedVersion</c>, <c>attachments</c> and <c>diagramWidths</c> and overwrites all seven.
-    /// It does not own
+    /// <c>publishedVersion</c>, <c>attachments</c>, <c>diagramWidths</c> and <c>verdict</c> and
+    /// overwrites all eight. It does not own
     /// <c>approval</c>, <c>stale</c> or <c>feedbackCursor</c> — those belong to <c>sync</c> (§6.3)
     /// and <c>drift</c> (§6.4) — so they are carried through untouched. Approval invalidation is a
     /// separate, explicit step: see <see cref="InvalidateApproval"/>.
+    /// </para>
+    /// <para>
+    /// <strong>The seal is the one owned field a null does not clear.</strong>
+    /// <see cref="PublishedPage.SourceSeal"/> is null exactly when this publish did not generate a body
+    /// — a move, an attachment-only write — and the live body of such a page is still the body the
+    /// sources named by the standing seal produced. Clearing it would unseal a page for doing nothing to
+    /// it, and the page would go back to answering drift from the commit range until its next real
+    /// republish.
+    /// </para>
     /// </remarks>
     public static DocumeState RecordPublish(DocumeState state, string path, PublishedPage published)
     {
@@ -64,6 +88,7 @@ public static class StateUpdates
             PublishedVersion = published.PublishedVersion,
             Attachments = new Dictionary<string, string>(published.Attachments, StringComparer.Ordinal),
             DiagramWidths = new Dictionary<string, string>(published.DiagramWidths, StringComparer.Ordinal),
+            Verdict = published.SourceSeal ?? existing?.Verdict,
         };
 
         return WithPage(state, path, updated);

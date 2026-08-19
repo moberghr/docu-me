@@ -151,6 +151,11 @@ Machine-owned, one entry per page:
       "publishedVersion": 6,
       "attachments": { "mermaid-abc123.svg": "sha256:..." },
       "diagramWidths": { "mermaid-abc123.svg": "241" },
+      "verdict": {
+        "sourcesHash": "sha256:...",
+        "sealedAt": "2026-08-19T09:12:44Z",
+        "repoSha": "6accfb8"
+      },
       "approval": { "status": "approved", "approvedVersion": 6 },
       "stale": false,
       "marked": true,
@@ -177,6 +182,17 @@ uploads, so a run that edits a page's *text* would otherwise republish its uncha
 width, and the image would fall back to Confluence's native scaling. `docume publish --force` re-renders
 everything and re-measures, which is also how a page picks a width up after a renderer upgrade changed
 the layout without changing the diagram source.
+
+`verdict` is the seal a publish takes over the code the page derives from. A run that writes a page body
+also fingerprints every file that page's `sources` globs match, across the files git tracks in the repo,
+and records that hash in `sourcesHash` with the moment it was taken in `sealedAt` and the commit the run
+was publishing in `repoSha`. `docume drift` recomputes the fingerprint for the pages a diff flagged and
+reports the ones that still match as sealed rather than drifted. A `verdict` is always evidence about at
+least one file: a page whose globs matched no tracked file gets none, because the fingerprint of no files
+is the same value under every condition that produces it and would match itself forever. A page published
+before this existed carries no `verdict` either, and both answer drift from the commit range exactly as
+they always did until a publish that can seal them.
+[Approval and drift](../10-concepts/approval-and-drift.md) covers what the seal does and does not claim.
 
 `approval` carries three more keys than the example shows: `approvedBy`, `approvedAt` and a `history`
 array. [Approval and drift](../10-concepts/approval-and-drift.md) covers what each one means, including

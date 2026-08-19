@@ -106,6 +106,56 @@ A page with no `sources` is counted and skipped. A wiki where *no* page declares
 `sourcesUndeclared`, which reads as "drift detection is not configured here" rather than "nothing
 drifted".
 
+## Sealed pages
+
+A diff is evidence about commits, not about bytes. A file touched and reverted inside the range still
+reads as changed, a merge that re-introduces identical bytes reads as changed, and one `baselineSha`
+serving the whole wiki re-reports commits a page published this morning was already written from. All
+three are phantom drift: a reviewer opens the page and nothing it describes has moved.
+
+So publish leaves proof behind. A run that writes a page body also fingerprints every file that page's
+`sources` globs match, taken over the files git tracks so gitignored build output is never in it, and
+seals the hash into `_meta/state.json` as `verdict`, with the moment it was taken and the commit the run
+was publishing. `docume drift` recomputes that fingerprint for the pages the diff flagged, and reports
+every page whose sources are byte-identical to its seal as **sealed** rather than drifted.
+
+Sealed pages are held out of every reader of the verdict at once. They are named in the table, carried in
+the `sealed` array of `--format json` and in their own section of the PR comment, counted out of the exit
+code under `--fail-on-drift`, and never labelled by `--mark`. The narrowing is always disclosed, with the
+date of each seal beside the page: a machine deciding a page did not drift has to say which pages it
+decided that about, and a seal is only as current as the publish behind it.
+
+A page with no seal keeps the old behaviour exactly. Every page published before this existed, and every
+page whose sources a publish could not read, answers drift from the commit range as it always did, and
+the page's next publish seals it.
+
+Four limits are worth stating rather than discovering:
+
+- The seal is taken at publish, not at generation, and those are not the same moment. `/docs-loop` writes
+  a page on Monday against `Rate.cs` as it stood then; `Rate.cs` changes on main on Tuesday; the docs PR
+  merges and publishes on Wednesday, and the seal is the fingerprint of Wednesday's bytes — bytes the
+  prose on the page never described. Drift then holds that page out, correctly by the seal's own claim
+  and unhelpfully for the reader. The exposure is the age of a docs PR, and the honest summary is that
+  the seal proves the sources have not moved *since publish*, not that the page was ever right.
+- A publish from a dirty working tree seals uncommitted bytes. No fingerprint can detect that; `repoSha`
+  is what makes it auditable afterwards.
+- The fingerprint is over verbatim bytes, with no newline normalization, because a `sources` glob may
+  name a fixture or an image whose `0x0D 0x0A` pairs are data. A CRLF checkout therefore seals a
+  different value from an LF one, and git's own `core.autocrlf` is where that belongs.
+- A publish only seals what it can prove. When git cannot answer for the directory, or answers with an
+  empty tracked-file list (an empty index, or a sparse checkout cone'd away from the code), the run seals
+  nothing and says so on the terminal. A page whose globs match no tracked file seals nothing either, and
+  a page that named a glob and matched nothing is warned about by name. All three refuse the same value:
+  the fingerprint of no files, which every one of those conditions produces and every later run under the
+  same condition reproduces — a page could then be held out of the report on the strength of bytes nobody
+  read. `docume drift` refuses it from the other side too, so an older state file carrying one cannot
+  suppress a report.
+
+> [!NOTE]
+> A seal is not an approval. It says one thing: these were the source bytes when the live body was
+> published. It claims nothing about whether the body is correct, and it moves nothing in the approval
+> state machine at the top of this page.
+
 ## Marking pages stale
 
 `docume drift --mark` adds the `stale` label to every affected page, sets `stale: true` in state, and

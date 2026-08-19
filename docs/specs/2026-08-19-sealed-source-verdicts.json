@@ -1,0 +1,420 @@
+{
+  "slug": "sealed-source-verdicts",
+  "date": "2026-08-19",
+  "scope": "new-feature",
+  "baseline_area": "drift",
+  "security_impact": "none",
+  "skill_precedence_gate": "pass",
+  "open_decisions": [],
+  "change_manifest": [
+    {
+      "path": "src/DocuMe.Core/Drift/SourcesFingerprint.cs",
+      "action": "add",
+      "purpose": "Pure combiner over (path, hash) pairs + Compute(root, patterns, candidateFiles); globbing via DriftPlanner.BuildMatcher, sha256: spelling per \u00a75.3. Batch 2 replaced the tree walk with a supplied candidate list (defect F).",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/State/DocumeState.cs",
+      "action": "modify",
+      "purpose": "PageState.Verdict + the SealedVerdict record (sourcesHash, sealedAt, repoSha).",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/State/StateUpdates.cs",
+      "action": "modify",
+      "purpose": "PublishedPage carries the seal; RecordPublish writes it beside contentHash and never erases it on a path it does not own.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/Publishing/PublishExecutor.cs",
+      "action": "modify",
+      "purpose": "Compute the page's sources fingerprint at the point the body hash is written and hand it to RecordPublish.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/SourcesFingerprintTests.cs",
+      "action": "add",
+      "purpose": "SC4: determinism, ordinal ordering, rename/add/delete/content sensitivity, empty-set value, pinned constants.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/State/StateUpdatesTests.cs",
+      "action": "modify",
+      "purpose": "SC5: seal written by RecordPublish; untouched by the transitions that do not own it.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/State/StateStoreTests.cs",
+      "action": "modify",
+      "purpose": "SC6: verdict round-trips; a pre-seal state file still loads.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Publishing/PublishExecutorTests.cs",
+      "action": "modify",
+      "purpose": "SC5: a create and an update seal; a no-op publish leaves the previous seal standing.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/Drift/SealedVerdicts.cs",
+      "action": "add",
+      "purpose": "Pure filter moving byte-identical pages from Pages to Sealed; unreadable sources never seal.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "src/DocuMe.Core/Drift/DriftReport.cs",
+      "action": "modify",
+      "purpose": "Sealed list + SealedPage record; HasDrift/AffectedCount inherit the exclusion by construction.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "src/DocuMe.Core/Drift/DriftComment.cs",
+      "action": "modify",
+      "purpose": "SEALED section mirroring the exempt section's disclosure shape.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "src/DocuMe.Cli/Commands/DriftCommand.cs",
+      "action": "modify",
+      "purpose": "Recompute fingerprints for flagged pages only, apply the filter, render the SEALED block.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/SealedVerdictsTests.cs",
+      "action": "add",
+      "purpose": "SC1, SC2, SC3, SC9.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/DriftCommentTests.cs",
+      "action": "modify",
+      "purpose": "SC7: the comment discloses sealed pages.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/DriftMarkPlannerTests.cs",
+      "action": "modify",
+      "purpose": "SC8: a sealed page is never in the label plan.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Cli/CliDriftTests.cs",
+      "action": "modify",
+      "purpose": "SC3, SC7, SC8 end to end: table/json/comment disclosure, exit 0 under --fail-on-drift when every drifted page is sealed, no label request for a sealed path.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "docs/wiki/20-reference/configuration.md",
+      "action": "modify",
+      "purpose": "SC10: the verdict state field, required by ConfigReferencePageTests.The_page_documents_every_field_the_state_records_carry.",
+      "mechanical": false,
+      "batch": 4
+    },
+    {
+      "path": "docs/wiki/10-concepts/approval-and-drift.md",
+      "action": "modify",
+      "purpose": "The concept: drift is content-addressed where a seal exists, range-addressed where it does not.",
+      "mechanical": false,
+      "batch": 4
+    },
+    {
+      "path": "PLAN.md",
+      "action": "modify",
+      "purpose": "\u00a75.3 state shape and \u00a76.4 drift behavior carry the seal.",
+      "mechanical": false,
+      "batch": 4
+    },
+    {
+      "path": "CHANGELOG.md",
+      "action": "modify",
+      "purpose": "Release-note entry; ChangelogTests holds every claim it makes against the tree.",
+      "mechanical": false,
+      "batch": 4
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Publishing/PublishPipelineTests.cs",
+      "action": "modify",
+      "purpose": "Defect B: SourceSeal: null at the PublishedPage construction sites a positional parameter forces.",
+      "mechanical": true,
+      "batch": 1
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Status/StatusModelTests.cs",
+      "action": "modify",
+      "purpose": "Defect B: same, one construction site.",
+      "mechanical": true,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/Git/GitRepository.cs",
+      "action": "modify",
+      "purpose": "Defect F: TrackedFilesAsync supplies the candidate list, so the seal sees exactly what git diff would report.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Cli/Commands/PublishCommand.cs",
+      "action": "modify",
+      "purpose": "Defect C: wire PublishExecutionOptions.Sealing \u2014 repo root, per-page sources globs, tracked files, sealedAt.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Git/GitRepositoryTests.cs",
+      "action": "modify",
+      "purpose": "SC12: tracked files exclude gitignored paths.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Cli/CliPublishTests.cs",
+      "action": "add",
+      "purpose": "SC11: a real publish writes a verdict into state. (created new: publish's CLI tests lived in CliConfluenceTests, but this fixture needs a real git init around the scaffold, which every other CLI fixture deliberately lacks).",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Publishing/PublishExecutorTests.cs",
+      "action": "modify",
+      "purpose": "Defect B again: the 4th positional SourceSealing parameter and a literal Compute call force 3 mechanical edits.",
+      "mechanical": true,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Core/State/DocumeState.cs",
+      "action": "modify",
+      "purpose": "Batch 3 finding: the Verdict doc comment still says 'read by nothing yet', which the drift-side check made false. Comment-only.",
+      "mechanical": true,
+      "batch": 4
+    }
+  ],
+  "public_contracts": [
+    {
+      "kind": "persisted-schema",
+      "signature": "_meta/state.json \u2192 pages[<path>].verdict { sourcesHash, sealedAt, repoSha }",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "library-type",
+      "signature": "DocuMe.Core.Drift.SourcesFingerprint \u2014 Of(pairs) + Compute(root, patterns, candidateFiles)",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "library-type",
+      "signature": "DocuMe.Core.Drift.SealedVerdicts.Apply(DriftReport, seals, current, sealedAt = null)",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "library-type",
+      "signature": "DocuMe.Core.Drift.DriftReport.Sealed",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "library-type",
+      "signature": "DocuMe.Core.State.PublishedPage \u2014 sealed fingerprint parameter",
+      "change": "modified",
+      "surface": "external"
+    },
+    {
+      "kind": "output-format",
+      "signature": "docume drift --format json \u2192 sealed[]",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "library-type",
+      "signature": "DocuMe.Core.Git.GitRepository.TrackedFilesAsync(root, ct)",
+      "change": "new",
+      "surface": "external"
+    }
+  ],
+  "plan": {
+    "batches": [
+      {
+        "id": 1,
+        "title": "Seal at publish",
+        "files": [
+          "src/DocuMe.Core/Drift/SourcesFingerprint.cs",
+          "src/DocuMe.Core/State/DocumeState.cs",
+          "src/DocuMe.Core/State/StateUpdates.cs",
+          "src/DocuMe.Core/Publishing/PublishExecutor.cs",
+          "tests/DocuMe.Core.Tests/Drift/SourcesFingerprintTests.cs",
+          "tests/DocuMe.Core.Tests/State/StateUpdatesTests.cs",
+          "tests/DocuMe.Core.Tests/State/StateStoreTests.cs",
+          "tests/DocuMe.Core.Tests/Publishing/PublishExecutorTests.cs"
+        ],
+        "acceptance": "SC4, SC5, SC6. Build 0 warnings; State + Publishing + Drift test dirs green.",
+        "boundary": "Writes the seal. Reads nothing from it \u2014 drift is untouched in this batch."
+      },
+      {
+        "id": 2,
+        "title": "Make it real \u2014 tracked-file enumeration and CLI wiring",
+        "files": [
+          "src/DocuMe.Core/Drift/SourcesFingerprint.cs",
+          "src/DocuMe.Core/Git/GitRepository.cs",
+          "src/DocuMe.Core/Publishing/PublishExecutor.cs",
+          "src/DocuMe.Cli/Commands/PublishCommand.cs",
+          "tests/DocuMe.Core.Tests/Drift/SourcesFingerprintTests.cs",
+          "tests/DocuMe.Core.Tests/Git/GitRepositoryTests.cs",
+          "tests/DocuMe.Core.Tests/Cli/CliPublishTests.cs"
+        ],
+        "acceptance": "SC11, SC12, and SC4 still pinned against constants after the contract change.",
+        "boundary": "Turns the seal on and makes its input symmetric with drift's. Does not read the seal \u2014 that is batch 3."
+      },
+      {
+        "id": 3,
+        "title": "Check the seal in drift",
+        "files": [
+          "src/DocuMe.Core/Drift/SealedVerdicts.cs",
+          "src/DocuMe.Core/Drift/DriftReport.cs",
+          "src/DocuMe.Core/Drift/DriftComment.cs",
+          "src/DocuMe.Cli/Commands/DriftCommand.cs",
+          "tests/DocuMe.Core.Tests/Drift/SealedVerdictsTests.cs",
+          "tests/DocuMe.Core.Tests/Drift/DriftCommentTests.cs",
+          "tests/DocuMe.Core.Tests/Drift/DriftMarkPlannerTests.cs",
+          "tests/DocuMe.Core.Tests/Cli/CliDriftTests.cs"
+        ],
+        "acceptance": "SC1, SC2, SC3, SC7, SC8, SC9. Full suite green.",
+        "boundary": "Consumes the seal. Does not change how it is written, and does not touch DriftPlanner's purity."
+      },
+      {
+        "id": 4,
+        "title": "Contracts and prose",
+        "files": [
+          "docs/wiki/20-reference/configuration.md",
+          "docs/wiki/10-concepts/approval-and-drift.md",
+          "PLAN.md",
+          "CHANGELOG.md"
+        ],
+        "acceptance": "SC10. Full suite green including every tree-sweeping contract test.",
+        "boundary": "Prose and declared contracts only; no source change."
+      }
+    ]
+  },
+  "test_manifest": [
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/SourcesFingerprintTests.cs",
+      "covers": [
+        "SC4"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/SealedVerdictsTests.cs",
+      "covers": [
+        "SC1",
+        "SC2",
+        "SC3",
+        "SC9"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/State/StateUpdatesTests.cs",
+      "covers": [
+        "SC5"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/State/StateStoreTests.cs",
+      "covers": [
+        "SC6"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Publishing/PublishExecutorTests.cs",
+      "covers": [
+        "SC5"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/DriftCommentTests.cs",
+      "covers": [
+        "SC7"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/DriftMarkPlannerTests.cs",
+      "covers": [
+        "SC8"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Cli/CliDriftTests.cs",
+      "covers": [
+        "SC3",
+        "SC7",
+        "SC8"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Config/ConfigReferencePageTests.cs",
+      "covers": [
+        "SC10"
+      ]
+    }
+  ],
+  "out_of_scope": [
+    "A CLI flag to defeat the seal",
+    "A docume seal verb; publish is the only sealer this round",
+    "Per-claim citation verification against the fingerprint",
+    "Sealed-verdict reuse inside the /docs-refresh skill prompts",
+    "Any change to contentHash, approval (\u00a78) or the banner (\u00a79.2)",
+    "Any change to baselineSha semantics",
+    "Sealing on prune, sync, or state rebuild"
+  ],
+  "assumptions": [
+    "[VERIFIED:src/DocuMe.Core/Drift/DriftPlanner.cs:183] BuildMatcher is internal and is the single glob seam",
+    "[VERIFIED:src/DocuMe.Core/State/StateUpdates.cs:50] RecordPublish is the only writer of contentHash",
+    "[VERIFIED:tests/DocuMe.Core.Tests/Config/ConfigReferencePageTests.cs:65] a new state field must be documented or the suite reddens",
+    "[VERIFIED:src/DocuMe.Cli/Commands/DriftCommand.cs:370] the CLI already post-processes the report, so a second pure pass needs no new architecture"
+  ],
+  "risks": [
+    "A page with a broad sources glob pays a whole-subtree hash on every run that flags it",
+    "A publish from a dirty tree seals uncommitted bytes; repoSha is the audit trail",
+    "The fingerprint preimage is pinned forever \u2014 changing it unseals every page at once"
+  ],
+  "delta": {
+    "adds": [
+      "DocuMe.Core.Drift.SourcesFingerprint",
+      "DocuMe.Core.Drift.SealedVerdicts",
+      "PageState.Verdict / SealedVerdict",
+      "DriftReport.Sealed"
+    ],
+    "modifies": [
+      "PublishedPage",
+      "DriftCommand report pipeline",
+      "DriftComment"
+    ],
+    "removes": []
+  },
+  "amendments": [
+    {
+      "at": "after-batch-1",
+      "approved": true,
+      "defects": [
+        "C: feature shipped inert \u2014 no CLI wiring",
+        "F: tree-walk enumeration is asymmetric with git diff"
+      ],
+      "effect": "+1 batch, +3 source files (2 modify, 1 contract change), +2 mechanical test files; rigor unchanged at MAX"
+    }
+  ]
+}

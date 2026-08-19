@@ -378,7 +378,8 @@ public sealed class PublishPipelineTests : IDisposable
                 "sha256:gone",
                 1,
                 new Dictionary<string, string>(StringComparer.Ordinal),
-                new Dictionary<string, string>(StringComparer.Ordinal)));
+                new Dictionary<string, string>(StringComparer.Ordinal),
+                SourceSeal: null));
 
         Write("README.md", "# Home\n\nRewritten, and [the guide](guides/setup.md) is still linked.\n");
         Write("guides/setup.md", "---\ntitle: Setup Guide\n---\n\n# Setup\n\nRewritten too.\n");
@@ -753,7 +754,8 @@ public sealed class PublishPipelineTests : IDisposable
                     page.Plan.ContentHash,
                     1,
                     attachments,
-                    widths));
+                    widths,
+                    SourceSeal: null));
         }
 
         return StateUpdates.RecordLastPublishedSha(state, "abc1234");

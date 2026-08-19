@@ -1,9 +1,12 @@
+using System.Globalization;
 using System.Net;
 using System.Text;
 using DocuMe.Core.Config;
 using DocuMe.Core.Confluence;
+using DocuMe.Core.Drift;
 using DocuMe.Core.Markdown;
 using DocuMe.Core.State;
+using DocuMe.Core.Sync;
 
 namespace DocuMe.Core.Publishing;
 
@@ -17,6 +20,54 @@ namespace DocuMe.Core.Publishing;
 /// nothing about publishing needs to know that rendering means starting a process.
 /// </remarks>
 public delegate Task<MermaidDiagram> DiagramRenderer(string mermaidSource, CancellationToken cancellationToken);
+
+/// <summary>
+/// What a run needs to seal each page it publishes: the tree the <c>sources</c> globs are read against,
+/// the globs themselves, and the moment the seal describes
+/// (docs/specs/2026-08-19-sealed-source-verdicts.md §3.2).
+/// </summary>
+/// <remarks>
+/// <para>
+/// One record rather than three optional properties on <see cref="PublishExecutionOptions"/>, because a
+/// half-configured seal is not a weaker seal — a root without globs matches nothing on every page, and a
+/// whole wiki that sealed nothing while reporting success is worse than one that never tried. Present or
+/// absent, never partly.
+/// </para>
+/// <para>
+/// The globs arrive as a map rather than being read off the plan because a plan carries no frontmatter:
+/// <see cref="PlannedPage"/> is the converter's output plus a decision, and <c>sources</c> is the wiki
+/// tree's business (§5.2). A page missing from <see cref="SourcesByPath"/> declares none, so its globs
+/// match nothing and <c>SealSources</c> records no verdict for it — quietly, since a page without
+/// <c>sources</c> is invisible to <see cref="Drift.DriftPlanner.Plan"/> to begin with.
+/// </para>
+/// </remarks>
+/// <param name="RepoRoot">
+/// The directory <c>sources</c> globs are anchored at — the one holding <c>docume.json</c> (§5.1), which
+/// is the repo root git reports changed files relative to. Anything else matches nothing, and a run whose
+/// every page declines to seal is the visible shape that mistake takes.
+/// </param>
+/// <param name="SourcesByPath">
+/// Wiki-relative markdown path → that page's declared <c>sources</c> globs
+/// (<see cref="Markdown.PageFrontmatter.Sources"/>).
+/// </param>
+/// <param name="SealedAt">
+/// When this run seals, supplied rather than read off a clock so the write path stays testable, exactly
+/// as <see cref="Sync.LabelReader"/> takes its observation time. One value for the whole run, like the
+/// banner's date: fifty pages sealed in one publish were sealed at one moment.
+/// </param>
+/// <param name="CandidateFiles">
+/// Every file a page's globs may match, repo-relative with forward slashes — git's tracked files
+/// (<see cref="Git.GitRepository.TrackedFilesAsync"/>). Supplied for the whole run rather than read per
+/// page: one <c>ls-files</c> answers for an eighty-page wiki, and one list is one universe, which is the
+/// property the seal needs (<see cref="Drift.SourcesFingerprint"/>, spec §3.1 as amended). Positional
+/// like the other three because a list somebody forgot to pass is not a weaker seal — every page in the
+/// wiki matches nothing, and the run seals not one of them.
+/// </param>
+public sealed record SourceSealing(
+    string RepoRoot,
+    IReadOnlyDictionary<string, IReadOnlyList<string>> SourcesByPath,
+    DateTimeOffset SealedAt,
+    IReadOnlyCollection<string> CandidateFiles);
 
 /// <summary>Per-run inputs the write path needs that a plan cannot carry.</summary>
 public sealed record PublishExecutionOptions
@@ -96,6 +147,19 @@ public sealed record PublishExecutionOptions
     /// </para>
     /// </remarks>
     public bool NotifyReviewers { get; init; }
+
+    /// <summary>
+    /// What to seal each published page's sources against (<see cref="SourceSealing"/>), or <c>null</c>
+    /// to publish without sealing.
+    /// </summary>
+    /// <remarks>
+    /// Optional because a publish does not need a source tree to be correct: a run given none writes no
+    /// seal and leaves every seal a previous run wrote exactly as it is (<c>StateUpdates.RecordPublish</c>),
+    /// which is the same non-behaviour a wiki that has never published under this feature gets. The cost
+    /// of switching it on is one hash pass over the files each written page's globs match — see the
+    /// spec's risk 1 for the page that claims the whole tree.
+    /// </remarks>
+    public SourceSealing? Sealing { get; init; }
 }
 
 /// <summary>
@@ -609,7 +673,8 @@ public sealed class PublishExecutor
             plan.ContentHash,
             version,
             AttachmentHashes(planned, materialized),
-            widths);
+            widths,
+            SealSources(planned, options, wroteBody: creating || plan.WritesBody, current, warnings));
 
         state = StateUpdates.RecordPublish(state, planned.Path, published);
         state = StateUpdates.RecordMarked(state, planned.Path, marked);
@@ -623,6 +688,114 @@ public sealed class PublishExecutor
             },
             null);
     }
+
+    /// <summary>
+    /// The seal for a page this run just wrote: the fingerprint of the files its <c>sources</c> globs
+    /// match now (spec §3.2), or <c>null</c> for nothing to record.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Only a body write seals.</strong> The seal's claim is "these were the source bytes when
+    /// the live body was published", so a run that wrote no body has nothing new to claim: a move and an
+    /// attachment upload leave the body exactly as the sources named by the standing seal produced it.
+    /// Re-sealing them would silently re-point an old body at today's sources and swallow the very drift
+    /// the page should report. Null therefore means "leave the previous seal standing", which is what
+    /// <see cref="StateUpdates.RecordPublish"/> does with it.
+    /// </para>
+    /// <para>
+    /// <strong>Sources it cannot read seal nothing, and warn.</strong> A page whose glob names a
+    /// directory that is not in this checkout, or a file the process may not open, must not publish a
+    /// fingerprint over whatever happened to be readable — that value would equal itself on the next run
+    /// and hold the page out of a drift report nobody could have verified. Warned rather than failed
+    /// because the page itself is published and correct by the time this runs, the same contract
+    /// <see cref="StampManagedMarkerAsync"/> keeps.
+    /// </para>
+    /// <para>
+    /// <strong>Globs that matched nothing seal nothing either</strong> (spec §3.1 as revised
+    /// 2026-08-19). <see cref="SourcesFingerprint.EmptySet"/> is a real hash but a useless verdict: it is
+    /// what a typo'd glob, a page that declares no sources, and a sparse checkout scoped away from
+    /// <c>src/</c> all produce, and a later drift run under the same structural condition recomputes it
+    /// and reports the page as verified against bytes nobody read. Refusing it costs the wiki nothing —
+    /// a page whose globs match nothing is a page drift would never flag anyway — and buys the guarantee
+    /// that a seal in state is always evidence about at least one file.
+    /// </para>
+    /// <para>
+    /// <strong>The warning says which of the two situations the operator is left in.</strong> A page that
+    /// never sealed falls back to the commit range; a page carrying a seal an earlier publish wrote keeps
+    /// answering from those bytes, because <see cref="StateUpdates.RecordPublish"/> carries a standing
+    /// seal through a null. Those are different facts and "drift keeps answering from the commit range"
+    /// is only true of the first, so the message is worded on <paramref name="current"/> rather than
+    /// asserting one of them at both.
+    /// </para>
+    /// </remarks>
+    private static SealedVerdict? SealSources(
+        PlannedPage planned,
+        PublishExecutionOptions options,
+        bool wroteBody,
+        PageState? current,
+        List<string> warnings)
+    {
+        if (!wroteBody || options.Sealing is not { } sealing)
+        {
+            return null;
+        }
+
+        // A page the map does not name declares no sources, so its globs match nothing and the block
+        // below declines to seal it — silently, because a page that documents no file is not a problem
+        // and drift never reads it back (DriftPlanner.Plan skips a page without sources first of all).
+        var patterns = sealing.SourcesByPath.GetValueOrDefault(planned.Path) ?? [];
+
+        string fingerprint;
+        try
+        {
+            fingerprint = SourcesFingerprint.Compute(sealing.RepoRoot, patterns, sealing.CandidateFiles);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            warnings.Add(
+                $"{planned.Path} published, but the files its `sources` globs name could not all be read, "
+                + $"so this publish sealed none of them ({ex.Message}). {Fallback(current)}");
+
+            return null;
+        }
+
+        if (SourcesFingerprint.IsEmptySet(fingerprint))
+        {
+            if (Declares(patterns))
+            {
+                warnings.Add(
+                    $"{planned.Path} published, but its `sources` globs matched none of the files git "
+                    + "tracks, so this publish sealed nothing. Check the globs against the tree — a glob "
+                    + $"that can never fire is an advisory check nobody investigates. {Fallback(current)}");
+            }
+
+            return null;
+        }
+
+        return new SealedVerdict
+        {
+            SourcesHash = fingerprint,
+            SealedAt = sealing.SealedAt.UtcDateTime.ToString(
+                LabelReader.TimestampFormat, CultureInfo.InvariantCulture),
+            RepoSha = options.RepoSha,
+        };
+    }
+
+    /// <summary>Whether the page named a glob at all, blanks not counting (<see cref="SourcesFingerprint"/> skips them).</summary>
+    private static bool Declares(IReadOnlyList<string> patterns) =>
+        patterns.Any(pattern => !string.IsNullOrWhiteSpace(pattern));
+
+    /// <summary>
+    /// What answers drift for a page this run declined to seal — the second sentence of both warnings
+    /// above, and the reason they are not one fixed string: a page whose earlier publish sealed
+    /// successfully is not back on the commit range, it is running on an older seal, and only
+    /// <paramref name="current"/> can tell the two apart.
+    /// </summary>
+    private static string Fallback(PageState? current) =>
+        current?.Verdict?.SourcesHash is { Length: > 0 }
+            ? "The seal an earlier publish wrote still stands, so drift keeps answering for the page "
+                + "against those bytes — which are now older than the body just published."
+            : "Drift keeps answering for the page from the commit range until a publish that can seal it.";
 
     /// <summary>Whether this run reads a page's comments before rewriting it (§6.2 step 6).</summary>
     /// <remarks>

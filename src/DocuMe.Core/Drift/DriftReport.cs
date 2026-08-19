@@ -63,6 +63,18 @@ public sealed record DriftReport
     public IReadOnlyList<ExemptedChange> Exempted { get; init; } = [];
 
     /// <summary>
+    /// Pages the diff flagged whose sources are byte-identical to what their live body was published
+    /// against, ordinal by path — the computed exemption <see cref="SealedVerdicts.Apply"/> holds out
+    /// (spec §3.3). Nothing here contributes to <see cref="Pages"/>, <see cref="HasDrift"/> or
+    /// <see cref="AffectedCount"/>, which is the point: a page whose source bytes have not moved has
+    /// nothing for a reviewer to check. The pages are still carried, one entry each with the date of the
+    /// seal, for the reason <see cref="Exempted"/> is carried — a verdict whose inputs were narrowed
+    /// must say so, and here the narrowing is a machine's claim about bytes rather than a human's
+    /// declaration, so a reader has to be able to see how old that claim is.
+    /// </summary>
+    public IReadOnlyList<SealedPage> Sealed { get; init; } = [];
+
+    /// <summary>
     /// How many commits <c>_meta/drift-ignore-revs</c> held out of the range. Zero means the
     /// answer came from the ordinary flat diff: when the file is absent, and equally when it names
     /// nothing in this range, the per-commit walk's answer is discarded rather than trusted, so a
@@ -120,6 +132,18 @@ public sealed record DriftedPage(
         .Distinct(StringComparer.Ordinal)
         .Count();
 }
+
+/// <summary>One page the diff flagged and its own seal then held out (spec §3.3).</summary>
+/// <param name="Path">Wiki-root-relative markdown path — the key <c>state.json</c> uses (§5.3).</param>
+/// <param name="Title">The page's resolved Confluence title, for a report a human reads.</param>
+/// <param name="SealedAt">
+/// When the publish that wrote the seal took it (<see cref="State.SealedVerdict.SealedAt"/>), or
+/// <c>null</c> when state carries the fingerprint without a date. Carried because the seal is only as
+/// current as the publish behind it: "sealed this morning" and "sealed in March" are the same verdict
+/// and not the same reassurance, and a reader who cannot tell them apart cannot judge the one case this
+/// feature is silent about — a body somebody edited by hand in the repo without republishing.
+/// </param>
+public sealed record SealedPage(string Path, string Title, string? SealedAt);
 
 /// <summary>One <c>sources</c> glob and the changed files it matched.</summary>
 /// <param name="Pattern">The glob exactly as the page's frontmatter spells it, not as normalized.</param>

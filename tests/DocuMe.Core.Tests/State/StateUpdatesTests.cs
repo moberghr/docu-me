@@ -14,7 +14,16 @@ public sealed class StateUpdatesTests
         ContentHash: "sha256:new",
         PublishedVersion: 7,
         Attachments: new Dictionary<string, string> { ["diagram.svg"] = "sha256:d" },
-        DiagramWidths: new Dictionary<string, string> { ["diagram.svg"] = "213" });
+        DiagramWidths: new Dictionary<string, string> { ["diagram.svg"] = "213" },
+        SourceSeal: null);
+
+    /// <summary>What a publish that generated a body seals (spec §3.2).</summary>
+    private static readonly SealedVerdict Seal = new()
+    {
+        SourcesHash = "sha256:aaaa",
+        SealedAt = "2026-08-19T09:12:44Z",
+        RepoSha = "6accfb8",
+    };
 
     private static DocumeState StateWith(PageState page) => new()
     {
@@ -98,6 +107,55 @@ public sealed class StateUpdatesTests
 
         page.DiagramWidths.Count.ShouldBe(1);
         page.DiagramWidths["diagram.svg"].ShouldBe("213");
+    }
+
+    [Fact]
+    public void RecordPublish_RecordsTheSealBesideTheContentHash()
+    {
+        // The two are written by one transition on purpose: the seal claims "these were the source bytes
+        // when THIS body was published", and a seal recorded at any other moment describes another body.
+        var page = StateUpdates
+            .RecordPublish(new DocumeState(), Path, Result with { SourceSeal = Seal })
+            .Pages[Path];
+
+        page.ContentHash.ShouldBe("sha256:new");
+        page.Verdict!.SourcesHash.ShouldBe("sha256:aaaa");
+        page.Verdict.SealedAt.ShouldBe("2026-08-19T09:12:44Z");
+        page.Verdict.RepoSha.ShouldBe("6accfb8");
+    }
+
+    [Fact]
+    public void RecordPublish_ReplacesAnEarlierSeal()
+    {
+        var existing = new PageState { PageId = "123456", Verdict = Seal };
+        var resealed = Seal with { SourcesHash = "sha256:bbbb", SealedAt = "2026-08-20T11:00:00Z" };
+
+        var verdict = StateUpdates
+            .RecordPublish(StateWith(existing), Path, Result with { SourceSeal = resealed })
+            .Pages[Path]
+            .Verdict;
+
+        verdict!.SourcesHash.ShouldBe("sha256:bbbb");
+        verdict.SealedAt.ShouldBe("2026-08-20T11:00:00Z");
+    }
+
+    [Fact]
+    public void RecordPublish_WithNoSeal_LeavesTheStandingSealAlone()
+    {
+        // The one owned field a null does not clear (PublishedPage.SourceSeal). A publish that generated
+        // no body — a move, an attachment upload — leaves the live body exactly as the sources named by
+        // the standing seal produced it, so clearing it would unseal a page for doing nothing to it.
+        var existing = new PageState { PageId = "123456", Verdict = Seal };
+
+        StateUpdates.RecordPublish(StateWith(existing), Path, Result).Pages[Path].Verdict.ShouldBe(Seal);
+    }
+
+    [Fact]
+    public void RecordPublish_WithNoSealAndNoneBefore_RecordsNone()
+    {
+        // Absent, not empty: a page nobody ever sealed has to stay distinguishable from one whose globs
+        // match no file, because only the second is a value drift may compare against.
+        StateUpdates.RecordPublish(new DocumeState(), Path, Result).Pages[Path].Verdict.ShouldBeNull();
     }
 
     [Fact]

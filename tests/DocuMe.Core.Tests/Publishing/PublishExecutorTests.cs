@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using DocuMe.Core.Config;
 using DocuMe.Core.Confluence;
+using DocuMe.Core.Drift;
 using DocuMe.Core.Markdown;
 using DocuMe.Core.Publishing;
 using DocuMe.Core.State;
@@ -36,6 +37,17 @@ public sealed class PublishExecutorTests : IDisposable
     private const string Svg = """<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>""";
     private const string LogoAttachment = "images_logo.png";
 
+    /// <summary>
+    /// The seal of a corpus holding one file, <c>src/Loans/Rate.cs</c> = <c>"rate\n"</c>. Pinned rather
+    /// than recomputed, so these tests assert what a publish wrote into a committed state file and not
+    /// merely that it wrote back whatever it computes today; <c>SourcesFingerprintTests</c> pins the
+    /// preimage the constant comes from.
+    /// </summary>
+    private const string RateOnly = "sha256:d37215c86a098d53e6a93103dd719a3183df07732e3fc215b8e7b57d520cb1fc";
+
+    /// <summary>The seal of no files at all — a real value, and never a stand-in for "unsealed".</summary>
+    private const string EmptySet = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
     /// <summary>The v2 page endpoint, with the trailing slash the id follows.</summary>
     private const string PagesPath = "/wiki/api/v2/pages/";
 
@@ -53,6 +65,9 @@ public sealed class PublishExecutorTests : IDisposable
 
     /// <summary>How many times the fake renderer was asked to render, per distinct source.</summary>
     private readonly List<string> _rendered = [];
+
+    /// <summary>What git would report as tracked here, maintained by <see cref="WriteSource"/>.</summary>
+    private readonly List<string> _tracked = [];
 
     /// <summary>
     /// The server <see cref="RepublishWithCommentsAsync"/> started, so a test that used it can still assert
@@ -1887,6 +1902,286 @@ public sealed class PublishExecutorTests : IDisposable
             .ShouldBe(2);
     }
 
+    /// <summary>
+    /// The seal (docs/specs/2026-08-19-sealed-source-verdicts.md §3.2), written in the same transition as
+    /// the content hash it describes and from the run's own sha and clock.
+    /// </summary>
+    [Fact]
+    public async Task Seals_the_sources_of_every_page_whose_body_it_writes()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        WriteSource("src/Loans/Rate.cs", "rate\n");
+
+        var outcome = await ExecuteAsync(
+            server, new DocumeState(), repoSha: "c0ffee", sealing: Sealing(("guides/setup.md", "src/**")));
+
+        outcome.Succeeded.ShouldBeTrue();
+
+        var verdict = outcome.State.Pages["guides/setup.md"].Verdict;
+        verdict.ShouldNotBeNull();
+        verdict!.SourcesHash.ShouldBe(RateOnly);
+        verdict.SealedAt.ShouldBe("2026-08-19T09:12:44Z");
+        verdict.RepoSha.ShouldBe("c0ffee");
+    }
+
+    /// <summary>
+    /// A page whose globs match no file seals nothing at all (spec §3.1 as revised 2026-08-19). The empty
+    /// set is a real hash and a useless verdict: it is what a page declaring no sources, a glob with a
+    /// typo in it and a sparse checkout all produce, so a later drift run under the same structural
+    /// condition would recompute the identical constant, match it, and report a page whose sources were
+    /// never read as verified. Refusing to write it is what makes a seal in state mean "at least one file
+    /// was hashed".
+    /// </summary>
+    [Fact]
+    public async Task Seals_nothing_for_a_page_whose_globs_match_nothing()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        WriteSource("src/Loans/Rate.cs", "rate\n");
+
+        // README declares nothing, so its globs match nothing; the guide's glob names a directory that
+        // is not in this tree, which is the same outcome by a route an operator can get wrong.
+        var outcome = await ExecuteAsync(
+            server,
+            new DocumeState(),
+            repoSha: "c0ffee",
+            sealing: Sealing(("guides/setup.md", "src/Deposits/**")));
+
+        outcome.Succeeded.ShouldBeTrue();
+
+        outcome.State.Pages["README.md"].Verdict.ShouldBeNull(
+            $"A page that declares no sources sealed {EmptySet}, which a later drift run would match.");
+
+        outcome.State.Pages["guides/setup.md"].Verdict.ShouldBeNull(
+            $"A glob that matched nothing sealed {EmptySet}, which a later drift run would match.");
+
+        // The dead glob is the half worth saying out loud: nobody investigates a green run, so the page
+        // that declared a glob and got nothing back is named, and the page that declared none is not.
+        var warning = outcome.Warnings.ShouldHaveSingleItem();
+
+        warning.ShouldContain("guides/setup.md");
+        warning.ShouldContain("matched none of the files git tracks");
+    }
+
+    /// <summary>
+    /// The catch-and-warn branch of <c>SealSources</c>, whose whole documented contract is "sources it
+    /// cannot read seal nothing, and warn" — a regression turning it into an unhandled exception would
+    /// abort a whole publish run rather than degrade one page's seal, and until now nothing exercised it.
+    /// The unreadable candidate is a directory git tracks (a submodule gitlink), which
+    /// <c>File.ReadAllBytes</c> answers <see cref="UnauthorizedAccessException"/> for.
+    /// </summary>
+    [Fact]
+    public async Task A_page_whose_sources_cannot_be_read_publishes_warns_and_seals_nothing()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        WriteSource("src/Loans/Rate.cs", "rate\n");
+        TrackedDirectory("src/Loans/vendored");
+
+        var outcome = await ExecuteAsync(
+            server, new DocumeState(), repoSha: "c0ffee", sealing: Sealing(("guides/setup.md", "src/**")));
+
+        outcome.Succeeded.ShouldBeTrue("One page's unreadable sources aborted the whole run.");
+        outcome.State.Pages["guides/setup.md"].PageId.ShouldNotBeNull("The page itself was not published.");
+        outcome.State.Pages["guides/setup.md"].Verdict.ShouldBeNull();
+
+        var warning = outcome.Warnings.ShouldHaveSingleItem();
+
+        warning.ShouldContain("guides/setup.md");
+        warning.ShouldContain("could not all be read");
+
+        // Never sealed before, so the commit range is what answers for it — and the message says that
+        // rather than the other half of the truth (see the next test).
+        warning.ShouldContain("from the commit range");
+    }
+
+    /// <summary>
+    /// The same failure on a page an earlier publish did seal. <see cref="StateUpdates.RecordPublish"/>
+    /// carries a standing seal through a null, so this page is not back on the commit range at all — it is
+    /// still being answered for from bytes that are now older than the body this run just wrote. Two
+    /// different situations for the operator, so two different sentences.
+    /// </summary>
+    [Fact]
+    public async Task The_warning_says_when_a_page_is_left_running_on_an_older_seal()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        WriteSource("src/Loans/Rate.cs", "rate\n");
+
+        var first = await ExecuteAsync(
+            server, new DocumeState(), repoSha: "c0ffee", sealing: Sealing(("guides/setup.md", "src/**")));
+
+        first.State.Pages["guides/setup.md"].Verdict!.SourcesHash.ShouldBe(RateOnly);
+
+        // The body changes, so the page republishes and re-seals — except that a tracked candidate under
+        // its glob has become unreadable in the meantime.
+        Write(
+            "guides/setup.md",
+            SetupPage.Replace("# Setup", "# Setup\n\nThe rate is 4.5%.", StringComparison.Ordinal));
+        TrackedDirectory("src/Loans/vendored");
+
+        server.ResetLogEntries();
+
+        // The version state recorded, so nobody edited the page in Confluence and the seal warning is
+        // the only one this run has to say.
+        StubRead(server, version: 1);
+        StubUpdate(server);
+
+        var second = await ExecuteAsync(
+            server,
+            first.State,
+            repoSha: "deadbee",
+            checkComments: false,
+            sealing: Sealing(("guides/setup.md", "src/**")));
+
+        second.UpdatedCount.ShouldBe(1);
+
+        // Unchanged, not cleared: the seal describes bytes, and nothing about this run disproved them.
+        second.State.Pages["guides/setup.md"].Verdict!.SourcesHash.ShouldBe(RateOnly);
+        second.State.Pages["guides/setup.md"].Verdict!.RepoSha.ShouldBe("c0ffee");
+
+        var warning = second.Warnings.ShouldHaveSingleItem();
+
+        warning.ShouldContain("guides/setup.md");
+        warning.ShouldContain("still stands");
+
+        const string misleading = "The message tells an operator the page fell back to the commit range "
+            + "when it is actually still being answered for by a seal older than the body just published.";
+
+        warning.ShouldNotContain("from the commit range", customMessage: misleading);
+    }
+
+    /// <summary>
+    /// A run told nothing to seal against publishes exactly as it did before this feature existed, which
+    /// is what lets the seal be switched on per caller rather than per wiki.
+    /// </summary>
+    [Fact]
+    public async Task Seals_nothing_when_the_run_was_given_no_sources_to_seal_against()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var outcome = await ExecuteAsync(server, new DocumeState(), repoSha: "c0ffee");
+
+        outcome.State.Pages["README.md"].Verdict.ShouldBeNull();
+        outcome.State.Pages["guides/setup.md"].Verdict.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// The no-op republish, asserted explicitly because it is the case the seal is easiest to get wrong
+    /// in: nothing about the page changed, its sources moved underneath it, and the standing seal must
+    /// keep pointing at the bytes the LIVE body was generated from. Re-sealing here would suppress
+    /// exactly the drift report that page is owed.
+    /// </summary>
+    [Fact]
+    public async Task A_republish_that_writes_no_body_leaves_the_previous_seal_standing()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        WriteSource("src/Loans/Rate.cs", "rate\n");
+
+        var sealing = Sealing(("guides/setup.md", "src/**"));
+        var first = await ExecuteAsync(server, new DocumeState(), repoSha: "c0ffee", sealing: sealing);
+        first.State.Pages["guides/setup.md"].Verdict!.SourcesHash.ShouldBe(RateOnly);
+
+        // The source moves, the markdown does not: every page plans as a skip.
+        WriteSource("src/Loans/Rate.cs", "rate: 4.5\n");
+        server.ResetLogEntries();
+
+        var second = await ExecuteAsync(
+            server,
+            first.State,
+            repoSha: "deadbee",
+            sealing: sealing with { SealedAt = new DateTimeOffset(2026, 8, 20, 11, 0, 0, TimeSpan.Zero) });
+
+        second.Pages.ShouldBeEmpty();
+
+        // Not merely an equal seal: the page's whole entry is the one the first run wrote, because a
+        // skipped page is never recorded again. (The run still stamps its own lastPublishedSha, which is
+        // a fact about the run rather than about this page.)
+        second.State.Pages["guides/setup.md"].ShouldBeSameAs(first.State.Pages["guides/setup.md"]);
+        second.State.Pages["guides/setup.md"].Verdict!.SourcesHash.ShouldBe(RateOnly);
+    }
+
+    /// <summary>A body rewrite re-seals: the new body was generated from whatever the sources say now.</summary>
+    [Fact]
+    public async Task A_republish_that_rewrites_the_body_re_seals_it()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        WriteSource("src/Loans/Rate.cs", "rate\n");
+
+        var sealing = Sealing(("guides/setup.md", "src/**"));
+        var first = await ExecuteAsync(server, new DocumeState(), repoSha: "c0ffee", sealing: sealing);
+
+        WriteSource("src/Loans/Rate.cs", "rate: 4.5\n");
+        Write(
+            "guides/setup.md",
+            SetupPage.Replace("# Setup", "# Setup\n\nThe rate is 4.5%.", StringComparison.Ordinal));
+
+        server.ResetLogEntries();
+        StubRead(server, version: 4);
+        StubUpdate(server);
+
+        var second = await ExecuteAsync(
+            server, first.State, repoSha: "deadbee", checkComments: false, sealing: sealing);
+
+        second.UpdatedCount.ShouldBe(1);
+
+        var verdict = second.State.Pages["guides/setup.md"].Verdict;
+        verdict!.SourcesHash.ShouldNotBe(RateOnly);
+        verdict.SourcesHash.ShouldBe(SourcesFingerprint.Compute(_dir, ["src/**"], _tracked));
+        verdict.RepoSha.ShouldBe("deadbee");
+    }
+
+    /// <summary>
+    /// An attachment-only publish (§6.2's third action) writes no body, so it re-seals nothing: the live
+    /// text is still what the sealed sources produced. The same reason a move does not re-seal.
+    /// </summary>
+    [Fact]
+    public async Task An_attachment_only_publish_leaves_the_seal_standing()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+        WriteSource("src/Loans/Rate.cs", "rate\n");
+
+        var sealing = Sealing(("README.md", "src/**"));
+        var first = await ExecuteAsync(server, new DocumeState(), repoSha: "c0ffee", sealing: sealing);
+
+        // Only the logo's bytes move, so README's body is unchanged and its action is UpdateAttachments.
+        WriteSource("images/logo.png", "a different logo");
+        WriteSource("src/Loans/Rate.cs", "rate: 4.5\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 2);
+
+        var second = await ExecuteAsync(server, first.State, repoSha: "deadbee", sealing: sealing);
+
+        second.Failures.ShouldBeEmpty();
+        second.Pages
+            .Single(page => string.Equals(page.Path, "README.md", StringComparison.Ordinal))
+            .Action
+            .ShouldBe(PagePublishAction.UpdateAttachments);
+        second.State.Pages["README.md"].Verdict!.SourcesHash.ShouldBe(RateOnly);
+        second.State.Pages["README.md"].Verdict!.RepoSha.ShouldBe("c0ffee");
+    }
+
     private static DocumeConfig Config() => new()
     {
         Confluence = new ConfluenceConfig
@@ -2343,6 +2638,7 @@ public sealed class PublishExecutorTests : IDisposable
         bool checkComments = true,
         bool blockOnOpenComments = false,
         bool notifyReviewers = false,
+        SourceSealing? sealing = null,
         CancellationToken? cancellationToken = null)
     {
         config ??= Config();
@@ -2371,6 +2667,7 @@ public sealed class PublishExecutorTests : IDisposable
             CheckOpenComments = checkComments,
             BlockOnOpenComments = blockOnOpenComments,
             NotifyReviewers = notifyReviewers,
+            Sealing = sealing,
         };
 
         return await executor.ExecuteAsync(
@@ -2398,6 +2695,56 @@ public sealed class PublishExecutorTests : IDisposable
     {
         Write("10-domains.md", "# Domains\n\nFirst, by tree order.\n");
         Write("20-guides.md", "# Guides index\n\nSecond, by tree order.\n");
+    }
+
+    private static IReadOnlyList<string> Globs(string pattern) => [pattern];
+
+    /// <summary>
+    /// What a run seals against (<see cref="SourceSealing"/>): this fixture's wiki root doubling as the
+    /// repo root, one glob per named page, one fixed moment, and the files git would report as tracked —
+    /// the four things the CLI supplies in a real run. A page not named here declares no sources and
+    /// seals the empty set.
+    /// </summary>
+    /// <remarks>
+    /// The candidate list is snapshotted at the call, as one <c>git ls-files</c> per run is: a test that
+    /// holds a <see cref="SourceSealing"/> across two publishes is holding the answer the first run got.
+    /// </remarks>
+    private SourceSealing Sealing(params (string Path, string Pattern)[] sources) => new(
+        _dir,
+        sources.ToDictionary(source => source.Path, source => Globs(source.Pattern), StringComparer.Ordinal),
+        new DateTimeOffset(2026, 8, 19, 9, 12, 44, TimeSpan.Zero),
+        [.. _tracked]);
+
+    /// <summary>
+    /// Writes a file the <c>sources</c> globs match, byte for byte: the fingerprint is over raw bytes, so
+    /// a helper that translated <c>\n</c> on Windows would move the pinned constants with the platform.
+    /// Recorded as tracked, the way <c>git add</c> would, because the seal matches against git's list
+    /// rather than against the directory (<see cref="SourcesFingerprint.Compute"/>).
+    /// </summary>
+    private void WriteSource(string relativePath, string content)
+    {
+        File.WriteAllBytes(Materialize(relativePath), Encoding.UTF8.GetBytes(content));
+
+        if (!_tracked.Contains(relativePath, StringComparer.Ordinal))
+        {
+            _tracked.Add(relativePath);
+        }
+    }
+
+    /// <summary>
+    /// Adds a tracked candidate the working tree holds as a directory — the shape a git submodule's
+    /// gitlink takes in <c>git ls-files</c>, and the cheapest unreadable file there is: matching it costs
+    /// nothing and <c>File.ReadAllBytes</c> refuses it with <see cref="UnauthorizedAccessException"/>.
+    /// </summary>
+    private void TrackedDirectory(string relativePath)
+    {
+        Directory.CreateDirectory(
+            Path.Combine(_dir, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+
+        if (!_tracked.Contains(relativePath, StringComparer.Ordinal))
+        {
+            _tracked.Add(relativePath);
+        }
     }
 
     private void Write(string relativePath, string content) =>

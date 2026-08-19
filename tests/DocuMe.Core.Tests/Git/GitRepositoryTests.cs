@@ -241,6 +241,83 @@ public sealed class GitRepositoryTests : IDisposable
         thrown.Message.ShouldContain("d00dfeed");
     }
 
+    /// <summary>
+    /// SC12: the candidate set a seal may match is git's index, so a gitignored build artifact is not in
+    /// it and neither is a file nobody has added. That is what makes the seal and the drift check see one
+    /// universe — <c>git diff</c> reports neither either — and what stops a page with
+    /// <c>sources: ["src/**"]</c> in a repo that builds in-tree from sealing <c>bin/</c> and unsealing
+    /// itself on the next rebuild (spec §4b defect F).
+    /// </summary>
+    [Fact]
+    public async Task Lists_the_files_it_tracks_without_the_ones_it_ignores()
+    {
+        Write(".gitignore", "bin/\n");
+        Write("src/Loans/Rate.cs", "// rate\n");
+        Write("src/Loans/bin/Debug/DocuMe.dll", "not really a dll");
+        Commit("first");
+
+        // Added after the commit and never staged: untracked rather than ignored, and out either way.
+        Write("src/Loans/Scratch.cs", "// scratch\n");
+
+        var tracked = await GitRepository.TrackedFilesAsync(_dir, TestContext.Current.CancellationToken);
+
+        tracked.ShouldBe([".gitignore", "src/Loans/Rate.cs"]);
+    }
+
+    /// <summary>
+    /// Scoped and spelled like the diff's answer, because the two are matched against one page's globs:
+    /// a seal computed over repo-root-relative paths and a drift check over directory-relative ones would
+    /// disagree about every page in a repo where <c>docume.json</c> is not at the top.
+    /// </summary>
+    [Fact]
+    public async Task Answers_tracked_files_relative_to_the_directory_it_was_asked_about()
+    {
+        Write($"{WikiRoot}/a.md", "# A\n");
+        Write($"{WikiRoot}/images/logo.png", "not really a png");
+        Write("README.md", "# The repo itself\n");
+        Commit("first");
+
+        var tracked = await GitRepository.TrackedFilesAsync(
+            Path.Combine(_dir, "docs", "wiki"), TestContext.Current.CancellationToken);
+
+        tracked.ShouldBe(["a.md", "images/logo.png"]);
+    }
+
+    /// <summary>
+    /// A tracked file the working tree no longer has is still listed, because the index still holds it.
+    /// It reaches the fingerprint as an unreadable file rather than as a missing one, which is the safe
+    /// direction: deleting a documented source is drift, and the page must not seal through it.
+    /// </summary>
+    [Fact]
+    public async Task Still_lists_a_tracked_file_deleted_from_the_working_tree()
+    {
+        Write("src/Loans/Rate.cs", "// rate\n");
+        Commit("first");
+
+        File.Delete(Path.Combine(_dir, "src", "Loans", "Rate.cs"));
+
+        var tracked = await GitRepository.TrackedFilesAsync(_dir, TestContext.Current.CancellationToken);
+
+        tracked.ShouldBe(["src/Loans/Rate.cs"]);
+    }
+
+    /// <summary>
+    /// It throws rather than answering empty, which is
+    /// <see cref="GitRepository.ChangedFilesBetweenAsync"/>'s rule turned around: an empty list is a
+    /// legitimate answer that seals the empty-set fingerprint, so a
+    /// failure returning one would seal "this page documents nothing" onto every page in the wiki.
+    /// </summary>
+    [Fact]
+    public async Task Refuses_to_list_the_tracked_files_of_a_directory_that_is_not_a_checkout()
+    {
+        var thrown = await Should.ThrowAsync<GitException>(async () => await GitRepository
+            .TrackedFilesAsync(_notARepo, TestContext.Current.CancellationToken));
+
+        // The directory has to be in the message: the reader is at a terminal wondering which of their
+        // paths git objected to.
+        thrown.Message.ShouldContain(_notARepo);
+    }
+
     [Fact]
     public async Task Treats_a_directory_that_is_not_a_checkout_as_no_sha_but_refuses_to_diff_it()
     {
