@@ -39,7 +39,7 @@ public sealed class DogfoodWikiTests
     /// reads that.
     /// </remarks>
     private static readonly HashSet<string> SkippedDirectories =
-        new(StringComparer.Ordinal) { ".git", ".mtk", ".playwright-mcp", "bin", "obj", "node_modules" };
+        new(StringComparer.Ordinal) { ".codex", ".git", ".mtk", ".playwright-mcp", "bin", "obj", "node_modules" };
 
     /// <summary>
     /// What a consumer receives: the marketplace this repo is, the tool, the plugin, the files
@@ -72,7 +72,6 @@ public sealed class DogfoodWikiTests
     private static readonly string[] UnshippedRoots =
     [
         ".claude/",  // this repo's own agent configuration: rules, references, MTK settings.
-        ".codex/",   // the Codex CLI's hook config for this repo — agent tooling, same as .claude/.
         ".github/",  // CI for this repository. The workflows `init` scaffolds live under templates/.
         "docs/",     // the wiki itself: what documents the product, not an artifact it describes.
         "tasks/",    // MTK's lessons and todo list — notes about building DocuMe.

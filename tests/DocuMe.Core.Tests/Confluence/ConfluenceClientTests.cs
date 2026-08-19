@@ -1923,6 +1923,168 @@ public sealed class ConfluenceClientTests
         server.LogEntries.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// The read half of the managed-page marker (docs/specs/2026-08-18-managed-marker.md): the v2
+    /// property list filtered by key, whose value comes back re-serialized as compact JSON. The
+    /// response here is deliberately pretty-printed, so what the client answers can only be its own
+    /// re-serialization, never the wire text.
+    /// </summary>
+    [Fact]
+    public async Task Reads_a_page_property_by_key_and_answers_its_value_as_compact_json()
+    {
+        using var server = WireMockServer.Start();
+        var body = PagePropertyBody;
+        server
+            .Given(Request.Create().WithPath(PropertiesPath).UsingGet())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        var property = await client.FindPagePropertyAsync(
+            PageId,
+            "docume",
+            TestContext.Current.CancellationToken);
+
+        property.ShouldNotBeNull();
+        property.Id.ShouldBe("90001");
+        property.Key.ShouldBe("docume");
+        property.RawValue.ShouldBe("""{"managed":true,"path":"10-concepts/lifecycle.md"}""");
+
+        var request = LastRequest(server);
+        request.Path.ShouldBe(PropertiesPath);
+        request.Query!["key"].Single().ShouldBe("docume");
+    }
+
+    /// <summary>
+    /// A page with no marker answers an empty key-filtered list, and that is "absent", not an error.
+    /// It is exactly the answer that makes a prune refuse to delete an adopted page
+    /// (docs/specs/2026-08-18-managed-marker.md).
+    /// </summary>
+    [Fact]
+    public async Task A_page_without_the_property_reads_as_absent()
+    {
+        using var server = WireMockServer.Start();
+        var body = EmptyResultsBody;
+        server
+            .Given(Request.Create().WithPath(PropertiesPath).UsingGet())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        var property = await client.FindPagePropertyAsync(
+            PageId,
+            "docume",
+            TestContext.Current.CancellationToken);
+
+        property.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// The <c>key</c> filter is a request parameter, and honoring it is the server's promise, not the
+    /// client's proof: a result that comes back under some other key must read as "no marker" even when
+    /// its value looks exactly like one. The one caller of this read is deciding whether a delete is
+    /// authorized, and a foreign property's value must never authorize it.
+    /// </summary>
+    [Fact]
+    public async Task A_property_answered_under_some_other_key_reads_as_absent()
+    {
+        using var server = WireMockServer.Start();
+        const string body = """
+            {
+              "results": [
+                { "id": "90002", "key": "other",
+                  "value": { "managed": true, "path": "10-concepts/lifecycle.md" },
+                  "version": { "number": 1 } }
+              ],
+              "_links": {}
+            }
+            """;
+        server
+            .Given(Request.Create().WithPath(PropertiesPath).UsingGet())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        var property = await client.FindPagePropertyAsync(
+            PageId,
+            "docume",
+            TestContext.Current.CancellationToken);
+
+        property.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// A page that is gone answers 404, and the read surfaces it as the failure it is, deliberately
+    /// unlike <see cref="ConfluenceClient.FindPageByIdAsync"/>: a missing page is not a missing
+    /// property, and folding the two into one <c>null</c> once had a prune mistaking a hand-deleted
+    /// page for an unmanaged one — refused forever, its state entry never dropped, its ancestors
+    /// wedged behind it. The prune catches this 404 and counts the page as already gone.
+    /// </summary>
+    [Fact]
+    public async Task A_property_read_on_a_page_confluence_no_longer_has_fails_as_not_found()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(PropertiesPath).UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NotFound).WithBody("{}"));
+
+        using var client = CreateClient(server);
+        var thrown = await Should.ThrowAsync<ConfluenceApiException>(async () => await client
+            .FindPagePropertyAsync(PageId, "docume", TestContext.Current.CancellationToken));
+
+        thrown.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// The double-encoding trap the marker's whole design turns on
+    /// (docs/specs/2026-08-18-managed-marker.md): the value must land in the request as a JSON object,
+    /// because a string holding JSON would read back as a string and the prune check would refuse
+    /// every page DocuMe itself stamped.
+    /// </summary>
+    [Fact]
+    public async Task Creates_a_property_whose_value_lands_as_a_json_object_not_a_string()
+    {
+        using var server = WireMockServer.Start();
+        var body = CreatedPagePropertyBody;
+        server
+            .Given(Request.Create().WithPath(PropertiesPath).UsingPost())
+            .RespondWith(Json(body));
+
+        using var client = CreateClient(server);
+        await client.CreatePagePropertyAsync(
+            PageId,
+            "docume",
+            """{"managed":true,"path":"a.md"}""",
+            TestContext.Current.CancellationToken);
+
+        LastRequest(server).Path.ShouldBe(PropertiesPath);
+
+        var payload = Payload(server);
+        payload.GetProperty("key").GetString().ShouldBe("docume");
+
+        var value = payload.GetProperty("value");
+        value.ValueKind.ShouldBe(JsonValueKind.Object);
+        value.GetProperty("managed").GetBoolean().ShouldBeTrue();
+        value.GetProperty("path").GetString().ShouldBe("a.md");
+    }
+
+    /// <summary>
+    /// A 401 on the marker read is the same hard stop every sibling read gets (rule §1.2): an expired
+    /// token is not a missing marker, and shrugging it off would have a prune refusing every page for
+    /// a reason nobody reported.
+    /// </summary>
+    [Fact]
+    public async Task Stops_dead_when_the_property_read_is_unauthorized()
+    {
+        using var server = WireMockServer.Start();
+        server
+            .Given(Request.Create().WithPath(PropertiesPath).UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Unauthorized));
+
+        using var client = CreateClient(server);
+        _ = await Should.ThrowAsync<ConfluenceAuthenticationException>(
+            () => client.FindPagePropertyAsync(PageId, "docume", TestContext.Current.CancellationToken));
+
+        server.LogEntries.Count.ShouldBe(1);
+    }
+
     private static ConfluenceClient CreateClient(
         WireMockServer server,
         int maxRetryAttempts = 2,
@@ -1954,6 +2116,8 @@ public sealed class ConfluenceClientTests
     private static string MovePath(string position) => LegacyPath($"move/{position}/{TargetPageId}");
 
     private static string ChildrenPath => ApiPath($"pages/{PageId}/children");
+
+    private static string PropertiesPath => ApiPath($"pages/{PageId}/properties");
 
     /// <summary>
     /// A first page of children that offers another. The cursor carries base64 padding, percent-encoded
@@ -2350,6 +2514,32 @@ public sealed class ConfluenceClientTests
           ],
           "start": 0, "limit": 50, "size": 1,
           "_links": {}
+        }
+        """;
+
+    /// <summary>
+    /// One content property whose value is an object, spaced the way a server pretty-prints. What the
+    /// client answers for it must be the compact re-serialization, never this wire text.
+    /// </summary>
+    private static string PagePropertyBody =>
+        """
+        {
+          "results": [
+            { "id": "90001", "key": "docume",
+              "value": { "managed": true, "path": "10-concepts/lifecycle.md" },
+              "version": { "number": 1 } }
+          ],
+          "_links": {}
+        }
+        """;
+
+    /// <summary>What a property create answers: the stored property, not a result set.</summary>
+    private static string CreatedPagePropertyBody =>
+        """
+        {
+          "id": "90001", "key": "docume",
+          "value": { "managed": true, "path": "a.md" },
+          "version": { "number": 1 }
         }
         """;
 

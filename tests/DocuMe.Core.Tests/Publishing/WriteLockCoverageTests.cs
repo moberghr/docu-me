@@ -87,6 +87,7 @@ public sealed class WriteLockCoverageTests
         ["AddLabelsAsync"] = "Post",
         ["CreateFooterCommentAsync"] = "Post",
         ["CreatePageAsync"] = "Post",
+        ["CreatePagePropertyAsync"] = "Post",
         ["DeletePageAsync"] = "Delete",
         ["MovePageAsync"] = "Put",
         ["RemoveLabelAsync"] = "Delete",

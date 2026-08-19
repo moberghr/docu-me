@@ -390,3 +390,25 @@ public sealed record ConfluenceLabel(string Name, string Prefix);
 /// which is the case §8's wording exists for.
 /// </param>
 public sealed record ConfluenceLabelledPage(string Id, string Title, int? Version);
+
+/// <summary>
+/// A content property on a page: the key/value metadata Confluence stores off the body, invisible in
+/// the page itself. This is where DocuMe stamps its managed-page marker, the provenance a prune
+/// verifies before deleting anything (docs/specs/2026-08-18-managed-marker.md).
+/// </summary>
+/// <param name="Id">
+/// The property id. Every read answers it and only an update would need it, which DocuMe never
+/// performs: a marker is written once and never edited.
+/// </param>
+/// <param name="Key">
+/// The property key, unique per page. The marker's is <c>docume</c>, but the name is the caller's to
+/// own, not this record's.
+/// </param>
+/// <param name="RawValue">
+/// The property's value re-serialized as compact JSON, whatever shape it is. Deliberately not parsed
+/// here: a content property's value is schemaless by design, so the layer that stamped it is the one
+/// that knows what it means (the Publishing marker of docs/specs/2026-08-18-managed-marker.md), and
+/// this client's job is to carry it whole. Compact rather than verbatim wire text, so what the caller
+/// compares and logs does not depend on how a server chose to print whitespace.
+/// </param>
+public sealed record ConfluencePageProperty(string Id, string Key, string RawValue);

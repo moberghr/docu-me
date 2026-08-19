@@ -153,6 +153,7 @@ Machine-owned, one entry per page:
       "diagramWidths": { "mermaid-abc123.svg": "241" },
       "approval": { "status": "approved", "approvedVersion": 6 },
       "stale": false,
+      "marked": true,
       "feedbackCursor": "2026-08-01T10:00:00Z"
     }
   }
@@ -180,6 +181,11 @@ the layout without changing the diagram source.
 `approval` carries three more keys than the example shows: `approvedBy`, `approvedAt` and a `history`
 array. [Approval and drift](../10-concepts/approval-and-drift.md) covers what each one means, including
 why the first of them always reads `unknown`.
+
+`marked` records that the page carries DocuMe's managed content property, stamped at create and healed
+on the first body update of a page published before the marker existed. It is a cache, never the
+authority: `publish --prune` reads the property live and refuses to delete a page that does not carry
+it, whatever state says.
 
 ## Excluding files
 

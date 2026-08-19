@@ -75,6 +75,7 @@ internal static class ShippedTree
             + "CLAUDE.md. Same classification as CLAUDE.md and for the same reason: standards for "
             + "working on DocuMe, not on a consumer's repo. It is in the global gitignore, so `git "
             + "status` never shows it and only this sweep, which walks the filesystem, sees it at all.",
+
         ["CLAUDE.md"] = "engineering standards for agents working on DocuMe, not on a consumer's repo.",
         ["CODE_INDEX.md"] = "a generated map of this repository's own source.",
         ["GATES.md"] = "human-gate instructions for Mirko. CARRIES A CLAIM: three `confluence.*` loop "
@@ -82,6 +83,18 @@ internal static class ShippedTree
         ["global.json"] = "the pinned SDK and test runner — toolchain, not product configuration.",
         ["package.json"] = "the mermaid renderer's npm dependency.",
         ["package-lock.json"] = "the resolved lock for the above.",
+    };
+
+    /// <summary>
+    /// Declared entries that exist only where a tool wrote them: gitignored, so absent in every clean
+    /// clone and in CI. Declared in <see cref="OutsideTheQuestion"/> so the sweep can classify them
+    /// when they are present, and skipped by the staleness check, because their absence is the
+    /// clean-checkout normal rather than a stale exemption — the <c>.playwright-mcp</c> lesson
+    /// <c>DogfoodWikiTests</c> records, applied to files.
+    /// </summary>
+    internal static readonly HashSet<string> PresentOnlyLocally = new(StringComparer.Ordinal)
+    {
+        "AGENTS.md",
     };
 
     /// <summary>Every shipped artifact, in no particular order.</summary>

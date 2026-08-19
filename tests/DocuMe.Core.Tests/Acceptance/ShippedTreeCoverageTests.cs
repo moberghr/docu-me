@@ -93,6 +93,7 @@ public sealed class ShippedTreeCoverageTests
 
         var vanished = ShippedTree.OutsideTheQuestion.Keys
             .Where(entry => !Exists(entry))
+            .Where(entry => !ShippedTree.PresentOnlyLocally.Contains(entry))
             .Order(StringComparer.Ordinal)
             .ToList();
 

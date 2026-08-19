@@ -766,6 +766,18 @@ internal static class PublishCommand
 
     private static void RenderPruneOutcome(PruneOutcome outcome)
     {
+        // The live managed-marker check's refusals, named the way PRUNE REFUSED names the planner's:
+        // a page prune would not delete has to be listed, or "found nothing" and "refused to touch
+        // three pages" look identical.
+        if (outcome.Unmanaged.Count > 0)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine(
+                $"[yellow]PRUNE REFUSED (UNMANAGED)[/] — {outcome.Unmanaged.Count} orphan page(s) not "
+                + "stamped as DocuMe-managed; republish to stamp them, or delete them by hand");
+            RenderPaths(outcome.Unmanaged.Select(page => page.Path));
+        }
+
         foreach (var warning in outcome.Warnings.Take(PagesPerSection))
         {
             AnsiConsole.MarkupLine($"[yellow]•[/] {warning.EscapeMarkup()}");

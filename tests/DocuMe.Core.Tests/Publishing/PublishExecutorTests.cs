@@ -119,7 +119,7 @@ public sealed class PublishExecutorTests : IDisposable
         // README uploads the logo; setup.md uploads the logo and its rendered diagram.
         outcome.UploadedAttachmentCount.ShouldBe(3);
 
-        var creates = Requests(server, "POST", "/wiki/api/v2/pages");
+        var creates = PageCreates(server);
         creates.Count.ShouldBe(2);
 
         // Order is the plan's order, which is tree order, which puts a parent before its children.
@@ -405,7 +405,7 @@ public sealed class PublishExecutorTests : IDisposable
         failure.Message.ShouldContain("is a draft (publish: false)");
         failure.Message.ShouldNotContain("Fix the parent's failure");
 
-        var createdTitles = Requests(server, "POST", "/wiki/api/v2/pages")
+        var createdTitles = PageCreates(server)
             .Select(request => Payload(request).GetProperty("title").GetString())
             .ToArray();
 
@@ -659,7 +659,7 @@ public sealed class PublishExecutorTests : IDisposable
 
         var outcome = await ExecuteAsync(server, new DocumeState());
 
-        var setup = Payload(Requests(server, "POST", "/wiki/api/v2/pages")[1]);
+        var setup = Payload(PageCreates(server)[1]);
         var body = setup.GetProperty("body").GetProperty("storage").GetProperty("value").GetString();
         body.ShouldNotBeNull();
         body.ShouldContain(
@@ -1721,6 +1721,172 @@ public sealed class PublishExecutorTests : IDisposable
         CommentReads(server).ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// Every create stamps the managed-marker property on the new page and records the stamp in state
+    /// (docs/specs/2026-08-18-managed-marker.md): the page's own testimony that DocuMe wrote it, which
+    /// is what <c>--prune</c>'s live check reads before it deletes anything.
+    /// </summary>
+    [Fact]
+    public async Task Stamps_the_managed_marker_on_every_create_and_records_it_in_state()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var outcome = await ExecuteAsync(server, new DocumeState());
+
+        outcome.Succeeded.ShouldBeTrue();
+        outcome.Warnings.ShouldBeEmpty();
+
+        var stamps = PropertyPosts(server);
+        stamps.Count.ShouldBe(2);
+
+        var homeId = PageId(outcome, "README.md");
+        var stamp = stamps.Single(request =>
+            request.Path.StartsWith($"{PagesPath}{homeId}/", StringComparison.Ordinal));
+
+        var payload = Payload(stamp);
+        payload.GetProperty("key").GetString().ShouldBe("docume");
+
+        var value = payload.GetProperty("value");
+        value.GetProperty("managed").GetBoolean().ShouldBeTrue();
+        value.GetProperty("path").GetString().ShouldBe("README.md");
+
+        outcome.State.Pages["README.md"].Marked.ShouldBeTrue();
+        outcome.State.Pages["guides/setup.md"].Marked.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// The self-heal for pages published before the marker existed: state records no stamp, so the next
+    /// body update stamps once, and the run after that spends no request re-proving it. The skip path
+    /// needs no counterpart here, because
+    /// <see cref="Sends_nothing_when_a_second_run_finds_nothing_changed"/> already pins that an
+    /// unchanged page sends nothing at all, stamps included.
+    /// </summary>
+    [Fact]
+    public async Task Stamps_a_pre_marker_page_on_its_next_body_update_and_never_again()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        var first = await ExecuteAsync(server, new DocumeState());
+
+        // As a state file written before the marker shipped would read: the page is published, nothing
+        // says it is stamped.
+        var preMarker = Unmark(first.State, "README.md");
+
+        Write("README.md", "# Home\n\nRewritten after the marker shipped.\n");
+        server.ResetLogEntries();
+        StubRead(server, version: 1);
+        StubUpdate(server);
+        StubNoInlineComments(server);
+
+        var second = await ExecuteAsync(server, preMarker);
+
+        second.Succeeded.ShouldBeTrue();
+        second.UpdatedCount.ShouldBe(1);
+
+        var payload = Payload(PropertyPosts(server).ShouldHaveSingleItem());
+        payload.GetProperty("value").GetProperty("path").GetString().ShouldBe("README.md");
+        second.State.Pages["README.md"].Marked.ShouldBeTrue();
+
+        Write("README.md", "# Home\n\nRewritten once more.\n");
+        server.ResetLogEntries();
+
+        var third = await ExecuteAsync(server, second.State);
+
+        third.Succeeded.ShouldBeTrue();
+        third.UpdatedCount.ShouldBe(1);
+        PropertyPosts(server).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A stamp that fails is a warning and never a page failure: the body is published and correct, and
+    /// what is missing is provenance. <c>Marked</c> stays false, which is what makes the next body
+    /// update try again, and the run's sha still stamps because the wiki's content is published at it.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_marker_stamp_warns_and_the_page_still_publishes()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        // 500 after the transport's retries: the stamp is refused, the pages are not.
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/properties"))
+                .UsingPost())
+            .AtPriority(-1)
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.InternalServerError).WithBody("{}"));
+
+        var outcome = await ExecuteAsync(server, new DocumeState(), repoSha: "c0ffee");
+
+        outcome.Succeeded.ShouldBeTrue();
+        outcome.Failures.ShouldBeEmpty();
+        outcome.CreatedCount.ShouldBe(2);
+
+        outcome.Warnings.Count.ShouldBe(2);
+        outcome.Warnings.ShouldAllBe(warning =>
+            warning.Contains("managed marker", StringComparison.Ordinal)
+            && warning.Contains("--prune", StringComparison.Ordinal));
+
+        outcome.State.Pages["README.md"].Marked.ShouldBeFalse();
+        outcome.State.Pages["guides/setup.md"].Marked.ShouldBeFalse();
+        outcome.State.LastPublishedSha.ShouldBe("c0ffee");
+    }
+
+    /// <summary>
+    /// The already-exists half of a refused stamp: the POST answers 400 because the property is already
+    /// on the page — a create replayed by the retry pipeline, a hand-edited state.json, a re-adopted
+    /// wiki — and one read settles that the stamp it wanted is the stamp it found. That is a success, so
+    /// there is no warning (its advice, "--prune refuses until the next update", would be false against
+    /// the live property) and <c>Marked</c> records true so no later run re-proves it.
+    /// </summary>
+    [Fact]
+    public async Task A_stamp_refused_as_already_existing_reads_the_marker_and_counts_as_stamped()
+    {
+        using var server = WireMockServer.Start();
+        StubSpace(server);
+        StubCreate(server);
+        StubAttachmentUpload(server);
+
+        // 400, the answer an existing property gets, beating StubCreate's accepting stub; the follow-up
+        // read finds the marker already in place.
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/properties"))
+                .UsingPost())
+            .AtPriority(-1)
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.BadRequest).WithBody("{}"));
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/properties"))
+                .UsingGet())
+            .RespondWith(Json("""
+                { "results": [{ "id": "prop-1", "key": "docume", "value": { "managed": true, "path": "unread" } }], "_links": {} }
+                """));
+
+        var outcome = await ExecuteAsync(server, new DocumeState());
+
+        outcome.Succeeded.ShouldBeTrue();
+        outcome.Failures.ShouldBeEmpty();
+        outcome.CreatedCount.ShouldBe(2);
+        outcome.Warnings.ShouldBeEmpty();
+
+        outcome.State.Pages["README.md"].Marked.ShouldBeTrue();
+        outcome.State.Pages["guides/setup.md"].Marked.ShouldBeTrue();
+
+        // The success came from the read, not from shrugging the 400 off: one follow-up GET per page.
+        Requests(server, "GET", PagesPath)
+            .Count(request => request.Path.EndsWith("/properties", StringComparison.Ordinal))
+            .ShouldBe(2);
+    }
+
     private static DocumeConfig Config() => new()
     {
         Confluence = new ConfluenceConfig
@@ -1753,6 +1919,15 @@ public sealed class PublishExecutorTests : IDisposable
     private static DocumeState Reparent(DocumeState state, string path, string parentPageId)
     {
         var page = state.Pages[path] with { ParentPageId = parentPageId };
+        var pages = new Dictionary<string, PageState>(state.Pages, StringComparer.Ordinal) { [path] = page };
+
+        return state with { Pages = pages };
+    }
+
+    /// <summary>Clears a page's marker record, as a state file from before the marker shipped reads.</summary>
+    private static DocumeState Unmark(DocumeState state, string path)
+    {
+        var page = state.Pages[path] with { Marked = false };
         var pages = new Dictionary<string, PageState>(state.Pages, StringComparer.Ordinal) { [path] = page };
 
         return state with { Pages = pages };
@@ -1817,7 +1992,9 @@ public sealed class PublishExecutorTests : IDisposable
 
     /// <summary>
     /// Answers a create with a fresh page id, so a child's <c>parentId</c> proves the run threaded the
-    /// id its parent's create produced rather than a value it knew in advance.
+    /// id its parent's create produced rather than a value it knew in advance. Also accepts the
+    /// managed-marker stamp every create now sends (<see cref="ManagedMarker"/>): a server that answers
+    /// creates has to answer their stamps too, or every test not about the marker warns about it.
     /// </summary>
     private static void StubCreate(WireMockServer server)
     {
@@ -1832,7 +2009,36 @@ public sealed class PublishExecutorTests : IDisposable
 
                 return Page(id, title!, version: 1);
             }));
+
+        StubPropertyCreate(server);
     }
+
+    /// <summary>Accepts the managed-marker stamp, answering as v2's property create does.</summary>
+    private static void StubPropertyCreate(WireMockServer server) =>
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/properties"))
+                .UsingPost())
+            .RespondWith(Json("""
+                { "id": "prop-1", "key": "docume", "value": { "managed": true, "path": "unread" } }
+                """));
+
+    /// <summary>
+    /// The managed-marker stamps the run sent, in order: the property POSTs under the pages prefix.
+    /// </summary>
+    private static List<IRequestMessage> PropertyPosts(WireMockServer server) =>
+        Requests(server, "POST", PagesPath)
+            .Where(request => request.Path.EndsWith("/properties", StringComparison.Ordinal))
+            .ToList();
+
+    /// <summary>
+    /// The page creates alone. <c>Requests(server, "POST", "/wiki/api/v2/pages")</c> is a prefix match,
+    /// so the marker stamps' <c>…/{id}/properties</c> POSTs land in it too; this is the exact path.
+    /// </summary>
+    private static List<IRequestMessage> PageCreates(WireMockServer server) =>
+        Requests(server, "POST", "/wiki/api/v2/pages")
+            .Where(request => string.Equals(request.Path, "/wiki/api/v2/pages", StringComparison.Ordinal))
+            .ToList();
 
     private static void StubRead(WireMockServer server, int version) =>
         server

@@ -49,6 +49,15 @@ public sealed record PruneOutcome(
 {
     /// <summary>True when nothing failed and nothing cut the run short.</summary>
     public bool Succeeded => Failures.Count == 0 && StoppedBecause is null;
+
+    /// <summary>
+    /// Orphans left alone because their page does not carry the managed marker, or because the marker
+    /// could not be read, ordinal by path (<see cref="ManagedMarker"/>). Their state entries are kept,
+    /// so the next run reports them again. Not failures: refusing to delete a page DocuMe cannot prove
+    /// it wrote is the safe outcome, and the fix is a human's (republish the page to stamp it, or
+    /// delete it by hand).
+    /// </summary>
+    public IReadOnlyList<PlannedPrune> Unmanaged { get; init; } = [];
 }
 
 /// <summary>
@@ -74,6 +83,16 @@ public sealed record PruneOutcome(
 /// <strong>State is dropped only after Confluence confirms.</strong> A failed delete keeps its entry, so
 /// a re-run retries it; a 404 counts as done, because "the page is gone" is the state the step exists to
 /// produce.
+/// </para>
+/// <para>
+/// <strong>Every delete is preceded by a live managed-marker read</strong>
+/// (<see cref="ManagedMarker"/>, docs/specs/2026-08-18-managed-marker.md). State presence is weaker
+/// proof of authorship than the page's own stamp: <c>init --adopt</c> seeds ids for pages DocuMe never
+/// created, and state.json is hand-editable, so adoption is exactly where the two diverge. A page whose
+/// property is missing, says something else, or cannot be read is refused into
+/// <see cref="PruneOutcome.Unmanaged"/> rather than deleted, and the run still succeeds. The check runs
+/// after the §9.6 confirmation, per page, because it is a read of what Confluence holds at the moment of
+/// the delete and a human's yes must not be spent on stale evidence.
 /// </para>
 /// </remarks>
 public sealed class PruneExecutor
@@ -113,6 +132,16 @@ public sealed class PruneExecutor
         var deleted = new List<PlannedPrune>();
         var failures = new List<PagePublishFailure>();
         var warnings = new List<string>();
+        var unmanaged = new List<PlannedPrune>();
+
+        // The parent ids of every page this run refused to delete. A refused page is a live child, and
+        // trashing the page it hangs under would move it (Confluence re-parents the children of a
+        // deleted page): the very outcome PrunePlanner refuses at plan time, resurfacing here because
+        // only the live marker read can turn a planned delete back into a kept page. The guard reaches
+        // exactly as far as state's recorded parentage: a page adopted and never republished records no
+        // parent id, so its refusal blocks nothing above it — the live read that would close that gap
+        // is a per-page cost this loop does not spend on a case adoption's own docs call out.
+        var blockedParentIds = new HashSet<string>(StringComparer.Ordinal);
 
         PruneOutcome Outcome(string? stoppedBecause, bool confirmed) => new(
             state,
@@ -121,7 +150,33 @@ public sealed class PruneExecutor
             failures,
             warnings,
             stoppedBecause,
-            confirmed);
+            confirmed)
+        {
+            Unmanaged = [.. unmanaged.OrderBy(page => page.Path, StringComparer.Ordinal)],
+        };
+
+        // Refusal bookkeeping shared by the unmanaged and the unreadable cases: the page is kept, its
+        // state entry is kept so the next run reports it again, and whatever it hangs under is kept too.
+        void Refuse(PlannedPrune page, string? reason)
+        {
+            unmanaged.Add(page);
+
+            if (reason is not null)
+            {
+                warnings.Add(reason);
+            }
+
+            BlockParentOf(page);
+        }
+
+        void BlockParentOf(PlannedPrune page)
+        {
+            if (state.Pages.TryGetValue(page.Path, out var entry)
+                && entry.ParentPageId is { Length: > 0 } parentId)
+            {
+                blockedParentIds.Add(parentId);
+            }
+        }
 
         if (plan.IsEmpty)
         {
@@ -151,6 +206,84 @@ public sealed class PruneExecutor
                     $"{page.Path} had no pageId in state, so there was nothing to delete in Confluence; "
                     + "the stale entry was dropped.");
                 state = StateUpdates.RemovePage(state, page.Path);
+                continue;
+            }
+
+            // The live check, after the confirmation and before the delete: is the page stamped as
+            // DocuMe-managed? Only the page itself can answer, because state presence is exactly what
+            // `init --adopt` and a hand edit can fake (see the type remarks and ManagedMarker).
+            ConfluencePageProperty? marker;
+            try
+            {
+                marker = await _client
+                    .FindPagePropertyAsync(pageId, ManagedMarker.Key, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (ConfluenceApiException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+                // The property read 404s only when the page itself is gone: somebody deleted it by
+                // hand, which is the state this step produces, so it counts as done and the entry has
+                // to go. Folding this into "no marker" is how a phantom orphan once wedged its whole
+                // subtree: refused forever, with advice ("republish to stamp it") no orphan can take.
+                warnings.Add(
+                    $"{page.Path} was already gone from Confluence (page {pageId}); its state entry "
+                    + "was dropped.");
+                state = StateUpdates.RemovePage(state, page.Path);
+                continue;
+            }
+            catch (ConfluenceAuthenticationException ex)
+            {
+                // Never retried, never worked around (rule §1.2), same as the delete below.
+                failures.Add(new PagePublishFailure(page.Path, ex.Message));
+
+                return Outcome(
+                    "Confluence refused the credentials on the managed-marker read, so the prune "
+                    + $"stopped at '{page.Path}' with {deleted.Count} page(s) deleted. Nothing after it "
+                    + "was attempted.",
+                    confirmed: true);
+            }
+            catch (ConfluenceException ex)
+            {
+                // Fail-safe toward not deleting: a page whose provenance cannot be read is treated as
+                // one that was never proved DocuMe's, reported the same way with the error folded in.
+                Refuse(page, ReadFailedRefusal(page.Path, ex.Message));
+                continue;
+            }
+            catch (HttpRequestException ex)
+            {
+                failures.Add(new PagePublishFailure(page.Path, Unreachable(ex)));
+
+                return Outcome(Stopped(page.Path, deleted.Count), confirmed: true);
+            }
+            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                failures.Add(new PagePublishFailure(page.Path, TimedOut(ex)));
+
+                return Outcome(Stopped(page.Path, deleted.Count), confirmed: true);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return Outcome(Cancelled(page.Path, deleted.Count), confirmed: true);
+            }
+
+            if (marker is null || !ManagedMarker.IsManaged(marker.RawValue))
+            {
+                // The page answered, so it exists; what is missing is the stamp. A vanished page
+                // never reaches this line — its 404 was counted as done above.
+                Refuse(page, reason: null);
+                continue;
+            }
+
+            // Deepest-first means every page filed under this one was already handled, so a refusal
+            // below it has already been recorded: a parent whose child was kept must be kept with it, or
+            // Confluence moves the survivor somewhere the tree does not say.
+            if (blockedParentIds.Contains(pageId))
+            {
+                warnings.Add(
+                    $"{page.Path} was not deleted: a page this run refused to delete still hangs under "
+                    + "it, and trashing a parent whose child is still there would move that child. It is "
+                    + "reported again once the child is resolved.");
+                BlockParentOf(page);
                 continue;
             }
 
@@ -224,6 +357,15 @@ public sealed class PruneExecutor
         + "so the orphans after it include the pages this one hangs under, and trashing a parent whose "
         + "child is still there would move that child. They were left alone and the next run reports them "
         + "again.";
+
+    /// <summary>
+    /// Why a page whose marker read failed was kept: the same refusal as an unmanaged page, with the
+    /// error folded in, because "cannot prove" and "proved not ours" earn the same safe answer.
+    /// </summary>
+    private static string ReadFailedRefusal(string path, string error) =>
+        $"{path} was not deleted: its managed-marker property could not be read ({error}), so nothing "
+        + "proved DocuMe wrote the page, and refusing is the safe side. Re-run to try again, or delete "
+        + "the page by hand.";
 
     private static string Unreachable(Exception ex) =>
         $"Confluence could not be reached: {ex.Message} The request was already retried with backoff, so "

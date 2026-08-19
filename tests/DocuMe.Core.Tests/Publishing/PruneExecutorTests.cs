@@ -35,6 +35,7 @@ public sealed class PruneExecutorTests
     {
         using var server = WireMockServer.Start();
         StubDelete(server);
+        StubManagedProperty(server);
 
         var state = State(
             ("a/README.md", "10", "1"),
@@ -47,11 +48,18 @@ public sealed class PruneExecutorTests
         outcome.Succeeded.ShouldBeTrue();
         outcome.Confirmed.ShouldBeTrue();
         outcome.Deleted.Select(page => page.Path).ShouldBe(["a/gone.md", "a/README.md"]);
+        outcome.Unmanaged.ShouldBeEmpty();
 
-        // Child before parent, on the wire and not only in the plan.
-        var deletes = server.LogEntries.Select(entry => entry.RequestMessage!).ToArray();
-        deletes.Select(request => request.Path).ShouldBe(["/wiki/api/v2/pages/20", "/wiki/api/v2/pages/10"]);
-        deletes.ShouldAllBe(request => request.Method == "DELETE");
+        // Child before parent, on the wire and not only in the plan, and each delete right behind the
+        // managed-marker read that licensed it (after the confirmation, per page).
+        server.LogEntries
+            .Select(entry => $"{entry.RequestMessage!.Method} {entry.RequestMessage.Path}")
+            .ShouldBe([
+                "GET /wiki/api/v2/pages/20/properties",
+                "DELETE /wiki/api/v2/pages/20",
+                "GET /wiki/api/v2/pages/10/properties",
+                "DELETE /wiki/api/v2/pages/10",
+            ]);
 
         outcome.StateChanged.ShouldBeTrue();
         outcome.State.Pages.Keys.ShouldBe(["kept.md"]);
@@ -105,21 +113,55 @@ public sealed class PruneExecutorTests
 
     /// <summary>
     /// A page a human already deleted is the state this step exists to produce, so it counts as done — but
-    /// it is said out loud, because "already gone" and "deleted by this run" are different facts.
+    /// it is said out loud, because "already gone" and "deleted by this run" are different facts. The
+    /// marker read answers 404 for a vanished page and an empty list for a live page without the property,
+    /// and the client folds both into null, so it is the follow-up page read that settles which world this
+    /// is: gone confirms done, and only then does the state entry drop.
     /// </summary>
     [Fact]
     public async Task A_page_already_gone_from_confluence_counts_as_done()
     {
         using var server = WireMockServer.Start();
-        server
-            .Given(Request.Create().WithPath(new WildcardMatcher("/wiki/api/v2/pages/*")).UsingDelete())
-            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NotFound).WithBody("{}"));
+
+        // The property read answers the 404 only a vanished page produces — the client surfaces it and
+        // the prune counts the page as done on that alone. No DELETE is stubbed on purpose: none may be
+        // sent, and Deletes() reads the request log whether WireMock matched a stub or not.
+        StubMissingProperty(server, "20");
 
         var state = State(("a/gone.md", "20", "1"));
         var outcome = await PruneAsync(server, PrunePlanner.Plan(state, ["a/gone.md"]), state, confirm: true);
 
         outcome.Succeeded.ShouldBeTrue();
         outcome.Deleted.ShouldBeEmpty();
+        outcome.Unmanaged.ShouldBeEmpty();
+        outcome.State.Pages.ShouldBeEmpty();
+        outcome.Warnings.ShouldHaveSingleItem().ShouldContain("already gone");
+        Deletes(server).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// The narrower race the DELETE's own 404 branch still absorbs: the marker read finds the stamp,
+    /// somebody trashes the page in the seconds before the DELETE lands, and the 404 that comes back
+    /// is the state this step produces — done, entry dropped, no failure.
+    /// </summary>
+    [Fact]
+    public async Task A_page_that_vanishes_between_the_marker_read_and_the_delete_counts_as_done()
+    {
+        using var server = WireMockServer.Start();
+        StubManagedProperty(server);
+
+        server
+            .Given(Request.Create()
+                .WithPath(new WireMock.Matchers.WildcardMatcher("/wiki/api/v2/pages/*"))
+                .UsingDelete())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NotFound).WithBody("{}"));
+
+        var state = State(("a/racing.md", "20", "1"));
+        var outcome = await PruneAsync(server, PrunePlanner.Plan(state, ["a/racing.md"]), state, confirm: true);
+
+        outcome.Succeeded.ShouldBeTrue();
+        outcome.Deleted.ShouldBeEmpty();
+        outcome.Unmanaged.ShouldBeEmpty();
         outcome.State.Pages.ShouldBeEmpty();
         outcome.Warnings.ShouldHaveSingleItem().ShouldContain("already gone");
     }
@@ -144,6 +186,130 @@ public sealed class PruneExecutorTests
     }
 
     /// <summary>
+    /// The live check (docs/specs/2026-08-18-managed-marker.md): a page whose <c>docume</c> property is
+    /// missing, or says something DocuMe never wrote, was not provably created by this tool, so it is
+    /// refused into <see cref="PruneOutcome.Unmanaged"/> rather than deleted and the run still succeeds.
+    /// State presence is weaker proof than the page's own stamp, and adoption is exactly where they
+    /// diverge: <c>init --adopt</c> seeds ids for pages DocuMe never created.
+    /// </summary>
+    [Fact]
+    public async Task An_orphan_without_the_managed_marker_is_refused_not_deleted()
+    {
+        using var server = WireMockServer.Start();
+        StubDelete(server);
+
+        // 10 carries the marker, 20 carries no docume property, 30 carries one somebody else wrote.
+        StubProperty(server, "10", ManagedPropertyBody);
+        StubProperty(server, "20", NoPropertyBody);
+        StubProperty(
+            server,
+            "30",
+            """{ "results": [{ "id": "prop-3", "key": "docume", "value": "hand made" }], "_links": {} }""");
+
+        var state = State(("a.md", "10", null), ("b.md", "20", null), ("c.md", "30", null));
+        var plan = PrunePlanner.Plan(state, ["a.md", "b.md", "c.md"]);
+
+        var outcome = await PruneAsync(server, plan, state, confirm: true);
+
+        outcome.Succeeded.ShouldBeTrue();
+        outcome.Confirmed.ShouldBeTrue();
+        outcome.Deleted.Select(page => page.Path).ShouldBe(["a.md"]);
+        outcome.Unmanaged.Select(page => page.Path).ShouldBe(["b.md", "c.md"]);
+
+        // The refused pages keep their entries, so the next run reports them again, and no DELETE ever
+        // reached them.
+        outcome.State.Pages.Keys.ShouldBe(["b.md", "c.md"], ignoreOrder: true);
+        Deletes(server).ShouldBe(["/wiki/api/v2/pages/10"]);
+    }
+
+    /// <summary>
+    /// <see cref="PruneOutcome.Unmanaged"/> is ordinal by path, not delete order: the child sorts after
+    /// the index page a reader scans for, even though the delete chain visited it first.
+    /// </summary>
+    [Fact]
+    public async Task Unmanaged_is_listed_in_path_order_not_delete_order()
+    {
+        using var server = WireMockServer.Start();
+        StubDelete(server);
+        StubProperty(server, "20", NoPropertyBody);
+        StubProperty(server, "30", NoPropertyBody);
+
+        var state = State(("b/README.md", "20", null), ("b/x.md", "30", "20"));
+        var plan = PrunePlanner.Plan(state, ["b/README.md", "b/x.md"]);
+
+        var outcome = await PruneAsync(server, plan, state, confirm: true);
+
+        outcome.Succeeded.ShouldBeTrue();
+        outcome.Deleted.ShouldBeEmpty();
+        outcome.Unmanaged.Select(page => page.Path).ShouldBe(["b/README.md", "b/x.md"]);
+        outcome.StateChanged.ShouldBeFalse();
+        Deletes(server).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A refusal is a kept page, and a kept page has the same consequence a failed delete has: the page
+    /// it hangs under cannot be trashed without Confluence moving the survivor. The parent is kept with
+    /// a warning naming why, and it is not in <see cref="PruneOutcome.Unmanaged"/>, because its own
+    /// stamp is fine and "republish to stamp it" would be the wrong advice.
+    /// </summary>
+    [Fact]
+    public async Task A_managed_parent_is_kept_while_a_refused_page_still_hangs_under_it()
+    {
+        using var server = WireMockServer.Start();
+        StubDelete(server);
+        StubProperty(server, "20", ManagedPropertyBody);
+        StubProperty(server, "30", NoPropertyBody);
+
+        var state = State(("b/README.md", "20", null), ("b/x.md", "30", "20"));
+        var plan = PrunePlanner.Plan(state, ["b/README.md", "b/x.md"]);
+
+        var outcome = await PruneAsync(server, plan, state, confirm: true);
+
+        outcome.Succeeded.ShouldBeTrue();
+        outcome.Deleted.ShouldBeEmpty();
+        outcome.Unmanaged.Select(page => page.Path).ShouldBe(["b/x.md"]);
+
+        var warning = outcome.Warnings.ShouldHaveSingleItem();
+        warning.ShouldStartWith("b/README.md");
+        warning.ShouldContain("still hangs under");
+
+        outcome.State.Pages.Count.ShouldBe(2);
+        Deletes(server).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Fail-safe toward not deleting: a marker read that errors leaves the page's provenance unproved,
+    /// which earns the same refusal as an unmanaged page, with the error folded into the warning. The
+    /// rest of the prune carries on, because one page's unreadable property says nothing about the next.
+    /// </summary>
+    [Fact]
+    public async Task A_marker_read_that_fails_refuses_the_page_rather_than_deleting_it()
+    {
+        using var server = WireMockServer.Start();
+        StubDelete(server);
+        StubProperty(server, "10", ManagedPropertyBody);
+        server
+            .Given(Request.Create().WithPath("/wiki/api/v2/pages/20/properties").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.InternalServerError).WithBody("{}"));
+
+        var state = State(("a.md", "10", null), ("b.md", "20", null));
+        var plan = PrunePlanner.Plan(state, ["a.md", "b.md"]);
+
+        var outcome = await PruneAsync(server, plan, state, confirm: true);
+
+        outcome.Succeeded.ShouldBeTrue();
+        outcome.Deleted.Select(page => page.Path).ShouldBe(["a.md"]);
+        outcome.Unmanaged.Select(page => page.Path).ShouldBe(["b.md"]);
+
+        var warning = outcome.Warnings.ShouldHaveSingleItem();
+        warning.ShouldStartWith("b.md");
+        warning.ShouldContain("could not be read");
+
+        outcome.State.Pages.Keys.ShouldBe(["b.md"]);
+        Deletes(server).ShouldBe(["/wiki/api/v2/pages/10"]);
+    }
+
+    /// <summary>
     /// Deleting needs more permission than editing, so a token that published happily can still be refused
     /// here. Never retried, never worked around (rule §1.2), and the message says which permission.
     /// </summary>
@@ -154,6 +320,7 @@ public sealed class PruneExecutorTests
         server
             .Given(Request.Create().WithPath(new WildcardMatcher("/wiki/api/v2/pages/*")).UsingDelete())
             .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.Forbidden));
+        StubManagedProperty(server);
 
         var state = State(("a/gone.md", "20", "1"), ("b/gone.md", "30", "1"));
         var plan = PrunePlanner.Plan(state, ["a/gone.md", "b/gone.md"]);
@@ -167,7 +334,7 @@ public sealed class PruneExecutorTests
 
         // Neither entry is dropped, and the second page was never attempted.
         outcome.State.Pages.Count.ShouldBe(2);
-        server.LogEntries.Count.ShouldBe(1);
+        Deletes(server).ShouldBe(["/wiki/api/v2/pages/20"]);
     }
 
     /// <summary>
@@ -185,6 +352,7 @@ public sealed class PruneExecutorTests
         server
             .Given(Request.Create().WithPath("/wiki/api/v2/pages/10").UsingDelete())
             .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NoContent));
+        StubManagedProperty(server);
 
         var state = State(("a/README.md", "10", "1"), ("a/gone.md", "20", "10"));
         var plan = PrunePlanner.Plan(state, ["a/README.md", "a/gone.md"]);
@@ -196,8 +364,10 @@ public sealed class PruneExecutorTests
         outcome.Failures.ShouldHaveSingleItem().Path.ShouldBe("a/gone.md");
         outcome.StoppedBecause!.ShouldContain("deepest-first");
 
-        // The parent was never asked for, which is the whole point.
-        server.LogEntries.Count.ShouldBe(1);
+        // The parent was never asked for, which is the whole point: not deleted, not even read.
+        Deletes(server).ShouldBe(["/wiki/api/v2/pages/20"]);
+        server.LogEntries.ShouldAllBe(entry =>
+            entry.RequestMessage!.Path.Contains("/pages/20", StringComparison.Ordinal));
         outcome.State.Pages.Count.ShouldBe(2);
     }
 
@@ -215,6 +385,7 @@ public sealed class PruneExecutorTests
         server
             .Given(Request.Create().WithPath("/wiki/api/v2/pages/10").UsingDelete())
             .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.BadRequest).WithBody("{}"));
+        StubManagedProperty(server);
 
         var state = State(("a/README.md", "10", "1"), ("a/gone.md", "20", "10"));
         var plan = PrunePlanner.Plan(state, ["a/README.md", "a/gone.md"]);
@@ -285,6 +456,7 @@ public sealed class PruneExecutorTests
         using var cancellation = new CancellationTokenSource();
         using var server = WireMockServer.Start();
         StubDelete(server);
+        StubManagedProperty(server);
         server
             .Given(Request.Create().WithPath("/wiki/api/v2/pages/30").UsingDelete())
             .AtPriority(-1)
@@ -315,10 +487,59 @@ public sealed class PruneExecutorTests
         outcome.State.Pages.ShouldContainKey("a/README.md");
     }
 
+    /// <summary>A property read answering the marker DocuMe stamps (<see cref="ManagedMarker"/>).</summary>
+    private const string ManagedPropertyBody = """
+        { "results": [{ "id": "prop-1", "key": "docume", "value": { "managed": true, "path": "unread" } }], "_links": {} }
+        """;
+
+    /// <summary>A property read answering that the page carries no <c>docume</c> property at all.</summary>
+    private const string NoPropertyBody = """{ "results": [], "_links": {} }""";
+
+    /// <summary>
+    /// Answers one page's property read with 404, as Confluence does when the page itself is gone.
+    /// Exact path on purpose, so it cannot shadow any other read of the same page.
+    /// </summary>
+    private static void StubMissingProperty(WireMockServer server, string pageId) =>
+        server
+            .Given(Request.Create().WithPath($"/wiki/api/v2/pages/{pageId}/properties").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NotFound).WithBody("{}"));
+
     private static void StubDelete(WireMockServer server) =>
         server
             .Given(Request.Create().WithPath(new WildcardMatcher("/wiki/api/v2/pages/*")).UsingDelete())
             .RespondWith(Response.Create().WithStatusCode(HttpStatusCode.NoContent));
+
+    /// <summary>
+    /// Answers every page's managed-marker read with the marker itself: what the live check sees on a
+    /// page DocuMe really wrote, and what every test that is about the deletes rather than the check
+    /// stubs so the flow reaches them.
+    /// </summary>
+    private static void StubManagedProperty(WireMockServer server) =>
+        server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/wiki/api/v2/pages/*/properties"))
+                .UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(HttpStatusCode.OK)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(ManagedPropertyBody));
+
+    /// <summary>Answers one page's managed-marker read with <paramref name="body"/>.</summary>
+    private static void StubProperty(WireMockServer server, string pageId, string body) =>
+        server
+            .Given(Request.Create().WithPath($"/wiki/api/v2/pages/{pageId}/properties").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(HttpStatusCode.OK)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(body));
+
+    /// <summary>The DELETEs the run sent, in order: the property reads share the pages prefix.</summary>
+    private static List<string> Deletes(WireMockServer server) =>
+        server.LogEntries
+            .Select(entry => entry.RequestMessage!)
+            .Where(request => string.Equals(request.Method, "DELETE", StringComparison.OrdinalIgnoreCase))
+            .Select(request => request.Path)
+            .ToList();
 
     private static DocumeState State(params (string Path, string? PageId, string? Parent)[] pages) =>
         new()

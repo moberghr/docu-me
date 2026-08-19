@@ -218,6 +218,7 @@ publish: false          # draft: held back by publish (reported, never written),
         "history": [ { "by": "…", "at": "…", "version": 4 } ]
       },
       "stale": false,
+      "marked": true,                     // the page carries the `docume` managed-marker property (stamped at create; `--prune`'s live check)
       "feedbackCursor": "2026-08-01T10:00:00Z"   // newest comment already ingested
     }
   }
@@ -276,7 +277,7 @@ The core pipeline, per page (parents before children, depth-first):
 7. **Approval invalidation:** if `contentHash` changed and page was approved → remove `approved` label, set state `needs-review`, optionally post a footer comment "Content updated since approval — please re-review" (`--notify-reviewers`).
 8. Update `state.json` (pageId, version, hashes); write `lastPublishedSha`. **A failed publish still writes state, and the whole CI failure contract of §10 rests on that:** a page id earned by a create must survive the run that later died, or the next run creates the page again and Confluence rejects the duplicate title. State is persisted before anything is reported; the non-zero exit comes afterwards.
 Post-pass — **child-page ordering** (borrowed from md2conf): after all upserts, reconcile each parent's child order in Confluence to match source-tree order (numeric prefixes like `10-domains/` express intent) using minimal move operations; disable with `--no-reorder`.
-Orphans (state entries whose file is gone): report always; delete from Confluence only with `--prune` after interactive confirmation (never in CI).
+Orphans (state entries whose file is gone): report always; delete from Confluence only with `--prune` after interactive confirmation (never in CI). Every page create also stamps a `docume` content property on the new page (`{"managed":true,"path":"<wiki-relative path>"}`), and a body update stamps it once when state does not record the page as marked, which heals pages published before the marker existed; state records `marked: true` after either stamp. `--prune` reads that property live before each delete: an orphan whose page does not carry it is never deleted, only reported, with the run still exiting 0, because state presence is weaker proof of authorship than the page's own stamp (adoption, §6.1, seeds ids for pages DocuMe never created, and state.json is hand-editable) and adoption is exactly where the two diverge.
 `--dry-run`: full conversion + diff summary (created/updated/skipped/orphans), zero writes. `--changed-since <sha>`: limit to files changed in `git diff --name-only <sha> -- <wikiRoot>` (plus link-map rebuild).
 
 ### 6.3 `docume sync [--labels] [--comments] [--output-dir <path>]`

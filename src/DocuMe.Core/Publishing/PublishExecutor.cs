@@ -482,6 +482,12 @@ public sealed class PublishExecutor
             ? null
             : DiagramImageWidth.Apply(planned.UploadBody, widths);
 
+        // The managed marker (ManagedMarker): stamped on every create, and on a body update of a page
+        // state does not record as marked, which is how pages published before the marker existed pick
+        // one up. A move or an attachment-only publish stamps nothing: neither proves authorship any
+        // better than the page already does, and the body write is the natural moment.
+        var marked = current is { Marked: true };
+
         int version;
         if (creating)
         {
@@ -500,6 +506,12 @@ public sealed class PublishExecutor
                     $"{planned.Path} was missing from Confluence and was created again as page {pageId}. "
                     + "Any labels the old page carried are gone with it — `docume sync` reconciles them.");
             }
+
+            // Unconditional, recreate included: a fresh page carries no property whatever state
+            // remembers, and `marked` takes the stamp's actual outcome so a failed stamp on a recreate
+            // clears a record that is no longer true.
+            marked = await StampManagedMarkerAsync(planned.Path, pageId!, warnings, cancellationToken)
+                .ConfigureAwait(false);
         }
         else if (plan.WritesBody)
         {
@@ -516,6 +528,12 @@ public sealed class PublishExecutor
                 .ConfigureAwait(false);
 
             version = updated.Version;
+
+            if (!marked)
+            {
+                marked = await StampManagedMarkerAsync(planned.Path, pageId!, warnings, cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
         else if (plan.Action == PagePublishAction.Move)
         {
@@ -594,6 +612,7 @@ public sealed class PublishExecutor
             widths);
 
         state = StateUpdates.RecordPublish(state, planned.Path, published);
+        state = StateUpdates.RecordMarked(state, planned.Path, marked);
 
         return new PageOutcome(
             state,
@@ -1306,6 +1325,81 @@ public sealed class PublishExecutor
                 + $"({ex.Message}). The `approved` label is off and state says needs-review, so the page "
                 + "still reads as awaiting review everywhere else.");
 
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Stamps the managed-marker property on a page this run just wrote
+    /// (<see cref="ManagedMarker"/>), answering whether the stamp is on the page.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>A stamp that fails warns; it never fails the page.</strong> By the time this runs the
+    /// body is published and correct, and what is missing is provenance: the property <c>--prune</c>
+    /// reads before it deletes. Failing the page would report an unpublished page that is published,
+    /// and the marker has a retry of its own, because <c>false</c> here keeps
+    /// <see cref="PageState.Marked"/> false and the next body update stamps again. The same contract as
+    /// <see cref="NotifyReviewersAsync"/>, and for the same reason.
+    /// </para>
+    /// <para>
+    /// The filter is the one <see cref="GuardOpenCommentsAsync"/> carries: an expired token is the
+    /// credential failing, not the stamp, so it propagates and the run stops (rule §1.2).
+    /// </para>
+    /// </remarks>
+    private async Task<bool> StampManagedMarkerAsync(
+        string path,
+        string pageId,
+        List<string> warnings,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _client
+                .CreatePagePropertyAsync(pageId, ManagedMarker.Key, ManagedMarker.ValueFor(path), cancellationToken)
+                .ConfigureAwait(false);
+
+            return true;
+        }
+        catch (ConfluenceException ex) when (ex is not ConfluenceAuthenticationException)
+        {
+            // A 400 here is usually the property already existing: a create replayed by the retry
+            // pipeline after a response was lost, a hand-edited state.json that forgot a stamp that
+            // landed, or a re-adopted wiki whose pages were stamped in a previous life. One read
+            // settles it, and a marker that is already on the page is a stamp that succeeded — left
+            // undifferentiated, the page would warn on every body update forever, with advice
+            // ("--prune refuses") that the live property makes false.
+            if (await MarkerAlreadyPresentAsync(pageId, cancellationToken).ConfigureAwait(false))
+            {
+                return true;
+            }
+
+            warnings.Add(
+                $"{path}: the page published but its managed marker could not be stamped ({ex.Message}). "
+                + "The next body update tries again; until then --prune refuses to delete the page, which "
+                + "is the safe side of the miss.");
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether the page already carries a managed marker — the read that turns an already-exists 400
+    /// into the success it is. Best effort by construction: a read that fails proves nothing, and
+    /// "nothing proven" keeps the original failure's answer.
+    /// </summary>
+    private async Task<bool> MarkerAlreadyPresentAsync(string pageId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var marker = await _client
+                .FindPagePropertyAsync(pageId, ManagedMarker.Key, cancellationToken)
+                .ConfigureAwait(false);
+
+            return marker is not null && ManagedMarker.IsManaged(marker.RawValue);
+        }
+        catch (ConfluenceException ex) when (ex is not ConfluenceAuthenticationException)
+        {
             return false;
         }
     }

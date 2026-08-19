@@ -85,10 +85,13 @@ public sealed class AuthHardStopCoverageTests
         ["FeedbackReplyExecutor.cs ExecuteAsync #1"] = HardStop.AuthFirst,
         ["FeedbackReplyExecutor.cs ExecuteAsync #2"] = HardStop.AuthFirst,
         ["PruneExecutor.cs PruneAsync #1"] = HardStop.AuthFirst,
+        ["PruneExecutor.cs PruneAsync #2"] = HardStop.AuthFirst,
         ["PublishExecutor.cs ExecuteAsync #1"] = HardStop.Aborts,
         ["PublishExecutor.cs ExecuteAsync #2"] = HardStop.AuthFirst,
         ["PublishExecutor.cs GuardOpenCommentsAsync #1"] = HardStop.Filtered,
+        ["PublishExecutor.cs MarkerAlreadyPresentAsync #1"] = HardStop.Filtered,
         ["PublishExecutor.cs ReconcileChildOrderAsync #1"] = HardStop.AuthFirst,
+        ["PublishExecutor.cs StampManagedMarkerAsync #1"] = HardStop.Filtered,
         ["StatusProbes.cs SpaceAsync #1"] = HardStop.AuthFirst,
         ["SyncCommand.cs RunAsync #1"] = HardStop.Aborts,
     };

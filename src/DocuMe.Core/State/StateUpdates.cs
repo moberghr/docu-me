@@ -170,6 +170,31 @@ public static class StateUpdates
     }
 
     /// <summary>
+    /// Records whether the page carries the <c>docume</c> managed-marker property
+    /// (<see cref="PageState.Marked"/>, §5.3): the state half of the stamp
+    /// <see cref="Publishing.ManagedMarker"/> describes.
+    /// </summary>
+    /// <remarks>
+    /// Total and quiet where nothing changed, exactly like <see cref="SetStale"/>. A path state has
+    /// never seen is left alone rather than created; only a publish stamps, and
+    /// <see cref="RecordPublish"/> has always created the entry by the time this applies. It takes the
+    /// value rather than assuming <c>true</c> because a recreate whose stamp failed has to be able to
+    /// say so: the fresh page carries no marker, whatever the old entry recorded.
+    /// </remarks>
+    public static DocumeState RecordMarked(DocumeState state, string path, bool marked)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentException.ThrowIfNullOrEmpty(path);
+
+        if (!state.Pages.TryGetValue(path, out var page) || page.Marked == marked)
+        {
+            return state;
+        }
+
+        return WithPage(state, path, page with { Marked = marked });
+    }
+
+    /// <summary>
     /// Moves an approved page to <see cref="ApprovalStatus.NeedsReview"/>, preserving the approval that
     /// was invalidated as a history entry (§6.2 step 7, §8).
     /// </summary>

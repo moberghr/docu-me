@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace DocuMe.Core.Confluence;
 
 /// <summary>
@@ -89,3 +91,16 @@ internal sealed record CommentOnPageRequest(string PageId, PageNestedBodyWrite B
 /// <see cref="ConfluenceClient.ResolveInlineCommentAsync"/>).
 /// </remarks>
 internal sealed record InlineCommentResolveRequest(VersionWrite Version, bool Resolved);
+
+/// <summary>
+/// A new content property on a page, named after v2's <c>ContentPropertyCreateRequest</c>: the write
+/// half of the managed-page marker (docs/specs/2026-08-18-managed-marker.md).
+/// </summary>
+/// <remarks>
+/// <c>Value</c> is a <see cref="JsonElement"/> rather than the caller's raw string so the value lands
+/// in the request as the JSON it is. A <c>string</c> member would serialize to
+/// <c>"value": "{\"managed\":true}"</c>, a string that happens to hold JSON, and every later read
+/// would answer that string where the caller stored an object. The client parses the caller's raw
+/// JSON into this member before the request is built (<see cref="ConfluenceClient.CreatePagePropertyAsync"/>).
+/// </remarks>
+internal sealed record PagePropertyCreateRequest(string Key, JsonElement Value);

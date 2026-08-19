@@ -116,6 +116,14 @@ change what it is allowed to do.
 > which is also what a renamed file looks like before its new path is published, so prune after a
 > successful full publish rather than alongside a partial one.
 
+Every page the tool creates is stamped with a `docume` content property saying the page is
+DocuMe-managed and which file owns it, and a body update stamps a page that predates the marker.
+`--prune` reads that property live before each delete and refuses any orphan whose page is not
+stamped: the page is reported, the run still exits 0, and nothing is deleted. Republish the page to
+stamp it, or delete it by hand. The refusal exists because an id can reach `state.json` without
+DocuMe having created the page (`init --adopt` seeds ids, and the file is hand-editable), and the
+stamp is the proof the delete waits for.
+
 ## `docume sync`
 
 Reads the labels and comments out of Confluence and reconciles them into the repo. Passing neither

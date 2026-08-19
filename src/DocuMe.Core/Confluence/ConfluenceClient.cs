@@ -10,7 +10,8 @@ namespace DocuMe.Core.Confluence;
 /// <summary>
 /// Thin client over the Confluence Cloud REST API (PLAN.md §4): the page reads, the page upsert, the
 /// attachment upsert and the label add/remove the publish and approval pipelines are built on
-/// (§6.2 step 5, §6.3, §8).
+/// (§6.2 step 5, §6.3, §8), plus the content-property read and write that carry the managed-page
+/// marker (docs/specs/2026-08-18-managed-marker.md).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -79,6 +80,9 @@ public sealed class ConfluenceClient : IDisposable
 
     /// <summary>The v2 collection holding comments anchored to a span of the page body.</summary>
     private const string InlineCommentsSegment = "inline-comments";
+
+    /// <summary>The v2 collection holding a page's content properties, where the managed-page marker lives.</summary>
+    private const string PropertiesSegment = "properties";
 
     /// <summary>Content type for every JSON write body.</summary>
     private const string JsonMediaType = "application/json";
@@ -1127,6 +1131,122 @@ public sealed class ConfluenceClient : IDisposable
         ThrowIfFailed(path, statusCode, body, $"removing label '{label}' from page {pageId}");
     }
 
+    /// <summary>
+    /// Reads one content property off a page by its key, or <c>null</c> when the page does not carry
+    /// it. This is how <c>publish --prune</c> verifies a page is DocuMe's own before deleting it, and
+    /// how a body update decides whether a page still needs its marker
+    /// (docs/specs/2026-08-18-managed-marker.md; the publish it serves is PLAN.md §6.2 step 5).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The v2 list endpoint filtered by key, and no pagination loop.</strong> The marker's key
+    /// is the one thing a caller knows; property ids are answered by this read rather than stored
+    /// anywhere. Confluence keeps property keys unique per page, so a key-filtered read answers at
+    /// most one result and following a cursor here would be following it to nothing. An empty
+    /// <c>results</c> is the documented spelling of "no such property".
+    /// </para>
+    /// <para>
+    /// <strong>A 404 surfaces as the failure it is</strong>, deliberately unlike
+    /// <see cref="FindPageByIdAsync"/>: a missing page is not a missing property, and folding the two
+    /// into one <c>null</c> is how a prune once mistook "somebody deleted this page by hand" for "this
+    /// page is not ours", kept its state entry forever, and wedged every ancestor behind it. The one
+    /// caller that meets the 404 (<c>publish --prune</c>) catches it and counts the page as already
+    /// gone. And the key of whatever comes back is compared to <paramref name="key"/> here rather
+    /// than trusting the server-side filter to be exact, the same guard
+    /// <see cref="FindPageByTitleAsync"/> applies to titles. The safe direction matters more than
+    /// usual: a loose match must read as "no marker", which ends in a prune refusing a delete, never
+    /// in some other property's value authorizing one.
+    /// </para>
+    /// </remarks>
+    /// <param name="pageId">The page whose property to read.</param>
+    /// <param name="key">The property key, e.g. the marker's <c>docume</c>.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired or revoked.</exception>
+    /// <exception cref="ConfluenceApiException">Any non-success status, a vanished page's 404 included.</exception>
+    /// <exception cref="ConfluenceProtocolException">The response body is not the documented shape.</exception>
+    public async Task<ConfluencePageProperty?> FindPagePropertyAsync(
+        string pageId,
+        string key,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+
+        var path = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/{PropertiesSegment}"
+            + $"?key={Uri.EscapeDataString(key)}";
+
+        var response = await ReadAsync<MultiEntityResult<PagePropertyBulk>>(
+                path,
+                ApiSurface.V2,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var properties = RequireResults(response, path);
+        var match = properties.FirstOrDefault(
+            property => string.Equals(property.Key, key, StringComparison.Ordinal));
+
+        return match is null ? null : MapPageProperty(match, path);
+    }
+
+    /// <summary>
+    /// Stamps a content property on a page: the write half of the managed-page marker
+    /// (docs/specs/2026-08-18-managed-marker.md), sent once per page create and once per self-healing
+    /// update on the publish path (PLAN.md §6.2 step 5).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><paramref name="rawJsonValue"/> is parsed here and sent as the JSON it is, never
+    /// re-quoted.</strong> A value serialized as a string member would arrive as
+    /// <c>"value": "{\"managed\":true}"</c>, a string that happens to hold JSON, and every later read
+    /// would answer that string where the caller stored an object. The parse also refuses malformed
+    /// input before anything reaches the wire, as an <see cref="ArgumentException"/>.
+    /// </para>
+    /// <para>
+    /// <strong>A property is page metadata, not page body, so this write spends no page version</strong>
+    /// and cannot disturb an approval: rule §9.2 keys invalidation off <c>contentHash</c>, which is
+    /// body-only, and the same reasoning keeps staleness on labels (§6.4). The write rides the shared
+    /// retry pipeline like every other, and it is bounded the way the page create is: Confluence keeps
+    /// property keys unique per page the way it keeps titles unique per space, so a replayed create
+    /// whose first attempt actually landed comes back as a loud 400, not as a silent second property.
+    /// </para>
+    /// </remarks>
+    /// <param name="pageId">The page to stamp.</param>
+    /// <param name="key">The property key, e.g. the marker's <c>docume</c>.</param>
+    /// <param name="rawJsonValue">The value to store, as a string of JSON the caller composed.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ConfluenceAuthenticationException">401/403: token expired, or read-but-not-edit permission.</exception>
+    /// <exception cref="ConfluenceApiException">
+    /// Any other non-success status, including a page that is gone (404) and a property that already
+    /// exists under this key (400).
+    /// </exception>
+    /// <exception cref="ConfluenceProtocolException">The response body is not the documented shape.</exception>
+    public async Task CreatePagePropertyAsync(
+        string pageId,
+        string key,
+        string rawJsonValue,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pageId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        ArgumentException.ThrowIfNullOrWhiteSpace(rawJsonValue);
+
+        var path = $"api/v2/{PagesSegment}/{Uri.EscapeDataString(pageId)}/{PropertiesSegment}";
+        var request = new PagePropertyCreateRequest(key, ParsePropertyValue(rawJsonValue));
+
+        var created = await WriteAsync<PagePropertyCreateRequest, PagePropertyBulk>(
+                HttpMethod.Post,
+                path,
+                request,
+                $"creating property '{key}' on page {pageId}",
+                ApiSurface.V2,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        // Nothing of the response is returned, but a 200 that is not the documented shape still fails
+        // loud rather than reporting a stamp that may not have landed (the MovePageAsync reasoning).
+        _ = Require(created.Id, "id", path);
+    }
+
     public void Dispose()
     {
         if (_ownsHttpClient)
@@ -1310,6 +1430,28 @@ public sealed class ConfluenceClient : IDisposable
             throw new ArgumentException(
                 "A publish needs a rendered body; an empty one is fine, a missing one is not.",
                 parameterName);
+        }
+    }
+
+    /// <summary>
+    /// The caller's raw JSON as an element the serializer writes verbatim into the request. Cloned so
+    /// it outlives the document it was parsed from; refused before the wire when it does not parse,
+    /// because Confluence would store whatever half-shape survived and a later read would answer it.
+    /// </summary>
+    private static JsonElement ParsePropertyValue(string rawJsonValue)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(rawJsonValue);
+
+            return document.RootElement.Clone();
+        }
+        catch (JsonException ex)
+        {
+            throw new ArgumentException(
+                $"A content-property value must be JSON, and this one does not parse ({ex.Message}).",
+                nameof(rawJsonValue),
+                ex);
         }
     }
 
@@ -1714,6 +1856,26 @@ public sealed class ConfluenceClient : IDisposable
         => new(
             Require(label.Name, "name", path),
             Require(label.Prefix, "prefix", path));
+
+    /// <summary>
+    /// Maps one content property. The value is re-serialized as compact JSON rather than parsed into a
+    /// shape: it is schemaless by design, so the caller that stamped it owns its meaning
+    /// (docs/specs/2026-08-18-managed-marker.md) and this client carries it whole. An absent
+    /// <c>value</c> member is off-schema and fails loud; a stored JSON <c>null</c> is a value somebody
+    /// wrote, answered as the literal <c>null</c> for the caller to judge.
+    /// </summary>
+    private static ConfluencePageProperty MapPageProperty(PagePropertyBulk property, string path)
+    {
+        if (property.Value.ValueKind == JsonValueKind.Undefined)
+        {
+            throw new ConfluenceProtocolException(path, "an entity in it has no 'value'");
+        }
+
+        return new(
+            Require(property.Id, "id", path),
+            Require(property.Key, "key", path),
+            JsonSerializer.Serialize(property.Value));
+    }
 
     private static string Quote(IReadOnlyList<string> labels)
         => string.Join(", ", labels.Select(label => $"'{label}'"));
