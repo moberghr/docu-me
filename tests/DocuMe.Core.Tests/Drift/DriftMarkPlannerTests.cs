@@ -141,6 +141,46 @@ public sealed class DriftMarkPlannerTests
         plan.Unmarkable.ShouldHaveSingleItem().Path.ShouldBe("domains/fx.md");
     }
 
+    /// <summary>
+    /// SC8 at this layer: a page its seal held out is never labelled, and no line of this planner says
+    /// so. It reads <see cref="DriftReport.Pages"/>, the seal check removed the page from that list, and
+    /// the exclusion is therefore inherited rather than re-decided — a second rule here is precisely the
+    /// second thing that could one day disagree with the report a reviewer is looking at.
+    /// </summary>
+    /// <remarks>
+    /// Composed through <see cref="SealedVerdicts.Apply"/> rather than by handing the planner a report
+    /// with the page already dropped: what is worth pinning is that the two halves fit, not that this one
+    /// can count an empty list.
+    /// </remarks>
+    [Fact]
+    public void A_page_its_seal_held_out_is_never_labelled()
+    {
+        var state = StateWith(
+            (Loans, new PageState { PageId = LoansId, Title = "Loans" }),
+            (Rates, new PageState { PageId = RatesId, Title = "Rates" }));
+
+        const string seal = "sha256:a7cde5a477634f8dcdead23450de2f5b02e30f090a82d026dd7cc3edb3b788b7";
+        const string moved = "sha256:6682b235fe153307561f748d02729860005ed7579650498d826d9c1f38657fdf";
+
+        var report = SealedVerdicts.Apply(
+            Report([Page(Loans, "Loans"), Page(Rates, "Rates")]),
+            Fingerprints((Loans, seal), (Rates, seal)),
+            Fingerprints((Loans, seal), (Rates, moved)));
+
+        var plan = DriftMarkPlanner.Plan(report, state);
+
+        plan.ToLabel.ShouldHaveSingleItem().Path.ShouldBe(Rates);
+
+        // Not merely unlabelled: the sealed page is absent from the plan altogether, so no line of the
+        // dry-run listing or the terminal log offers it as something a run declined to do.
+        plan.AlreadyMarked.ShouldBeEmpty();
+        plan.Unmarkable.ShouldBeEmpty();
+    }
+
+    private static Dictionary<string, string> Fingerprints(
+        params (string Path, string Hash)[] entries) =>
+        entries.ToDictionary(entry => entry.Path, entry => entry.Hash, StringComparer.Ordinal);
+
     private static DriftReport ReportFor(string path, string title = "Loans") =>
         Report([Page(path, title)]);
 

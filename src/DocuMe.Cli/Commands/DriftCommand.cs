@@ -366,8 +366,15 @@ internal static class DriftCommand
 
         // DriftPlanner is a pure matcher over one changed-file list and knows nothing of commits,
         // so the commit disclosure is stamped on here, where the narrowing happened, rather than
-        // threaded through a signature the planner has no use for.
-        var report = matched with { IgnoredCommitCount = ignoredCommitCount };
+        // threaded through a signature the planner has no use for. The seal check is stamped on the
+        // same way and for the same reason: it reads a working tree, which the planner must not.
+        var report = await SealedAsync(
+                matched with { IgnoredCommitCount = ignoredCommitCount },
+                repoRoot,
+                tree,
+                state,
+                cancellationToken)
+            .ConfigureAwait(false);
 
         Report(report, options.Format, options.Mark);
 
@@ -400,6 +407,122 @@ internal static class DriftCommand
         // A failed write outranks the advisory verdict: exit 0 here would say "nothing to worry about"
         // about a run that did not do what it was asked.
         return markExit != 0 ? markExit : driftExit;
+    }
+
+    /// <summary>
+    /// The seal check (docs/specs/2026-08-19-sealed-source-verdicts.md §3.3): every reported page whose
+    /// <c>sources</c> fingerprint now equals the one its last publish sealed leaves
+    /// <see cref="DriftReport.Pages"/> for <see cref="DriftReport.Sealed"/>, so the verdict, the exit
+    /// code and <c>--mark</c> all stop counting it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The candidate list is <see cref="GitRepository.TrackedFilesAsync"/>, never this run's
+    /// changed files.</strong> That is the universe the publish sealed against
+    /// (<c>PublishCommand.SealingAsync</c>), and a fingerprint is only comparable to another fingerprint
+    /// over the same universe. Recomputing over the diff would produce a preimage covering only the files
+    /// that happened to change, which can never equal a seal taken over the whole matched set — so no
+    /// page would ever be sealed, and every test that did not assert the positive case would still pass.
+    /// The failure would be silent, permanent, and indistinguishable from the feature being off.
+    /// </para>
+    /// <para>
+    /// <strong>Only the reported pages are fingerprinted</strong> (spec §3.3 step 1): the report is
+    /// already narrowed to them, so a wiki with 400 pages and 2 flagged reads two pages' worth of
+    /// sources. A wiki where no reported page carries a seal — every wiki that has never published under
+    /// this feature — costs nothing at all, not even the <c>ls-files</c>.
+    /// </para>
+    /// <para>
+    /// <strong>Every failure leaves the page reported</strong> (spec §3.3, SC9): a checkout git cannot
+    /// answer for, a source tree this clone does not have, a file the process may not open. Nothing is
+    /// printed about it, and that is deliberate rather than a swallowed error — the page staying in the
+    /// report <em>is</em> the loud outcome here, and the alternative failure, suppressing a drift report
+    /// on the strength of a fingerprint nobody could compute, is the one nobody would ever investigate.
+    /// </para>
+    /// </remarks>
+    private static async Task<DriftReport> SealedAsync(
+        DriftReport report,
+        string repoRoot,
+        WikiTree tree,
+        DocumeState state,
+        CancellationToken cancellationToken)
+    {
+        var seals = new Dictionary<string, string>(StringComparer.Ordinal);
+        var sealedAt = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var path in report.Pages.Select(page => page.Path))
+        {
+            var verdict = state.Pages.GetValueOrDefault(path)?.Verdict;
+
+            if (verdict?.SourcesHash is not { Length: > 0 } fingerprint)
+            {
+                continue;
+            }
+
+            seals[path] = fingerprint;
+
+            if (verdict.SealedAt is { Length: > 0 } when)
+            {
+                sealedAt[path] = when;
+            }
+        }
+
+        if (seals.Count == 0)
+        {
+            return report;
+        }
+
+        IReadOnlyList<string> tracked;
+        try
+        {
+            tracked = await GitRepository
+                .TrackedFilesAsync(repoRoot, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (GitException)
+        {
+            // git cannot answer for this directory — no checkout, no git on PATH, a tarball. Nothing is
+            // sealed and every reported page keeps the answer the commit range gave it.
+            return report;
+        }
+
+        if (tracked.Count == 0)
+        {
+            // The same unusable answer, arrived at through exit 0: an empty index, or a sparse checkout
+            // cone'd away from the code these pages document. Treated exactly as the exception above,
+            // and it is the check that matters more, because this half is where an empty universe would
+            // do its damage — every page's globs would match nothing, every current fingerprint would be
+            // SourcesFingerprint.EmptySet, and any page whose state carries the same constant would be
+            // held out of the report for a structural reason rather than an evidential one.
+            return report;
+        }
+
+        var sources = tree.Pages.ToDictionary(
+            page => page.Path,
+            page => page.Parsed.Frontmatter.Sources,
+            StringComparer.Ordinal);
+
+        var current = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var path in seals.Keys)
+        {
+            if (!sources.TryGetValue(path, out var patterns))
+            {
+                continue;
+            }
+
+            try
+            {
+                current[path] = SourcesFingerprint.Compute(repoRoot, patterns, tracked);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Left out of the map rather than recorded as a mismatch, which reads the same to
+                // SealedVerdicts.Apply and says the true thing to anyone reading this: the question was
+                // not answered, so the page keeps the answer the commit range gave it.
+            }
+        }
+
+        return SealedVerdicts.Apply(report, seals, current, sealedAt);
     }
 
     /// <summary>
@@ -736,6 +859,7 @@ internal static class DriftCommand
 
         RenderPages(report);
         RenderVerdict(report, mark);
+        RenderSealed(report);
         RenderExempted(report);
         RenderIgnoredCommits(report);
     }
@@ -791,6 +915,22 @@ internal static class DriftCommand
 
         if (!report.HasDrift)
         {
+            // Two different quiet verdicts, and only one of them is "nothing was touched". When the
+            // count is zero because every flagged page was held out by its own seal, the SEALED block
+            // printed directly below this line names pages whose sources WERE touched — so saying
+            // otherwise here would be contradicted three lines later by the disclosure that exists to
+            // keep this verdict honest.
+            if (report.Sealed.Count > 0)
+            {
+                AnsiConsole.MarkupLine(
+                    $"[green]Nothing left to review after the seal.[/] [grey]Documented sources were "
+                    + $"touched, and all {report.Sealed.Count} page(s) they belong to are byte-identical "
+                    + $"to their seal. {report.PagesWithSourcesCount} of {report.PageCount} page(s) "
+                    + "declare sources.[/]");
+
+                return;
+            }
+
             AnsiConsole.MarkupLine(
                 $"[green]No documented sources touched.[/] [grey]{report.PagesWithSourcesCount} of "
                 + $"{report.PageCount} page(s) declare sources.[/]");
@@ -805,6 +945,37 @@ internal static class DriftCommand
         AnsiConsole.MarkupLine(
             $"[yellow]{report.AffectedCount} of {report.PagesWithSourcesCount} page(s) with declared "
             + $"sources may need review.[/] [grey]{advisory}[/]");
+    }
+
+    /// <summary>
+    /// The pages their own seal counted out of the verdict, one line each with the date the seal was
+    /// taken (spec §3.4). Named rather than only counted and uncapped, exactly as
+    /// <see cref="RenderExempted"/> is and for a sharper version of its reason: this narrowing is a
+    /// machine's claim about bytes rather than a line somebody wrote in a file, so the only place a
+    /// reader can ever see it is here, and the only way to judge it is to know how old the claim is.
+    /// Directly under the verdict rather than with the two diff narrowings below, because these are
+    /// pages — every one of them would otherwise be a row in the table above.
+    /// </summary>
+    private static void RenderSealed(DriftReport report)
+    {
+        if (report.Sealed.Count == 0)
+        {
+            return;
+        }
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine(
+            $"[grey]SEALED — {report.Sealed.Count} page(s) whose sources are byte-identical to their "
+            + "seal[/]");
+
+        foreach (var page in report.Sealed)
+        {
+            var when = page.SealedAt is { Length: > 0 } at
+                ? $"{page.Title} — sealed {at}"
+                : page.Title;
+
+            AnsiConsole.MarkupLine($"  [grey]{page.Path.EscapeMarkup()} ({when.EscapeMarkup()})[/]");
+        }
     }
 
     /// <summary>

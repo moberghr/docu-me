@@ -45,6 +45,23 @@
 - **Why:** the both-ways uniqueness check is what keeps the wiki page's derived table honest; a bare word
   rots the day another skill shares vocabulary.
 
+## 2026-08-19 — a sentinel every failure mode collapses to must never be a positive verdict
+
+- What happened: the sealed-verdict spec said a page whose `sources` globs match no file should seal the
+  empty-set fingerprint, reasoning that it is "a real value, not null — it distinguishes documented
+  nothing deliberately from never sealed". Every *structural* way of matching zero files produces that one
+  constant: a typo in a glob, a renamed directory, an empty `git ls-files`, a sparse-checkout CI job cone'd
+  to `docs/`. A later run under the same condition recomputes the same constant, the comparison matches,
+  and a page whose sources were never read is reported as verified. Review caught it before merge; four
+  guards and a spec reversal closed it.
+- Rule: when a computed value is used as a *positive* verdict (verified, sealed, matched, approved), check
+  what that value is when the inputs are empty or unavailable. If several unrelated failures collapse to
+  one value, that value must be refused on both the write and the compare side, not just documented.
+  Distinguishing "legitimately empty" from "failed to look" is worth less than never confusing the two.
+- Why: this is the silent direction. It emits no error and no warning, and the state file it writes is
+  byte-identical to the state a healthy run would write.
+- When it applies: any fingerprint, digest, checksum, or set-comparison used to *suppress* output.
+
 ## 2026-08-17 — git 2.54 wedges a config-nulled `git init` spawned with redirected pipes
 
 - What happened: `ReleaseWorkflowTests`' git helper nulls every config level (`GIT_CONFIG_GLOBAL=/dev/null`), so git 2.54+ prints its multi-line `init.defaultBranch` advice on every `git init`; written into a redirected stderr pipe that the helper reads only after draining stdout, the advice wedged the whole test binary for minutes (macOS, brew git bump mid-session).

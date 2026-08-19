@@ -4,10 +4,11 @@ using System.Diagnostics;
 namespace DocuMe.Core.Git;
 
 /// <summary>
-/// The two git questions DocuMe asks: which commit a publish was made from (PLAN.md §6.2 step 8, §5.3)
-/// and which files changed since a given commit (<c>publish --changed-since</c> in §6.2, and §6.4's
+/// The git questions DocuMe asks: which commit a publish was made from (PLAN.md §6.2 step 8, §5.3),
+/// which files changed since a given commit (<c>publish --changed-since</c> in §6.2, and §6.4's
 /// <c>drift</c> — as one flat list, or commit by commit when <c>drift-ignore-revs</c> needs to know
-/// who touched what).
+/// who touched what), and which files the repository tracks at all
+/// (<see cref="TrackedFilesAsync"/>, the sealed verdict's candidate set).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -30,6 +31,8 @@ public static class GitRepository
     private static readonly TimeSpan Budget = TimeSpan.FromSeconds(30);
 
     private static readonly string[] HeadArguments = ["rev-parse", "HEAD"];
+
+    private static readonly string[] TrackedArguments = ["ls-files"];
 
     /// <summary>
     /// The commit <paramref name="directory"/> is checked out at, or <c>null</c> when that is unknowable
@@ -201,6 +204,62 @@ public static class GitRepository
         return ParseLog(output.StandardOutput);
     }
 
+    /// <summary>
+    /// Every file git tracks under <paramref name="directory"/>, as paths relative to it with <c>/</c>
+    /// separators — the candidate set a sealed source fingerprint may match
+    /// (docs/specs/2026-08-19-sealed-source-verdicts.md §3.1, as amended).
+    /// </summary>
+    /// <param name="directory">
+    /// The directory the answer is scoped and relative to. For the seal that is the directory holding
+    /// <c>docume.json</c>, because a page's <c>sources</c> globs are written relative to it (§5.1) — the
+    /// same directory <see cref="ChangedFilesBetweenAsync"/> is asked about, and <c>git ls-files</c>
+    /// answers relative to its own working directory exactly as <c>--relative</c> makes the diff do.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="GitException">
+    /// git is absent, hung, or could not list — most often because this directory is not a checkout at
+    /// all, which is a publish from a tarball or an unpacked archive.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the index, which is exactly the point.</strong> A gitignored path is not in it,
+    /// and neither is an untracked one — so a page with <c>sources: ["src/**"]</c> in a repo that builds
+    /// in-tree cannot seal <c>bin/</c> into its fingerprint and unseal itself on the next rebuild
+    /// (spec §4b defect F). The list drift matches against comes from <c>git diff</c>, which reports
+    /// neither either, so the seal and the check see one universe by construction.
+    /// </para>
+    /// <para>
+    /// <strong>It throws rather than answering empty</strong>, for
+    /// <see cref="ChangedFilesBetweenAsync"/>'s reason turned around: an empty candidate list is a
+    /// legitimate value that seals the empty-set fingerprint, so a failure that returned one would seal
+    /// "this page documents nothing" onto every page in the wiki. The caller decides what an
+    /// unanswerable question means — the CLI publishes without sealing and says so.
+    /// </para>
+    /// <para>
+    /// A tracked file deleted from the working tree is still listed, because the index still holds it.
+    /// That reaches the fingerprint as an unreadable file rather than as a missing one, which is the safe
+    /// direction: deleting a documented source is drift, and the page must not seal through it.
+    /// </para>
+    /// </remarks>
+    public static async Task<IReadOnlyList<string>> TrackedFilesAsync(
+        string directory,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+
+        var output = await RunAsync(directory, TrackedArguments, cancellationToken).ConfigureAwait(false);
+
+        if (output.ExitCode != 0)
+        {
+            throw new GitException(
+                $"git could not list the files it tracks in {directory}. Check that the directory is a "
+                + $"git checkout (`git -C {directory} rev-parse --git-dir`). git said: "
+                + Describe(output.StandardError));
+        }
+
+        return Lines(output.StandardOutput);
+    }
+
     private static async Task<IReadOnlyList<string>> DiffAsync(
         string directory,
         string revisions,
@@ -220,10 +279,23 @@ public static class GitRepository
             throw CouldNot(attempt, directory, revisions, output.StandardError);
         }
 
-        return [.. output.StandardOutput.Split(
-            '\n',
-            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+        return Lines(output.StandardOutput);
     }
+
+    /// <summary>
+    /// A one-path-per-line answer as a list. One spelling for every path question, so the diff and
+    /// <see cref="TrackedFilesAsync"/> cannot end up disagreeing about how a path is written.
+    /// </summary>
+    /// <remarks>
+    /// Nothing is unquoted. Under the default <c>core.quotePath</c> git renders a non-ASCII path as a
+    /// C-quoted string (<c>"src/R\303\251.cs"</c>) — and it does so identically in
+    /// <c>diff --name-only</c> and in <c>ls-files</c>, verified against git 2.54. Decoding it here would
+    /// have to be done identically on both sides forever to keep the seal and the drift check matching
+    /// the same spelling, so the cheaper guarantee is to decode on neither: such a path matches a glob in
+    /// both places or in neither, which is the property this file exists to hold.
+    /// </remarks>
+    private static IReadOnlyList<string> Lines(string standardOutput) =>
+        [.. standardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
 
     /// <summary>
     /// The failure every range question shares, worded for a terminal: what was asked, what to check,

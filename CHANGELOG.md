@@ -8,6 +8,35 @@ One version covers everything: the `DocuMe.Cli` and `DocuMe.Core` packages and t
 ship off a single `vX.Y.Z` tag, so a heading here describes all three. The version at the top of this file
 is the one `Directory.Build.props` declares, whether or not its tag has been pushed yet.
 
+## [Unreleased]
+
+Drift has always answered from a commit range, and a range is evidence about commits rather than about
+bytes. This entry closes the gap: a publish now records what it published against, and drift checks that
+record before it reports.
+
+### Added
+
+- **Publish seals the sources it published against.** A run that writes a page body fingerprints every
+  file that page's `sources` globs match, taken over the files git tracks so gitignored build output can
+  never be in it, and records the hash in `_meta/state.json` under the page's new `verdict` key with the
+  moment it was taken and the commit the run was publishing.
+- **`docume drift` reports a sealed page rather than a drifted one.** It recomputes the fingerprint for
+  the pages the diff flagged and holds out every page whose sources are byte-identical to its seal, so a
+  revert inside the range, a merge that re-introduces identical bytes, and a `baselineSha` older than a
+  page's own last publish all stop producing phantom drift. Sealed pages are named in the table, carried
+  in the `sealed` array of `--format json` and in their own section of the PR comment, counted out of
+  the exit code under `--fail-on-drift`, and never labelled by `--mark`. There is no new command and no
+  new flag: the check only ever removes pages whose bytes are provably unchanged, so there is nothing to
+  switch on and nothing to switch off.
+- **A page with no seal keeps the answer it had.** Every page published before this existed, and every
+  page whose sources a publish could not read, answers drift from the commit range exactly as before,
+  and the page's next publish seals it. A publish seals only what it can prove: a directory git cannot
+  answer for, an empty tracked-file list (an empty index, or a sparse checkout cone'd away from the
+  code), and globs that match no tracked file all seal nothing and say so. All three would otherwise
+  record the fingerprint of no files, which every one of those conditions reproduces exactly — so a
+  later run would match it and report a page whose sources were never read as verified. `docume drift`
+  refuses that value from the other side too, for state files that already carry one.
+
 ## [0.2.0] - 2026-08-14
 
 Until now every page DocuMe generated spoke to an engineer. This release adds a second documentation

@@ -312,11 +312,108 @@ internal static class PublishCommand
             CheckOpenComments = !noCommentCheck,
             BlockOnOpenComments = blockOnOpenComments,
             NotifyReviewers = notifyReviewers,
+            Sealing = await SealingAsync(repoRoot, tree, state, cancellationToken).ConfigureAwait(false),
         };
 
         return await PublishAsync(
                 config, repoRoot, wikiRoot, resolvedStatePath, report, state, prune, execution, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// What this run seals each published page's sources against
+    /// (docs/specs/2026-08-19-sealed-source-verdicts.md §3.2), or <c>null</c> to publish without sealing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the only place the seal is switched on</strong>, and its inputs are the ones a
+    /// plan cannot carry: the repo root <c>sources</c> globs are anchored at (§5.1, the directory holding
+    /// <c>docume.json</c> — the same root <c>drift</c> resolves them against, <c>DriftCommand.cs:220</c>),
+    /// the globs themselves off the wiki tree's frontmatter, and the files git tracks there. The clock is
+    /// read here rather than inside the executor for the reason <see cref="PublishOptions.GeneratedOn"/>
+    /// is: one moment for the whole run.
+    /// </para>
+    /// <para>
+    /// <strong>A repo git cannot answer for publishes without sealing, and says so.</strong> Publishing
+    /// from a tarball or an unpacked archive is a valid publish (<see cref="GitRepository.TryReadHeadAsync"/>
+    /// makes the same allowance for the sha), and no seal is the pre-feature behaviour: drift keeps
+    /// answering for every page from the commit range. What must not happen is the quiet version of it —
+    /// an empty candidate list would fingerprint the empty set on every page, and a later run under the
+    /// same structural condition would recompute it and call the whole wiki verified. Hence a null seal
+    /// and a printed line, never an empty one.
+    /// </para>
+    /// <para>
+    /// <strong>An empty answer is refused as hard as a failed one</strong>, and this is the case the
+    /// exception guard alone misses. <c>git ls-files</c> exits 0 and prints nothing in a checkout with an
+    /// empty index, and a sparse checkout cone'd to <c>docs/</c> prints a list with no source file in it
+    /// at all — success, by every signal a process can read, and an unusable answer. So the count is
+    /// checked, not just the exception: sealing against a universe that holds none of the files the globs
+    /// name is how a CI job seals a wiki-wide "nothing to see here".
+    /// </para>
+    /// </remarks>
+    private static async Task<SourceSealing?> SealingAsync(
+        string repoRoot,
+        WikiTree tree,
+        DocumeState state,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<string> tracked;
+        try
+        {
+            tracked = await GitRepository.TrackedFilesAsync(repoRoot, cancellationToken).ConfigureAwait(false);
+        }
+        catch (GitException ex)
+        {
+            WarnNotSealing(ex.Message, state);
+
+            return null;
+        }
+
+        if (tracked.Count == 0)
+        {
+            WarnNotSealing(
+                $"git tracks no file in {repoRoot} — an empty index, or a sparse checkout cone'd away "
+                + "from the code the pages document.",
+                state);
+
+            return null;
+        }
+
+        // Every page in the tree, drafts included: a draft that flips to publish: false and back is the
+        // same page, and a map keyed on what the tree holds cannot go stale against the plan. A page
+        // declaring no sources maps to none, which seals nothing (SourceSealing.SourcesByPath).
+        var sources = tree.Pages.ToDictionary(
+            page => page.Path,
+            page => page.Parsed.Frontmatter.Sources,
+            StringComparer.Ordinal);
+
+        return new SourceSealing(repoRoot, sources, DateTimeOffset.UtcNow, tracked);
+    }
+
+    /// <summary>
+    /// The one line a run that cannot seal prints, ending in what now answers drift for this wiki.
+    /// </summary>
+    /// <remarks>
+    /// The consequence is counted off <paramref name="state"/> rather than asserted, because the two
+    /// situations an operator can be left in are genuinely different and only one of them is "back on the
+    /// commit range": <see cref="StateUpdates.RecordPublish"/> carries a standing seal through a run that
+    /// writes none, so a wiki that sealed successfully last week is still being answered for from those
+    /// bytes — which are now older than the bodies this run just published. Saying "keeps answering from
+    /// the commit range" at both would tell half the operators who read it the wrong thing about where
+    /// their next drift verdict comes from.
+    /// </remarks>
+    private static void WarnNotSealing(string because, DocumeState state)
+    {
+        var standing = state.Pages.Values.Count(page => page.Verdict?.SourcesHash is { Length: > 0 });
+
+        var consequence = standing > 0
+            ? $"{standing} page(s) keep the seal an earlier publish wrote and are still answered for "
+                + "from those bytes; every other page answers from the commit range."
+            : "`docume drift` keeps answering for every page from the commit range.";
+
+        AnsiConsole.MarkupLine(
+            $"[yellow]Sources are not being sealed:[/] {because.EscapeMarkup()} The pages publish "
+            + $"exactly as before; {consequence.EscapeMarkup()}");
     }
 
     /// <summary>

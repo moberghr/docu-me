@@ -146,7 +146,7 @@ public sealed class StatusModelTests : IDisposable
         var state = StateUpdates.RecordPublish(
             Published(),
             "removed.md",
-            new PublishedPage("page-removed", "Removed", null, "sha256:whatever", 3, new Dictionary<string, string>(StringComparer.Ordinal), new Dictionary<string, string>(StringComparer.Ordinal)));
+            new PublishedPage("page-removed", "Removed", null, "sha256:whatever", 3, new Dictionary<string, string>(StringComparer.Ordinal), new Dictionary<string, string>(StringComparer.Ordinal), SourceSeal: null));
 
         var report = Build(state);
 
@@ -368,7 +368,8 @@ public sealed class StatusModelTests : IDisposable
                     page.Plan.ContentHash,
                     1,
                     attachments,
-                    new Dictionary<string, string>(StringComparer.Ordinal)));
+                    new Dictionary<string, string>(StringComparer.Ordinal),
+                    SourceSeal: null));
         }
 
         return StateUpdates.RecordLastPublishedSha(state, "abc1234");

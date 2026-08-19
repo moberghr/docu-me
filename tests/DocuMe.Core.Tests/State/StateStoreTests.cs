@@ -29,6 +29,12 @@ public sealed class StateStoreTests : IDisposable
                     ContentHash = "sha256:deadbeef",
                     PublishedVersion = 6,
                     Attachments = new Dictionary<string, string> { ["diagram-1.svg"] = "sha256:cafe" },
+                    Verdict = new SealedVerdict
+                    {
+                        SourcesHash = "sha256:beef",
+                        SealedAt = "2026-08-19T09:12:44Z",
+                        RepoSha = "6accfb8",
+                    },
                     Approval = new ApprovalState
                     {
                         Status = "approved",
@@ -61,6 +67,80 @@ public sealed class StateStoreTests : IDisposable
         page.Approval.ApprovedBy.ShouldBe("jonas");
         page.Approval.History.ShouldHaveSingleItem().Version.ShouldBe(4);
         page.FeedbackCursor.ShouldBe("2026-08-01T10:00:00Z");
+
+        page.Verdict.ShouldNotBeNull();
+        page.Verdict!.SourcesHash.ShouldBe("sha256:beef");
+        page.Verdict.SealedAt.ShouldBe("2026-08-19T09:12:44Z");
+        page.Verdict.RepoSha.ShouldBe("6accfb8");
+    }
+
+    /// <summary>
+    /// The wire spelling of the seal, pinned where the file is written rather than only where it is read:
+    /// <c>_meta/state.json</c> is committed and diffed by humans, and a round trip through one serializer
+    /// would stay green whatever the keys were called.
+    /// </summary>
+    [Fact]
+    public void Save_WritesTheSealWithTheCamelCaseKeysEveryOtherStateFieldUses()
+    {
+        var path = Path("state.json");
+
+        var page = new PageState
+        {
+            Verdict = new SealedVerdict { SourcesHash = "sha256:beef", SealedAt = "2026-08-19T09:12:44Z" },
+        };
+        var state = new DocumeState
+        {
+            Pages = new Dictionary<string, PageState> { ["README.md"] = page },
+        };
+
+        StateStore.Save(path, state);
+
+        var json = File.ReadAllText(path);
+        json.ShouldContain("\"verdict\"");
+        json.ShouldContain("\"sourcesHash\": \"sha256:beef\"");
+        json.ShouldContain("\"sealedAt\": \"2026-08-19T09:12:44Z\"");
+
+        // Null members are dropped from machine-owned files (DocumeJson.Options), so a publish outside a
+        // git checkout leaves no `"repoSha": null` line in a committed diff.
+        json.ShouldNotContain("repoSha");
+    }
+
+    /// <summary>
+    /// A state file every consumer already has: written before sealing existed, so it carries no
+    /// <c>verdict</c> key at all. It has to load unchanged and seal nothing, which is what makes the
+    /// feature additive to a wiki that has never published under it.
+    /// </summary>
+    [Fact]
+    public void Load_AStateFileWrittenBeforeSealingExisted_LoadsUnchangedAndCarriesNoSeal()
+    {
+        const string WrittenBeforeSealing = """
+            {
+              "version": 1,
+              "baselineSha": "98c6df844",
+              "pages": {
+                "10-domains/loans/README.md": {
+                  "pageId": "123456",
+                  "title": "Loans Domain",
+                  "contentHash": "sha256:deadbeef",
+                  "publishedVersion": 6,
+                  "attachments": { "diagram-1.svg": "sha256:cafe" },
+                  "stale": true
+                }
+              }
+            }
+            """;
+
+        var path = Path("pre-seal.json");
+        File.WriteAllText(path, WrittenBeforeSealing);
+
+        var page = StateStore.Load(path).Pages["10-domains/loans/README.md"];
+
+        page.Verdict.ShouldBeNull();
+        page.PageId.ShouldBe("123456");
+        page.ContentHash.ShouldBe("sha256:deadbeef");
+        page.PublishedVersion.ShouldBe(6);
+        page.Attachments["diagram-1.svg"].ShouldBe("sha256:cafe");
+        page.Stale.ShouldBeTrue();
     }
 
     [Fact]

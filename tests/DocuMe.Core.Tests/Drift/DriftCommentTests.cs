@@ -104,6 +104,59 @@ public sealed class DriftCommentTests
         DriftComment.Render(Report()).ShouldNotContain("commit");
     }
 
+    /// <summary>
+    /// The third disclosure (spec §3.4), mirroring the exemption one: a page the diff flagged and its own
+    /// seal held out is named here, with the date of the seal, because the verdict above it was narrowed
+    /// by a claim about bytes rather than by anything a human declared — and round 6's lesson is that the
+    /// PR-comment format is exactly where a disclosure the other formats carry goes missing.
+    /// </summary>
+    [Fact]
+    public void Render_DisclosesTheSealedPagesBehindAQuietVerdict()
+    {
+        var report = Report() with
+        {
+            Sealed =
+            [
+                new SealedPage("domains/loans.md", "Loans", "2026-08-19T09:12:44Z"),
+                new SealedPage("domains/rates.md", "Rates_and_Fees", null),
+            ],
+        };
+
+        var comment = DriftComment.Render(report);
+
+        // The verdict line says why it is quiet rather than claiming nothing was touched: the section
+        // directly below it names two pages whose sources this PR did touch, and a disclosure that
+        // contradicts the sentence above it is worse than no disclosure at all.
+        comment.ShouldContain(
+            "This PR touches documented sources, but all 2 pages they belong to are byte-identical");
+
+        comment.ShouldNotContain("No documented sources were touched.");
+        comment.ShouldContain("2 flagged pages were held out by their seal");
+
+        var one = DriftComment.Render(Report() with
+        {
+            Sealed = [new SealedPage("domains/loans.md", "Loans", "2026-08-19T09:12:44Z")],
+        });
+
+        one.ShouldContain(
+            "This PR touches documented sources, but the one page they belong to is byte-identical");
+
+        one.ShouldContain("1 flagged page was held out by their seal");
+        comment.ShouldContain(@"- **Loans** — `domains/loans.md` (sealed 2026-08-19T09:12:44Z)");
+
+        // A title is consumer prose, escaped like every other one this file renders; a seal with no
+        // recorded date says so rather than trailing an empty parenthesis.
+        comment.ShouldContain(@"- **Rates\_and\_Fees** — `domains/rates.md`" + Environment.NewLine);
+
+        comment.ShouldContain("9 changed files, 2 sealed.");
+    }
+
+    [Fact]
+    public void Render_SaysNothingAboutSealsWhenNoPageIsSealed()
+    {
+        DriftComment.Render(Report(Page())).ShouldNotContain("sealed");
+    }
+
     [Fact]
     public void Render_StatesTheOverflowRatherThanTrimmingQuietly()
     {

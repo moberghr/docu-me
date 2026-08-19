@@ -70,6 +70,14 @@ public sealed class CliDriftTests : IDisposable
 
     private const string RatesPageId = "770102";
 
+    /// <summary>The globs the two pages declare, and the two the seal is computed over.</summary>
+    private const string LimitsGlob = "src/limits/*.cs";
+
+    private const string RatesGlob = "src/rates/*.cs";
+
+    /// <summary>The date <see cref="Seal"/> stamps, so the disclosure can be asserted verbatim.</summary>
+    private const string SealedOn = "2026-08-19T09:12:44Z";
+
     private readonly WireMockServer _server = WireMockServer.Start();
 
     private readonly string _root = Directory.CreateTempSubdirectory("docume-cli-drift").FullName;
@@ -914,6 +922,249 @@ public sealed class CliDriftTests : IDisposable
     }
 
     /// <summary>
+    /// SC1, the fact the sealed-verdict slice exists for, and the only one here that can fail for the
+    /// reason the design is about: the diff really did touch this page's sources, and the bytes under
+    /// them are the ones its live body was published against, so it is disclosed rather than reported.
+    /// SC3 rides along beside it — the page with no seal keeps exactly today's range-based answer.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the fact that catches the recompute the design cannot survive.</strong> The seal
+    /// covers every tracked file the glob matches, <c>src/limits/Helper.cs</c> included, and that file is
+    /// in no diff this fixture produces. A run that fingerprinted the changed-file list instead of
+    /// <c>git ls-files</c> would compute a value over <c>Limits.cs</c> alone, no page would ever equal
+    /// its seal, and every other fact in this file would still be green — a page staying in the report is
+    /// what the feature does when it declines.
+    /// </para>
+    /// <para>
+    /// The json format carries the claim best: "which pages" is an array here rather than a table a
+    /// console wrapped, and the same payload holds both halves of the partition.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_page_whose_sources_still_match_its_seal_is_reported_sealed_rather_than_drifted()
+    {
+        var work = Seeded(nameof(A_page_whose_sources_still_match_its_seal_is_reported_sealed_rather_than_drifted));
+
+        Seal(work, LimitsPath);
+
+        var run = Invoke(work, "drift", "--format", "json");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        using var document = JsonDocument.Parse(run.Output);
+        var root = document.RootElement;
+
+        var held = root.GetProperty("sealed");
+
+        var because = "The page whose sources are byte-identical to its seal was not held out."
+            + Environment.NewLine + run.Diagnostics;
+
+        held.GetArrayLength().ShouldBe(1, because);
+
+        held[0].GetProperty("path").GetString().ShouldBe(LimitsPath, run.Diagnostics);
+        held[0].GetProperty("title").GetString().ShouldBe(LimitsTitle, run.Diagnostics);
+        held[0].GetProperty("sealedAt").GetString().ShouldBe(SealedOn, run.Diagnostics);
+
+        // SC3: the unsealed page is untouched, and it is the only page left in the verdict.
+        var pages = root.GetProperty("pages");
+
+        pages.GetArrayLength().ShouldBe(1, run.Diagnostics);
+        pages[0].GetProperty("path").GetString().ShouldBe(RatesPath, run.Diagnostics);
+
+        root.GetProperty("affectedCount").GetInt32().ShouldBe(1, run.Diagnostics);
+        root.GetProperty("hasDrift").GetBoolean().ShouldBeTrue(run.Diagnostics);
+    }
+
+    /// <summary>
+    /// SC7 through the table and the exit code: with every drifted page sealed there is no drift left to
+    /// fail on, so <c>--fail-on-drift</c> exits 0 — and the block that says why renders, page by page
+    /// with the date each seal was taken. A quiet verdict a machine narrowed must say so, the way the two
+    /// declared exemptions do (§6.4).
+    /// </summary>
+    [Fact]
+    public void Every_drifted_page_being_sealed_exits_zero_under_fail_on_drift_and_discloses_why()
+    {
+        var work = Seeded(nameof(Every_drifted_page_being_sealed_exits_zero_under_fail_on_drift_and_discloses_why));
+
+        Seal(work, LimitsPath, RatesPath);
+
+        var run = Invoke(work, "drift", "--fail-on-drift");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        // Neither page is reported, so the verdict is the no-drift one that produced the exit 0 above —
+        // and it says why it is quiet rather than claiming nothing was touched, because the SEALED block
+        // three lines below names two pages whose sources this range did touch.
+        run.Flowed.ShouldContain("Nothing left to review after the seal.", customMessage: run.Diagnostics);
+
+        var contradicted = "The verdict claims nothing was touched directly above a block listing the "
+            + $"pages whose sources were.{Environment.NewLine}{run.Diagnostics}";
+
+        run.Flowed.ShouldNotContain("No documented sources touched.", customMessage: contradicted);
+
+        // De-wrapped before matching, the way the IGNORED COMMITS fact above reads its line.
+        var unwrapped = string.Concat(run.Flowed.Where(character => !char.IsWhiteSpace(character)));
+
+        unwrapped.ShouldContain(
+            "SEALED—2page(s)whosesourcesarebyte-identicaltotheirseal",
+            customMessage: run.Diagnostics);
+
+        run.Flowed.ShouldContain(
+            $"{LimitsPath} ({LimitsTitle} — sealed {SealedOn})",
+            customMessage: run.Diagnostics);
+
+        run.Flowed.ShouldContain(
+            $"{RatesPath} ({RatesTitle} — sealed {SealedOn})",
+            customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
+    /// SC7 through the format a reviewer actually reads. The PR comment is where a disclosure the other
+    /// formats carry has gone missing before, and it is the format where losing one matters most: the
+    /// comment is the whole of what a reviewer sees, so a page held out of it silently is a page nobody
+    /// can find out was held out.
+    /// </summary>
+    [Fact]
+    public void The_pr_comment_carries_the_seal_disclosure_the_other_formats_do()
+    {
+        var work = Seeded(nameof(The_pr_comment_carries_the_seal_disclosure_the_other_formats_do));
+
+        Seal(work, LimitsPath, RatesPath);
+
+        var run = Invoke(work, "drift", "--format", "github-comment");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        run.Output.ShouldContain(
+            "This PR touches documented sources, but all 2 pages they belong to are byte-identical",
+            customMessage: run.Diagnostics);
+
+        var contradicted = "The comment tells a reviewer nothing was touched and then lists the pages "
+            + $"whose sources were.{Environment.NewLine}{run.Diagnostics}";
+
+        run.Output.ShouldNotContain("No documented sources were touched.", customMessage: contradicted);
+
+        run.Output.ShouldContain(
+            "2 flagged pages were held out by their seal",
+            customMessage: run.Diagnostics);
+
+        run.Output.ShouldContain(
+            $"- **{LimitsTitle}** — `{LimitsPath}` (sealed {SealedOn})",
+            customMessage: run.Diagnostics);
+
+        run.Output.ShouldContain(
+            $"- **{RatesTitle}** — `{RatesPath}` (sealed {SealedOn})",
+            customMessage: run.Diagnostics);
+
+        // The provenance line, which is what a reader takes in without scrolling.
+        run.Output.ShouldContain("2 sealed.", customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
+    /// SC8 end to end: <c>--mark</c> never labels a sealed page. Asserted as the label writes that went
+    /// out, not as a plan — the planner's half is pinned in
+    /// <see cref="Drift.DriftMarkPlannerTests.A_page_its_seal_held_out_is_never_labelled"/>, and what only
+    /// the process can answer is whether the seal check runs before the write half sees the report at all.
+    /// </summary>
+    [Fact]
+    public void A_mark_run_never_labels_a_page_its_seal_held_out()
+    {
+        var work = Seeded(nameof(A_mark_run_never_labels_a_page_its_seal_held_out));
+
+        Seal(work, LimitsPath);
+
+        StubLabels();
+        StubDashboard();
+
+        var run = Invoke(work, "drift", "--mark");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        LabelWrites().ShouldBe(
+            [RatesPageId],
+            $"A sealed page was labelled stale.{Environment.NewLine}{run.Diagnostics}");
+
+        var state = State(work);
+
+        state.Pages[LimitsPath].Stale.ShouldBeFalse(run.Diagnostics);
+        state.Pages[RatesPath].Stale.ShouldBeTrue(run.Diagnostics);
+
+        // The skip is visible above the plan rather than being a page that quietly vanished (spec §3.4).
+        run.FlowedAll.ShouldContain("SEALED", customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
+    /// SC2: a page whose sources really moved after the seal was taken is reported exactly as it is
+    /// today. The seal is about bytes and not about commits, which is the whole claim — so the page whose
+    /// file changed once more drifts, and its neighbour, sealed at the same moment and untouched since,
+    /// does not.
+    /// </summary>
+    [Fact]
+    public void A_page_whose_sources_moved_after_the_seal_still_drifts()
+    {
+        var work = Seeded(nameof(A_page_whose_sources_moved_after_the_seal_still_drifts));
+
+        Seal(work, LimitsPath, RatesPath);
+
+        Write(work, "src/limits/Limits.cs", "// the limits, rewritten once more, after the seal\n");
+        Commit(work, "a change the seal predates");
+
+        var run = Invoke(work, "drift", "--format", "json");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        using var document = JsonDocument.Parse(run.Output);
+        var root = document.RootElement;
+
+        var pages = root.GetProperty("pages");
+
+        pages.GetArrayLength().ShouldBe(1, run.Diagnostics);
+        pages[0].GetProperty("path").GetString().ShouldBe(LimitsPath, run.Diagnostics);
+
+        var held = root.GetProperty("sealed");
+
+        held.GetArrayLength().ShouldBe(1, run.Diagnostics);
+        held[0].GetProperty("path").GetString().ShouldBe(RatesPath, run.Diagnostics);
+    }
+
+    /// <summary>
+    /// SC9: a page whose sources cannot be read now is never sealed silently. Its files are tracked and
+    /// gone from the working tree, which is what a deleted directory or a partial checkout produces, and
+    /// a fingerprint over whatever happened to be readable would suppress the one report nobody could
+    /// have verified. It stays in the verdict; the page whose sources are still there is still sealed.
+    /// </summary>
+    [Fact]
+    public void A_page_whose_sources_cannot_be_read_stays_in_the_verdict()
+    {
+        var work = Seeded(nameof(A_page_whose_sources_cannot_be_read_stays_in_the_verdict));
+
+        Seal(work, LimitsPath, RatesPath);
+
+        Directory.Delete(Path.Combine(work, "src", "limits"), recursive: true);
+
+        var run = Invoke(work, "drift", "--format", "json");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        using var document = JsonDocument.Parse(run.Output);
+        var root = document.RootElement;
+
+        var pages = root.GetProperty("pages");
+
+        pages.GetArrayLength().ShouldBe(
+            1,
+            $"An unreadable source tree suppressed a drift report.{Environment.NewLine}{run.Diagnostics}");
+
+        pages[0].GetProperty("path").GetString().ShouldBe(LimitsPath, run.Diagnostics);
+
+        var held = root.GetProperty("sealed");
+
+        held.GetArrayLength().ShouldBe(1, run.Diagnostics);
+        held[0].GetProperty("path").GetString().ShouldBe(RatesPath, run.Diagnostics);
+    }
+
+    /// <summary>
     /// The per-page Stale cell as <see cref="DocuMe.Core.Dashboard.DashboardPage"/> renders it. Lowercase, which is
     /// what keeps it distinct from <see cref="SummaryStaleCell"/> under an ordinal count.
     /// </summary>
@@ -984,6 +1235,57 @@ public sealed class CliDriftTests : IDisposable
     /// </summary>
     private static void ExemptCommits(string work, params string[] lines) =>
         File.WriteAllLines(Path.Combine(work, "docs", "wiki", "_meta", "drift-ignore-revs"), lines);
+
+    /// <summary>
+    /// Seals the named pages in the seeded state, as the publish that generated their live bodies would
+    /// have (<c>PublishExecutor.SealSources</c>): the fingerprint of the files each page's <c>sources</c>
+    /// globs match, taken over git's tracked files.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The candidate list is <c>git ls-files</c> because that is the universe the seal and the check have
+    /// to share (spec §3.1 as amended, §4b defect F). It is read here with git itself rather than through
+    /// <c>GitRepository</c>, so the fixture states the fact rather than borrowing the production
+    /// answer for both sides of its own comparison.
+    /// </para>
+    /// <para>
+    /// A real <c>docume publish</c> writing this is covered by <see cref="CliPublishTests"/> (SC11);
+    /// earning it again here would cost a stub set and a second process run to reach the same state file.
+    /// </para>
+    /// </remarks>
+    private static void Seal(string work, params string[] paths)
+    {
+        var tracked = Git(work, "ls-files")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var sha = Git(work, "rev-parse", "HEAD").Trim();
+        var statePath = StatePath(work);
+        var state = StateStore.Load(statePath);
+        var pages = new Dictionary<string, PageState>(state.Pages, StringComparer.Ordinal);
+
+        foreach (var path in paths)
+        {
+            pages[path] = pages[path] with
+            {
+                Verdict = new SealedVerdict
+                {
+                    SourcesHash = DocuMe.Core.Drift.SourcesFingerprint.Compute(work, [Glob(path)], tracked),
+                    SealedAt = SealedOn,
+                    RepoSha = sha,
+                },
+            };
+        }
+
+        StateStore.Save(statePath, state with { Pages = pages });
+    }
+
+    /// <summary>The <c>sources</c> glob the seeded page at <paramref name="path"/> declares.</summary>
+    private static string Glob(string path) => path switch
+    {
+        LimitsPath => LimitsGlob,
+        RatesPath => RatesGlob,
+        _ => throw new ArgumentOutOfRangeException(nameof(path), path, "The fixture seeds two pages."),
+    };
 
     /// <summary>Flags one page stale in the seeded state, as a previous <c>--mark</c> would have left it.</summary>
     private static void MarkStale(string work, string path)
@@ -1115,10 +1417,17 @@ public sealed class CliDriftTests : IDisposable
 
         run.Code.ShouldBe(0, $"The fixture's own `docume init` failed.{Environment.NewLine}{run.Diagnostics}");
 
-        Write(work, $"docs/wiki/{LimitsPath}", Page(LimitsTitle, "src/limits/*.cs"));
-        Write(work, $"docs/wiki/{RatesPath}", Page(RatesTitle, "src/rates/*.cs"));
+        Write(work, $"docs/wiki/{LimitsPath}", Page(LimitsTitle, LimitsGlob));
+        Write(work, $"docs/wiki/{RatesPath}", Page(RatesTitle, RatesGlob));
         Write(work, "src/limits/Limits.cs", "// the limits, as first written\n");
         Write(work, "src/rates/Rates.cs", "// the rates, as first written\n");
+
+        // Tracked, matched by the Limits page's glob, and never touched again — which is the one thing
+        // that makes the seal facts below able to fail. A fingerprint over `git ls-files` covers this
+        // file; a fingerprint over the diff between the two commits cannot, so a drift run that
+        // recomputed against its own changed-file list would produce a value no seal can ever equal and
+        // every page would silently stay unsealed (spec §3.1 as amended).
+        Write(work, "src/limits/Helper.cs", "// a helper nothing in this fixture ever edits\n");
 
         Git(work, "init", "-q", "-b", "main");
         Git(work, "config", "user.email", "loop@example.com");
