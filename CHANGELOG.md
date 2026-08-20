@@ -8,19 +8,73 @@ One version covers everything: the `DocuMe.Cli` and `DocuMe.Core` packages and t
 ship off a single `vX.Y.Z` tag, so a heading here describes all three. The version at the top of this file
 is the one `Directory.Build.props` declares, whether or not its tag has been pushed yet.
 
-## [Unreleased]
+## [0.3.0] - 2026-08-20
+
+Two reports got honest in this release. Publish now says what it overwrites, stamps what it wrote, and
+records what it wrote it from. Drift reads those records and stops reporting pages whose code demonstrably
+did not move.
 
 Drift has always answered from a commit range, and a range is evidence about commits rather than about
-bytes. This entry closes the gap: a publish now records what it published against, and drift checks that
-record before it reports.
+bytes. A publish now records what it published against, and drift checks that record before it reports.
+Two exemption files sit beside it, for the paths and the commits a repo can declare in advance never mean
+the docs moved.
 
-The second half of the entry answers a different complaint about the same report. A drift finding that
-names exactly the right pages is still addressed to nobody: the engineer who changed the code did not
-write the page and has very likely never opened it. Pages can now say who owns them, and drift routes to
-them.
+The last of it answers a different complaint about the same report. A drift finding that names exactly the
+right pages is still addressed to nobody: the engineer who changed the code did not write the page and has
+very likely never opened it. Pages can now say who owns them, and drift routes to them.
+
+Setup changed too. `init` asks which agent the model-driven workflows are written for, and the style guide
+it scaffolds asks every question the generation skills answer to.
 
 ### Added
 
+- **Publish names the hand edits it overwrites.** A live page whose version is ahead of the one
+  `_meta/state.json` recorded was edited in Confluence, and the body write that follows discards that
+  edit. Overwriting is the design, because the repo is the source of truth; doing it without a word was
+  the gap. The run now warns per page and names both versions, so the reader can open the page history and
+  judge what is being lost. Both numbers come from the optimistic-lock read the publish already does, so
+  the warning costs no extra request and nothing is refused.
+- **Every body update stamps its provenance into the Confluence version message:**
+  `docume publish — repo <sha>, content sha256:<hex>`, which tool wrote the version, from which commit, of
+  which content. Page history becomes legible next to hand edits, since a version without the stamp was
+  not written by DocuMe, and the content hash is the same banner-excluded value the state file records, so
+  a page and its state can be paired again from Confluence alone if `_meta/state.json` is ever lost.
+- **Every page DocuMe creates carries a `docume` content property** saying the page is managed and which
+  file owns it, and a body update stamps a page that predates the marker. `publish --prune` reads the
+  property live before each delete, after the confirmation it already required, and refuses any orphan
+  whose page is not stamped: the page is reported under a new Unmanaged list, nothing is deleted, and the
+  run still exits 0. Presence in the state file is weaker proof of authorship than the page's own stamp,
+  and `init --adopt`, which seeds ids for pages DocuMe never created, is exactly where the two diverge.
+- **`docume sync --rebuild-state` reconstructs the page map from the space.** The marker is the registry,
+  so a state file that was lost, forked without its history, or hand-edited into nonsense now has a
+  recovery path: the run walks the space, reads each page's `docume` property, and prints an adoption
+  manifest. A stamped page whose path names a file in this repo is adopted with its id, title and marked
+  flag, and deliberately no content hash, so the next publish re-records it honestly. State disagreements,
+  duplicate claims and paths naming no file are reported and never written, because a prune cannot touch
+  what state does not hold. Approvals are never rebuilt; they are the reviewers' to give back, and the run
+  says so. The listing stops loudly at 12,500 pages rather than adopting from a truncated walk, and it
+  writes no Confluence byte, which is why the protected-space lock has nothing in it to refuse.
+- **`publish: false` in a page's frontmatter parks it as a draft.** The page is held back before the
+  converter sees it: it cannot fail the run, plans no attachments, is invisible to every drift count, and
+  is never an orphan, because its file still exists, so a copy published earlier stays frozen in Confluence
+  until the flag flips back. Drafts are named in the publish report and on a `DRAFTS` line in the CLI, and
+  a child under a never-published draft parent fails with a message that names the draft rather than
+  blaming its parent.
+- **`_meta/drift-ignore` names the changes that never mean drift.** One glob per line, matched against
+  changed paths exactly the way `sources` globs are, a column-zero `#` for a comment, and an optional
+  trailing `# reason` the report quotes back. A changed file that any pattern matches is held out of the
+  matching for every page and disclosed in every format: the table's `EXEMPT` section, the JSON's
+  `exempted` list, the PR comment's exemption note. Exempt files count toward neither the exit code nor
+  `--mark`. A malformed line fails the run naming its line number, because an exemption that silently
+  never fires reads as protection that does not exist.
+- **`_meta/drift-ignore-revs` holds mechanical commits out of drift.** A format sweep or a licence-header
+  pass touches the very files the docs describe, and a path exemption written for it would outlive the
+  sweep and swallow the next real change. The revs file names the commit instead, in git's own
+  `blame.ignoreRevsFile` format as git actually reads it: full 40-character shas, comments behind a
+  leading or trailing `#`, abbreviations refused. When a listed commit is in the compared range the diff
+  is attributed per commit, so a file counts as changed only when an unlisted commit touched it, and a
+  file touched by both still drifts. Every format carries the disclosure, and commit exemptions compose
+  before the path exemptions above.
 - **Publish seals the sources it published against.** A run that writes a page body fingerprints every
   file that page's `sources` globs match, taken over the files git tracks so gitignored build output can
   never be in it, and records the hash in `_meta/state.json` under the page's new `verdict` key with the
@@ -65,6 +119,19 @@ them.
   about this page?" without opening the repo. There is no new command and no new flag. One limit is
   worth stating: a stale owner outlives the person, DocuMe cannot know that, and the column is what
   makes it noticeable.
+- **`docume init --agent claude|copilot` picks the rail the scaffolded workflows are written for.** The two
+  model-running workflows, refresh and feedback, ship in a `claude` and a `copilot` spelling, and a repo
+  now receives the pair for its rail instead of both. The choice is recorded in `docume.json`, where a
+  re-run without the flag keeps it; an unknown value is refused before any file is written, and a repo
+  scaffolded before the copilot rail existed reads as `claude`. The `docume.json` schema gained the enum,
+  and the scaffolder writes the value as a string, where it previously wrote `"agent": 0`, an integer no
+  reader or editor could interpret.
+- **The scaffolded `_meta/STYLE.md` asks seven questions rather than four.** Scope, Diagrams and Business
+  join audience, tone, structure and verification, still questions and never answers, so a consumer
+  decides depth, diagrams and whether the business tier is wanted before the first generation run instead
+  of discovering the levers after a sparse wiki ships. The wiki states the mechanics that were invisible
+  beside it: `_meta/STYLE.md` is the lever, generation is two skills whose first runs inventory before
+  they write, and a missing business tier means `/docs-processes` has not run.
 
 ### Fixed
 
@@ -79,6 +146,17 @@ them.
   spelling and gain no backslashes, and an ordinary path renders byte for byte as it did. The two
   revisions in the provenance line are fenced the same way, so a backtick in `--baseline` no longer
   leaves half a sha outside its code span.
+- **The full test suite could deadlock instead of finishing.** Six process helpers redirected both streams
+  and read them in sequence, so a child that filled the unread stderr pipe blocked in `write(2)` forever
+  while the test blocked reading stdout to EOF. The advice git 2.54 began printing about the branch
+  name an `init` picks made `git init --bare` that child: two full-suite runs hung at the same spot,
+  one of them for 41 hours. Every helper now drains stderr concurrently, and the release-workflow
+  helper, which nulls every config level and so drew that advice on every init, pins the branch name
+  outright.
+- **A clean checkout failed the tree sweeps over files only a developer's checkout has.** The M10 merge
+  declared `AGENTS.md` and `.codex/` in the sweeps and both are gitignored by design, so every fresh clone
+  went red on files it could not have. `.codex/` is skipped like `.playwright-mcp/` before it, and
+  `AGENTS.md` is classified when a checkout carries it and never missed when one does not.
 
 ## [0.2.0] - 2026-08-14
 
