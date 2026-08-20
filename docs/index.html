@@ -8,6 +8,10 @@
 <meta property="og:title" content="DocuMe · Moberg — A docs lifecycle for repo-based wikis">
 <meta property="og:description" content="Your documentation lives in the repository. Confluence is the read surface.">
 <meta property="og:type" content="website">
+<link rel="canonical" href="https://moberghr.github.io/docu-me/">
+<meta property="og:url" content="https://moberghr.github.io/docu-me/">
+<meta property="og:image" content="https://moberghr.github.io/docu-me/assets/architecture-light.svg">
+<meta name="theme-color" content="#430cda">
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -50,7 +54,7 @@
     </div>
     <div class="hero-stats animate" style="--i:4">
       <span>7 commands</span>
-      <span>3 Claude skills</span>
+      <span>4 Claude skills</span>
       <span>6 workflow templates</span>
       <span>28 golden conversion cases</span>
     </div>
@@ -213,13 +217,22 @@
           </tr>
           <tr>
             <td>DocuMe plugin</td>
-            <td>Three Claude Code skills</td>
+            <td>Four Claude Code skills</td>
             <td>Judgement: writing a page, deciding whether a reviewer is right, rewriting a page whose code moved.</td>
             <td><span class="badge badge--neutral">Never — output is a PR</span></td>
           </tr>
         </tbody>
       </table>
     </div>
+
+    <figure class="diagram">
+      <img class="wm-light" src="assets/architecture-light.svg" alt="Three lanes: Claude Code skills produce pull requests into your repository; the command-line tool publishes the repository to Confluence and reads labels and comments back.">
+      <img class="wm-dark" src="assets/architecture-dark.svg" alt="">
+      <figcaption>
+        Two tiers, one direction of truth. Skills write pull requests, never pages. The CLI is the only thing
+        holding a Confluence credential.
+      </figcaption>
+    </figure>
 
     <div class="callout">
       <span class="callout-title">Where repo-specific knowledge lives</span>
@@ -468,11 +481,12 @@
       every skill ends by calling it.
     </p>
 
-    <div class="callout callout--warning">
-      <span class="callout-title">Status</span>
-      <strong>Version 0.1.0 is not released yet.</strong> No tag has been pushed, so the package feed is empty
-      and <code>dotnet tool install</code> has nothing to install. Until the first release, build from source —
-      everything from the scaffolding step onward works either way.
+    <div class="callout">
+      <span class="callout-title">Package availability</span>
+      Releases up to and including <strong>v0.2.0</strong> went to GitHub Packages only; nuget.org publishing
+      starts with the next tagged release. Until then, either build from source or add the GitHub Packages
+      feed with a PAT carrying <code>read:packages</code>. Everything from the scaffolding step onward is
+      identical either way.
     </div>
 
     <div class="grid grid--2">
@@ -480,24 +494,25 @@
         <h3 style="margin-bottom:12px">1 · The CLI</h3>
         <div class="terminal">
           <div class="terminal-bar"><i></i><i></i><i></i><span class="label">shell</span></div>
-<pre><code><span class="k-dim"># the feed authenticates every read,</span>
-<span class="k-dim"># including public packages</span>
-<span class="k-green">$</span> dotnet nuget add source \
-    https://nuget.pkg.github.com/moberghr/index.json \
-    <span class="k-blue">--name</span> moberg-github \
-    <span class="k-blue">--username</span> &lt;your-github-username&gt; \
-    <span class="k-blue">--password</span> &lt;a PAT with read:packages&gt; \
-    <span class="k-blue">--store-password-in-clear-text</span>
-
+<pre><code><span class="k-dim"># a global dotnet tool</span>
 <span class="k-green">$</span> dotnet tool install <span class="k-blue">--global</span> DocuMe.Cli
-<span class="k-green">$</span> docume --version</code></pre>
+<span class="k-green">$</span> docume --version
+
+<span class="k-dim"># or pinned per repository, which is what</span>
+<span class="k-dim"># `docume init` scaffolds and the workflows use</span>
+<span class="k-green">$</span> dotnet tool restore</code></pre>
         </div>
       </div>
       <div>
         <h3 style="margin-bottom:12px">2 · The Claude Code plugin</h3>
         <div class="terminal">
           <div class="terminal-bar"><i></i><i></i><i></i><span class="label">claude code</span></div>
-<pre><code><span class="k-dim"># the repository is its own marketplace</span>
+<pre><code><span class="k-dim"># the Moberg marketplace</span>
+<span class="k-green">&gt;</span> /plugin marketplace add moberghr/moberg-plugins
+<span class="k-green">&gt;</span> /plugin install docume@moberg-plugins
+
+<span class="k-dim"># or straight from this repo, which is</span>
+<span class="k-dim"># its own marketplace</span>
 <span class="k-green">&gt;</span> /plugin marketplace add moberghr/docu-me
 <span class="k-green">&gt;</span> /plugin install docume@docume</code></pre>
         </div>
@@ -534,7 +549,7 @@
 <section class="section anchor-target" id="status">
   <div class="container">
     <div class="sec-head"><span class="sec-num">09</span> Where it stands</div>
-    <h2>Feature-complete through M6. Adoption and a second target come next.</h2>
+    <h2>Released through v0.2.0. Adoption and a second target come next.</h2>
     <p class="lede">
       DocuMe is built against a milestone plan, and the plan is in the repository. This is where the work
       actually is, not where it is hoped to be.
@@ -549,7 +564,17 @@
           <tr>
             <td>M0 – M6</td>
             <td>Solution and config, the converter and its golden corpus, the Confluence client and publish pipeline, labels and approval, comments and replies, drift and the dashboard, the plugin and the release workflow</td>
-            <td><span class="badge badge--success">Built, green</span></td>
+            <td><span class="badge badge--success">Shipped v0.1.0</span></td>
+          </tr>
+          <tr>
+            <td>M9</td>
+            <td>The business and process tier: <code>/docs-processes</code>, citations as HTML comments the reader never sees, <code>_meta/BUSINESS.md</code> for what code cannot state. No CLI, converter or schema change</td>
+            <td><span class="badge badge--success">Shipped v0.2.0</span></td>
+          </tr>
+          <tr>
+            <td>Hardening</td>
+            <td>Hand-edit detection, version provenance, draft pages, drift exemptions and ignore-revs, a managed-page marker, <code>sync --rebuild-state</code>, sealed source fingerprints, and page owners that drift reports route to</td>
+            <td><span class="badge badge--blue">On main, unreleased</span></td>
           </tr>
           <tr>
             <td>M7a</td>
@@ -659,6 +684,9 @@
       <a href="index.html">Overview</a>
       <a href="how-it-works.html">Reference</a>
       <a href="https://github.com/moberghr/docu-me">GitHub</a>
+      <a href="https://www.nuget.org/packages/DocuMe.Cli">NuGet</a>
+      <a href="https://github.com/moberghr/docu-me/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/moberghr/docu-me/blob/main/LICENSING.md">Licence</a>
     </div>
   </div>
 </footer>

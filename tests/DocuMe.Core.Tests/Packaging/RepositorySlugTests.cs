@@ -156,6 +156,12 @@ public sealed partial class RepositorySlugTests
     // Not references: a local path segment is not a GitHub owner.
     [InlineData("projects[\"/Users/mirkobudimir/Dev/docu-me\"].hasTrustDialogAccepted", null)]
     [InlineData("cd ~/Dev/docu-me && dotnet build", null)]
+
+    // Nor is the tail of a GitHub Pages host: there `docu-me` is the repository name and the owner is
+    // in the hostname, so the segment before it is `io` and means nothing.
+    [InlineData("[![Website](https://img.shields.io/badge/docs-moberghr.github.io%2Fdocu--me-430cda)]", null)]
+    [InlineData("**[moberghr.github.io/docu-me](https://moberghr.github.io/docu-me/)**", null)]
+    [InlineData("<link rel=\"canonical\" href=\"https://moberghr.github.io/docu-me/\">", null)]
     public void Every_shape_the_tree_carries_is_classified_the_way_a_reader_would(
         string line,
         string? expectedOwner)
@@ -262,8 +268,14 @@ public sealed partial class RepositorySlugTests
     // uses stay in scope (`github.com/…` and `raw.githubusercontent.com/…`), as does every bare
     // `owner/docu-me` in prose, a fence, or a YAML value. Variable-length lookbehind is a .NET regex
     // feature; Every_shape_the_tree_carries_is_classified_the_way_a_reader_would pins each case.
+    //
+    // The third lookbehind excludes the GitHub Pages host. `moberghr.github.io/docu-me` is the docs
+    // site, and there the segment before `/docu-me` is the TLD: the first boundary passes it, because a
+    // `.` is neither alnum nor hyphen, and the owner read as `io`. That URL names the right owner —
+    // `moberghr`, in the hostname — so it is not a wrong reference to correct but a shape to skip. The
+    // repository half of a Pages URL is the repository name, never the owner.
     [GeneratedRegex(
-        @"(?<![A-Za-z0-9-])(?<!(?<!github(?:usercontent)?\.com)/)(?<owner>[A-Za-z0-9][A-Za-z0-9-]*)/docu-me\b",
+        @"(?<![A-Za-z0-9-])(?<!github\.)(?<!(?<!github(?:usercontent)?\.com)/)(?<owner>[A-Za-z0-9][A-Za-z0-9-]*)/docu-me\b",
         RegexOptions.ExplicitCapture,
         matchTimeoutMilliseconds: 1000)]
     private static partial Regex Slug();

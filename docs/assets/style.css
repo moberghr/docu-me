@@ -469,6 +469,35 @@ td code, th code { background: transparent; border: 0; padding: 0; color: inheri
 .k-mute { color: #8b95a2; }
 .k-dim { color: #6b7280; }
 
+/* === DIAGRAMS === */
+
+.diagram {
+  margin: 32px 0 0;
+  padding: 0;
+}
+
+.diagram img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+/* The dark variant is hidden until the toggle stamps data-theme="dark",
+   the same swap the nav wordmark uses. */
+.diagram img.wm-dark { display: none; }
+:root[data-theme="dark"] .diagram img.wm-light { display: none; }
+:root[data-theme="dark"] .diagram img.wm-dark { display: block; }
+
+.diagram figcaption {
+  margin-top: 12px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  text-align: center;
+}
+
 /* === CALLOUTS === */
 
 .callout {
