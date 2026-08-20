@@ -195,7 +195,7 @@ public sealed class DriftMarkPlannerTests
     };
 
     private static DriftedPage Page(string path, string title) =>
-        new(path, title, [new SourceMatch("src/**", ["src/Thing.cs"])]);
+        new(path, title, Owner: null, [new SourceMatch("src/**", ["src/Thing.cs"])]);
 
     private static DocumeState StateWith(params (string Path, PageState Page)[] pages) => new()
     {

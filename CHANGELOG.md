@@ -14,6 +14,11 @@ Drift has always answered from a commit range, and a range is evidence about com
 bytes. This entry closes the gap: a publish now records what it published against, and drift checks that
 record before it reports.
 
+The second half of the entry answers a different complaint about the same report. A drift finding that
+names exactly the right pages is still addressed to nobody: the engineer who changed the code did not
+write the page and has very likely never opened it. Pages can now say who owns them, and drift routes to
+them.
+
 ### Added
 
 - **Publish seals the sources it published against.** A run that writes a page body fingerprints every
@@ -36,6 +41,44 @@ record before it reports.
   record the fingerprint of no files, which every one of those conditions reproduces exactly — so a
   later run would match it and report a page whose sources were never read as verified. `docume drift`
   refuses that value from the other side too, for state files that already carry one.
+- **`owner:` in page frontmatter, carried verbatim.** A page may name a single owner. DocuMe never
+  prepends `@`, never changes the case and never resolves the value against a forge: how a mention is
+  spelled is the consumer repo's knowledge, and a tool that turned `alice` into `@alice` would notify
+  whichever account happens to hold that name. Write the handle the way your forge mentions people; one
+  written without the mention syntax reaches the comment as plain text and pings nobody, which is at
+  least visible to the person reading it. Verbatim stops where a forge handle stops: the PR comment
+  collapses line endings and neutralizes `<`, `[` and `]` before it prints the handle, because a YAML
+  scalar can carry a newline, inline raw HTML needs none, and `[label](url)` needs neither — each of the
+  three lets a crafted owner forge a "no drift" heading, hide the real report behind a `<details>`, or
+  post a clickable link to anywhere, inside a comment the bot signs. None of them appears in a forge
+  handle, which is the test: `_` and `*` are left alone precisely because `@my_org/team`, `_platform_` and
+  `*docs*` are made of them, so a mention is unaffected.
+- **The drift PR comment groups the affected pages by owner.** One heading per owner, ordinal by the
+  owner string so the comment a bot rewrites in place on every push comes out in the same order every
+  time, with the pages nobody owns last under a `**No owner**` heading that says how many they are and
+  that the drift is addressed to nobody. The verdict line under the table discloses the same count, and
+  `--format json` carries `owner` per page alongside `unownedCount`. An unowned page carries no `owner`
+  key at all, so "unowned" has exactly one spelling on the wire. The grouping is a partition rather than
+  a filter: every affected page appears under exactly one heading, and a sealed or exempted page is
+  never routed, because routing reads the affected list those pages already left.
+- **The dashboard's per-page table gained an Owner column**, so the standing view answers "who do I ask
+  about this page?" without opening the repo. There is no new command and no new flag. One limit is
+  worth stating: a stale owner outlives the person, DocuMe cannot know that, and the column is what
+  makes it noticeable.
+
+### Fixed
+
+- **The drift PR comment can no longer be forged by a file it names.** Every string the comment renders
+  that a pull request's author writes — page titles and owners, page paths, `sources` globs and the files
+  they matched, `_meta/drift-ignore` paths, globs and reasons, the seal date, and the two revisions — is
+  now neutralized where it is printed, against the syntax it is printed into. Two shapes were reachable
+  before, both by committing a file: a line break in a wiki page's **filename** ended the list and opened
+  a forged `### No drift detected` heading inside a comment the bot signs, and a single **backtick** in a
+  filename or a glob closed its code span early and turned the rest of the line into live markdown, which
+  GitHub renders as an unclosed `<details>` that hides the real report. Paths and globs keep their exact
+  spelling and gain no backslashes, and an ordinary path renders byte for byte as it did. The two
+  revisions in the provenance line are fenced the same way, so a backtick in `--baseline` no longer
+  leaves half a sha outside its code span.
 
 ## [0.2.0] - 2026-08-14
 

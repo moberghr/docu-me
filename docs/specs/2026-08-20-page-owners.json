@@ -1,0 +1,406 @@
+{
+  "slug": "page-owners",
+  "date": "2026-08-20",
+  "scope": "new-feature",
+  "baseline_area": "drift",
+  "security_impact": "untrusted-input-rendering",
+  "skill_precedence_gate": "pass",
+  "open_decisions": [],
+  "change_manifest": [
+    {
+      "path": "src/DocuMe.Core/Markdown/PageFrontmatter.cs",
+      "action": "modify",
+      "purpose": "owner: key, a single string carried verbatim.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/Markdown/FrontmatterParser.cs",
+      "action": "modify",
+      "purpose": "DTO member + mapping; blank collapses to null like Title and PageId already do.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/Drift/DriftReport.cs",
+      "action": "modify",
+      "purpose": "DriftedPage.Owner and DriftReport.UnownedCount.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/Drift/DriftPlanner.cs",
+      "action": "modify",
+      "purpose": "Carry the owner into each DriftedPage in the loop already running; count unowned affected pages. Stays a pure function of (changed files, pages).",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Markdown/FrontmatterParserTests.cs",
+      "action": "modify",
+      "purpose": "SC1: present, absent, blank.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/DriftPlannerTests.cs",
+      "action": "modify",
+      "purpose": "SC2, SC3: owner travels; UnownedCount counts affected pages only, never drafts or unaffected pages.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/Drift/DriftComment.cs",
+      "action": "modify",
+      "purpose": "Group the body by owner, ordinal, unowned last under a fixed heading; owner emitted verbatim.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Cli/Commands/DriftCommand.cs",
+      "action": "modify",
+      "purpose": "The unowned disclosure in the verdict line (SC7). No Owner column on the CLI drift table: SC9 puts the column on the dashboard, and nothing asks for one here.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Core/Status/StatusReport.cs",
+      "action": "modify",
+      "purpose": "StatusPage.Owner, the field the dashboard column renders.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Core/Status/StatusModel.cs",
+      "action": "modify",
+      "purpose": "Populate StatusPage.Owner in MapPage, the ONE place StatusPage is constructed. (Manifest said StatusProbes.cs, which only builds StatusCheck rows and never sees a page.)",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Core/Dashboard/DashboardPage.cs",
+      "action": "modify",
+      "purpose": "Owner column in the per-page table, header and cell.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/DriftCommentTests.cs",
+      "action": "modify",
+      "purpose": "SC4, SC5, SC6: grouping order, the partition property, verbatim emission.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Dashboard/DashboardPageTests.cs",
+      "action": "modify",
+      "purpose": "SC9: the Owner column renders, and an unowned page renders the same none-marker the other columns use.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Status/StatusModelTests.cs",
+      "action": "modify",
+      "purpose": "SC9: StatusPage carries the owner off frontmatter.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Cli/CliDriftTests.cs",
+      "action": "modify",
+      "purpose": "SC7, SC8, SC10 end to end: verdict disclosure, json payload, and a sealed or exempted page never routed.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "PLAN.md",
+      "action": "modify",
+      "purpose": "SC11: owner in \u00a75.2's frontmatter block, and \u00a76.4 gains the routing paragraph.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "docs/wiki/20-reference/configuration.md",
+      "action": "modify",
+      "purpose": "The owner key, and the one sentence that matters: write the handle the way your forge mentions people.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "docs/wiki/10-concepts/approval-and-drift.md",
+      "action": "modify",
+      "purpose": "Routing: a drift report with an addressee, and what an unowned page means.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "CHANGELOG.md",
+      "action": "modify",
+      "purpose": "Release-note entry; ChangelogTests holds every claim against the tree.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Git/GitRepositoryTests.cs",
+      "action": "modify",
+      "purpose": "OUT OF THE ORIGINAL MANIFEST, added in the Stage 3 fix iteration. Test-only: pins what git's path quoting actually contains (a line break is C-quoted in diff --name-only and ls-files alike, a backtick is passed through untouched, and core.quotePath governs neither). Three review rounds retired a markdown-injection finding on an unverified version of that claim. src/DocuMe.Core/Git/GitRepository.cs is NOT modified: the renderer no longer leans on the quoting, so `-c core.quotePath=true` would buy no containment.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/SealedVerdictsTests.cs",
+      "action": "modify",
+      "purpose": "Forced by the pinned positional DriftedPage.Owner: `Owner: null` at each construction site, no assertion or behavior touched.",
+      "mechanical": true,
+      "batch": 1
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/DriftMarkPlannerTests.cs",
+      "action": "modify",
+      "purpose": "Forced by the pinned positional DriftedPage.Owner: `Owner: null` at each construction site, no assertion or behavior touched.",
+      "mechanical": true,
+      "batch": 1
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Templates/WorkflowShellTests.cs",
+      "action": "modify",
+      "purpose": "Forced by the pinned positional DriftedPage.Owner: `Owner: null` at each construction site, no assertion or behavior touched.",
+      "mechanical": true,
+      "batch": 1
+    },
+    {
+      "path": "tasks/lessons.md",
+      "action": "modify",
+      "purpose": "Phase 7: the containment-argument lesson and the positional-record-parameter lesson.",
+      "mechanical": true,
+      "batch": 3
+    }
+  ],
+  "public_contracts": [
+    {
+      "kind": "persisted-schema",
+      "signature": "page frontmatter \u2192 owner: <string>",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "library-type",
+      "signature": "DocuMe.Core.Markdown.PageFrontmatter.Owner",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "library-type",
+      "signature": "DocuMe.Core.Drift.DriftedPage.Owner (positional) / DriftReport.UnownedCount (computed from Pages, not stored)",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "library-type",
+      "signature": "DocuMe.Core.Status.StatusPage.Owner",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "output-format",
+      "signature": "docume drift --format json \u2192 pages[].owner, unownedCount",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "output-format",
+      "signature": "docume drift --format github-comment \u2192 owner-grouped body",
+      "change": "modified",
+      "surface": "external"
+    }
+  ],
+  "plan": {
+    "batches": [
+      {
+        "id": 1,
+        "title": "owner: reaches the report",
+        "files": [
+          "src/DocuMe.Core/Markdown/PageFrontmatter.cs",
+          "src/DocuMe.Core/Markdown/FrontmatterParser.cs",
+          "src/DocuMe.Core/Drift/DriftReport.cs",
+          "src/DocuMe.Core/Drift/DriftPlanner.cs",
+          "tests/DocuMe.Core.Tests/Markdown/FrontmatterParserTests.cs",
+          "tests/DocuMe.Core.Tests/Drift/DriftPlannerTests.cs"
+        ],
+        "acceptance": "SC1, SC2, SC3. Build clean; only the known PLAN \u00a75.2 contract failures.",
+        "boundary": "Parses and carries the owner. Renders it nowhere."
+      },
+      {
+        "id": 2,
+        "title": "Routing: the comment, the verdict, the dashboard",
+        "files": [
+          "src/DocuMe.Core/Drift/DriftComment.cs",
+          "src/DocuMe.Cli/Commands/DriftCommand.cs",
+          "src/DocuMe.Core/Status/StatusReport.cs",
+          "src/DocuMe.Core/Status/StatusModel.cs",
+          "src/DocuMe.Core/Dashboard/DashboardPage.cs",
+          "tests/DocuMe.Core.Tests/Drift/DriftCommentTests.cs",
+          "tests/DocuMe.Core.Tests/Dashboard/DashboardPageTests.cs",
+          "tests/DocuMe.Core.Tests/Status/StatusModelTests.cs",
+          "tests/DocuMe.Core.Tests/Cli/CliDriftTests.cs"
+        ],
+        "acceptance": "SC4-SC10. Full suite green but for the known PLAN \u00a75.2 contract failures.",
+        "boundary": "Renders the owner. Does not change what drift finds, and does not touch sealing or exemptions."
+      },
+      {
+        "id": 3,
+        "title": "Contracts and prose",
+        "files": [
+          "PLAN.md",
+          "docs/wiki/20-reference/configuration.md",
+          "docs/wiki/10-concepts/approval-and-drift.md",
+          "CHANGELOG.md"
+        ],
+        "acceptance": "SC11 and a fully green suite.",
+        "boundary": "Prose and declared contracts only."
+      }
+    ]
+  },
+  "test_manifest": [
+    {
+      "path": "tests/DocuMe.Core.Tests/Markdown/FrontmatterParserTests.cs",
+      "covers": [
+        "SC1"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/DriftPlannerTests.cs",
+      "covers": [
+        "SC2",
+        "SC3"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Drift/DriftCommentTests.cs",
+      "covers": [
+        "SC4",
+        "SC5",
+        "SC6"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Cli/CliDriftTests.cs",
+      "covers": [
+        "SC7",
+        "SC8",
+        "SC10"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Dashboard/DashboardPageTests.cs",
+      "covers": [
+        "SC9"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Status/StatusModelTests.cs",
+      "covers": [
+        "SC9"
+      ]
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Acceptance/PlanDataContractTests.cs",
+      "covers": [
+        "SC11"
+      ]
+    }
+  ],
+  "out_of_scope": [
+    "OWNERS/CODEOWNERS inheritance or directory-level cascade",
+    "Validating or resolving the owner value against any forge",
+    "Multiple owners per page",
+    "Reviewer auto-assignment on the PR",
+    "Owner-driven behavior in --mark, publish, prune or approval (\u00a78)",
+    "Owner in the feedback loop (\u00a76.3)",
+    "Any change to sealing, exemptions or what drift finds"
+  ],
+  "assumptions": [
+    "[VERIFIED:src/DocuMe.Core/Markdown/PageFrontmatter.cs:14] frontmatter carries only sources/title/pageId/publish today",
+    "[VERIFIED:tests/DocuMe.Core.Tests/Acceptance/PlanDataContractTests.cs:89] \u00a75.2 maps to PageFrontmatter, so a new member must be declared in PLAN.md and read by src/",
+    "[VERIFIED:src/DocuMe.Core/Dashboard/DashboardPage.cs:227] the per-page header is one WriteRow call and rows come from StatusReport.Pages",
+    "[VERIFIED:src/DocuMe.Core/Drift/DriftComment.cs:127] WriteBody is where grouping lands without disturbing the sealed and exempt disclosures"
+  ],
+  "risks": [
+    "An owner written without the forge's mention syntax pings nobody; deliberately not normalized (\u00a73.1)",
+    "A stale owner outlives the person; the dashboard column is what makes it noticeable",
+    "Grouping changes an established comment shape consumed by a scaffolded workflow"
+  ],
+  "delta": {
+    "adds": [
+      "PageFrontmatter.Owner",
+      "DriftedPage.Owner",
+      "DriftReport.UnownedCount",
+      "StatusPage.Owner"
+    ],
+    "modifies": [
+      "DriftComment body grouping",
+      "DriftCommand verdict and table",
+      "DashboardPage per-page table"
+    ],
+    "removes": []
+  },
+  "amendments": [
+    {
+      "at": "after-batch-1",
+      "approved": "orchestrator, mechanical + correctness",
+      "items": [
+        "3 out-of-manifest mechanical edits forced by the positional parameter",
+        "UnownedCount computed rather than stored: sealing rewrites Pages after the planner returns, so a stored count would go stale and SC7 would contradict SC10",
+        "SC11 is a PLAN.md-only edit: the read-check test iterates members parsed FROM PLAN.md, so it never saw `owner` and stayed green"
+      ]
+    },
+    {
+      "at": "after-batch-2",
+      "approved": "orchestrator",
+      "items": [
+        "StatusProbes.cs -> StatusModel.cs: the manifest named a file where the described change is impossible",
+        "Owner emitted UNESCAPED in the PR comment (escaping breaks the mention it exists to create) and ESCAPED in the Confluence dashboard cell (a raw & makes Confluence reject the body)"
+      ]
+    },
+    {
+      "at": "2026-08-20, review fix iteration 2",
+      "approved": "reviewer finding C1",
+      "items": [
+        "security_impact: none -> untrusted-input-rendering. The slice renders PR-author-controlled frontmatter into a comment a bot posts under its own identity, and review reproduced a heading forgery end to end through owner: (iteration 1) and again through title: (iteration 2). It now carries a threat model in spec \u00a73.1 and dedicated adversarial tests, so 'none' was no longer an honest label for the next reader.",
+        "The fix is at the class rather than the field: DriftComment.Escape collapses line endings for every untrusted string routed through it (title, seal title, seal date, drift-ignore reason, both revisions); the owner keeps its own narrower two-character neutralization in Heading, because the full Escape would stop @my_org/team mentioning anybody."
+      ]
+    },
+    {
+      "at": "after-stage1-iteration-3",
+      "approved": "engineer, explicitly, overriding the escalation cap",
+      "items": [
+        "Scope expanded beyond the round-9 feature to close a PRE-EXISTING comment-forgery class in DriftComment: page.Path (round 6) renders raw in a code span, exploitable by a newline OR a backtick in a wiki page filename, and NormalizePattern trims before matching while recording the raw pattern.",
+        "Method changed: enumerate every interpolation in DriftComment.Render's call graph and classify each, rather than patching the reported instance. Three prior iterations failed the same way.",
+        "Round 9 itself introduced exactly one untrusted route (owner:) and closed it; title: and sealedAt were pre-existing and are closed as collateral."
+      ]
+    },
+    {
+      "at": "after-stage3-iteration-3",
+      "approved": "engineer, explicitly, scope expanded to the enumeration",
+      "items": [
+        "The enumeration of DriftComment.Render's call graph finds 13 author-controllable values, not 7. The 6 the suite did not count were the ones inside code spans: DriftedPage.Path, SourceMatch.Pattern, SourceMatch.Files, SealedPage.Path, ExemptedChange.Path, ExemptedChange.Pattern.",
+        "ONE rule, no containment arguments: every author-controllable value is neutralized at its sink. New DriftComment.Code wraps code-span values (line-ending collapse + a backtick fence longer than the longest run in the content + edge padding); Escape keeps the prose values; Heading keeps the owner's narrow two-character route. 8 values through Code, 4 through Escape, 1 through Heading. Ordinary paths and revisions render byte-identically.",
+        "The enumeration also moved Baseline and Head from Escape to Code: the provenance line prints both AS CODE, and CommonMark gives a code span no escape mechanism, so a backtick in --baseline (or in state.json's baselineSha) closed the span and left the rest of the revision standing outside it. Never a raw-HTML route, because Escape had already backslashed the '<', but it was the one value in the enumeration whose two treatments were both defensible and neither right.",
+        "C2 closed both ways: a line break in a wiki page FILENAME (a page path is Directory.EnumerateFiles output at WikiTree.cs:255-258, never git output, so git quoting contained nothing) and a backtick in one (git does not quote a backtick at all).",
+        "W1 closed at the sink rather than in the planner: SourceMatch.Pattern stays verbatim, which is a documented JSON contract and what lets a reviewer find the glob in their own frontmatter. Normalizing would have fixed only the whitespace half and left the backtick half open.",
+        "W2: DriftComment.Escape's 'git reports a path containing a newline in its quoted form, so no path in this report carries one' was false and is rewritten from the enumeration; spec 3.1 gains the thirteen-value paragraph.",
+        "N1: GitRepository.cs NOT touched. Verified by execution (git 2.54.0) that C-quoting of control bytes is unconditional and core.quotePath governs only non-ASCII, so `-c core.quotePath=true` would enforce nothing the renderer now needs. The fact is pinned by a new test instead.",
+        "Test coverage hole closed: no test rendered a path at all before this iteration. Path fixtures now go through the real WikiTree.Load -> DriftPlanner.Plan -> DriftComment.Render chain, and Render_KeepsEveryUntrustedStringItRendersOnOneLine counts 13 rather than 7."
+      ]
+    },
+    {
+      "at": "after-final-review-warnings",
+      "approved": "reviewer, W-1 and W-2 follow-ups",
+      "items": [
+        "W-2: Heading's replacement set gains [ and ] (as &#91; / &#93;, the mechanism < already uses). owner: \"[Resolved - see the fix](https://evil.example/login)\" rendered an arbitrarily-labelled clickable link inside the bot's comment, and ![...](...) the same construct without a click. Numeric character references rather than backslash escapes, because Heading deliberately leaves \\ alone and \\[label](url) would have left as an escaped backslash followed by a live link.",
+        "The rule replaced the count. Spec 3.1 said 'two characters, and only two' and DriftComment.Heading said 'exactly two things reach out of this line'; both are what a reader would cite to refuse a third neutralization, and W-2 was the third. Both now state the test - no forge handle can contain it AND leaving it alone lets the owner say something the tool never said - with what is deliberately left alone (_, *, and the bare-URL autolink) named as a boundary. PLAN.md, CHANGELOG.md and the two wiki pages carried the same count and were corrected with it.",
+        "W-1: Code's line-ending neutralization was unguarded beyond LF. Render_NeutralizesEveryLineSeparatorAnUntrustedStringCanCarry routed its six separators through Escape and Heading only, so narrowing Code to a \\n replace kept all 46 DriftCommentTests green. It now carries each separator through four Code sinks (page path, sources glob, matched file, baseline revision), and a sibling fact renders a real page committed as domains/loans\\r\\r### No drift detected\\r\\r.md through the WikiTree -> DriftPlanner -> Render chain."
+      ]
+    }
+  ]
+}

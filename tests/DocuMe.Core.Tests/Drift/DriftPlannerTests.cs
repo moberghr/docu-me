@@ -336,6 +336,87 @@ public sealed class DriftPlannerTests
         report.Exempted[2].Reason.ShouldBe("vendored, upstream docs own it");
     }
 
+    /// <summary>
+    /// The owner rides along on the page the planner already has in hand (spec §3.2), and it rides
+    /// along untouched: the report is what the PR comment mentions people from, so a planner that
+    /// normalized on the way through would decide who gets notified.
+    /// </summary>
+    [Fact]
+    public void Plan_CarriesAnAffectedPagesOwnerVerbatim()
+    {
+        var report = Plan(
+            ["src/Loans/LoanService.cs"],
+            Owned("domains/loans.md", "Loans", "@moberghr/lending", "src/Loans/**"));
+
+        report.Pages.ShouldHaveSingleItem().Owner.ShouldBe("@moberghr/lending");
+        report.UnownedCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public void Plan_DoesNotNormalizeAnOwnerWrittenWithoutTheForgesMentionSyntax()
+    {
+        // `alice` names a person in this repo's convention and nobody on GitHub. Prepending `@` would
+        // turn a page's owner into a notification for whichever account holds that handle.
+        var report = Plan(
+            ["src/Loans/LoanService.cs"],
+            Owned("domains/loans.md", "Loans", "Alice Smith", "src/Loans/**"));
+
+        report.Pages.ShouldHaveSingleItem().Owner.ShouldBe("Alice Smith");
+    }
+
+    [Fact]
+    public void Plan_LeavesAnUnownedAffectedPagesOwnerNull()
+    {
+        var report = Plan(
+            ["src/Loans/LoanService.cs"],
+            Page("domains/loans.md", "Loans", "src/Loans/**"));
+
+        report.Pages.ShouldHaveSingleItem().Owner.ShouldBeNull();
+        report.UnownedCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public void Plan_CountsTheAffectedPagesThatCarryNoOwner()
+    {
+        var report = Plan(
+            ["src/Loans/A.cs", "src/Rates/B.cs", "src/Fees/C.cs"],
+            Owned("domains/loans.md", "Loans", "@moberghr/lending", "src/Loans/**"),
+            Page("domains/rates.md", "Rates", "src/Rates/**"),
+            Page("domains/fees.md", "Fees", "src/Fees/**"));
+
+        report.AffectedCount.ShouldBe(3);
+        report.UnownedCount.ShouldBe(2);
+    }
+
+    /// <summary>
+    /// The count is about the pages this report names, not about the tree: an unowned page nobody
+    /// flagged is not a routing gap, and counting it would report the wiki's ownership coverage under
+    /// the heading of one PR's drift.
+    /// </summary>
+    [Fact]
+    public void Plan_CountsOnlyTheAffectedPagesAsUnowned()
+    {
+        var report = Plan(
+            ["src/Loans/A.cs"],
+            Page("domains/loans.md", "Loans", "src/Loans/**"),
+            Page("domains/rates.md", "Rates", "src/Rates/**"),
+            Page("index.md", "Home"),
+            Draft("drafts/one.md", "One", "src/Loans/**"));
+
+        report.PageCount.ShouldBe(3);
+        report.AffectedCount.ShouldBe(1);
+        report.UnownedCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public void Plan_ReportsNoUnownedPagesWhenNothingDrifted()
+    {
+        var report = Plan(["README.md"], Page("domains/loans.md", "Loans", "src/Loans/**"));
+
+        report.AffectedCount.ShouldBe(0);
+        report.UnownedCount.ShouldBe(0);
+    }
+
     private static DriftReport Plan(string[] changedFiles, params WikiPage[] pages) =>
         DriftPlanner.Plan(Baseline, Head, changedFiles, pages);
 
@@ -349,6 +430,15 @@ public sealed class DriftPlannerTests
         path,
         title,
         new ParsedPage(new PageFrontmatter { Sources = sources }, title, string.Empty));
+
+    private static WikiPage Owned(
+        string path,
+        string title,
+        string owner,
+        params string[] sources) => new(
+        path,
+        title,
+        new ParsedPage(new PageFrontmatter { Sources = sources, Owner = owner }, title, string.Empty));
 
     private static WikiPage Draft(string path, string title, params string[] sources) => new(
         path,

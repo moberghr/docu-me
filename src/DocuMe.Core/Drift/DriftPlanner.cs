@@ -80,7 +80,14 @@ public static class DriftPlanner
 
             if (matches.Count > 0)
             {
-                affected.Add(new DriftedPage(page.Path, page.Title, matches));
+                // The owner rides along on the frontmatter already in hand (spec §3.2): nothing new is
+                // enumerated, nothing is read off disk, and the planner stays the pure function its own
+                // doc comment leads with. Verbatim, for the reason PageFrontmatter.Owner gives.
+                affected.Add(new DriftedPage(
+                    page.Path,
+                    page.Title,
+                    page.Parsed.Frontmatter.Owner,
+                    matches));
             }
         }
 

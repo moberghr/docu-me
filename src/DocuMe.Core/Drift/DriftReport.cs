@@ -91,6 +91,35 @@ public sealed record DriftReport
     /// <summary>Affected pages.</summary>
     public int AffectedCount => Pages.Count;
 
+    /// <summary>
+    /// Affected pages carrying no <c>owner:</c> — the ones this report can name but cannot route
+    /// (<c>docs/specs/2026-08-20-page-owners.md</c> §3.2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A count rather than a flag, because the verdict line states it and a reviewer needs the
+    /// proportion against <see cref="AffectedCount"/>: "3 of 3 unowned" and "1 of 40 unowned" raise the
+    /// same boolean and are not the same problem. Unowned pages are disclosed rather than hidden for
+    /// the reason <see cref="Exempted"/> and <see cref="Sealed"/> are — a report that quietly dropped
+    /// the pages it could not address would read as a wiki whose drift is fully routed.
+    /// </para>
+    /// <para>
+    /// <strong>Computed off <see cref="Pages"/>, not stamped in by <see cref="DriftPlanner.Plan"/></strong>,
+    /// for the reason <see cref="AffectedCount"/> is. <see cref="SealedVerdicts.Apply"/> rewrites that
+    /// list after the planner has returned (<c>report with { Pages = … }</c>), so a stored count would
+    /// go on claiming an owner-less page the report no longer lists, and the verdict line would
+    /// disagree with the block above it. Every reader of this number and every grouping of
+    /// <see cref="Pages"/> has to describe one partition; the way to keep them agreeing forever is for
+    /// exactly one of them to do the counting.
+    /// </para>
+    /// <para>
+    /// "Unowned" is <c>null</c>, not blank. <see cref="Markdown.FrontmatterParser"/> already collapses a
+    /// blank <c>owner:</c> to null the way it does <c>title</c> and <c>pageId</c>, so a second emptiness
+    /// rule here would be a second place for the count and the grouping to drift apart.
+    /// </para>
+    /// </remarks>
+    public int UnownedCount => Pages.Count(page => page.Owner is null);
+
     /// <summary>Whether any page is affected. What <c>--fail-on-drift</c> keys off.</summary>
     public bool HasDrift => Pages.Count > 0;
 
@@ -112,6 +141,14 @@ public sealed record DriftReport
 /// <summary>One wiki page whose declared sources the diff touched.</summary>
 /// <param name="Path">Wiki-root-relative markdown path — the key <c>state.json</c> uses (§5.3).</param>
 /// <param name="Title">The page's resolved Confluence title, for a report a human reads.</param>
+/// <param name="Owner">
+/// The page's <c>owner:</c> frontmatter (§5.2) exactly as the author wrote it, or <c>null</c> when it
+/// declares none — what turns a finding addressed to nobody into one addressed to someone
+/// (<c>docs/specs/2026-08-20-page-owners.md</c> §3.2). Carried, never interpreted: see
+/// <see cref="Markdown.PageFrontmatter.Owner"/> for why prepending <c>@</c> to make it "work" would
+/// notify a stranger. <c>null</c> is the one spelling of "unowned", because
+/// <see cref="Markdown.FrontmatterParser"/> has already collapsed a blank value to it.
+/// </param>
 /// <param name="Matches">
 /// Every pattern of this page's <c>sources</c> that matched something, with what it matched. Patterns
 /// that matched nothing are absent: §6.4 asks for the matched patterns, and listing the misses would
@@ -120,6 +157,7 @@ public sealed record DriftReport
 public sealed record DriftedPage(
     string Path,
     string Title,
+    string? Owner,
     IReadOnlyList<SourceMatch> Matches)
 {
     /// <summary>

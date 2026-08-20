@@ -95,6 +95,11 @@ public static class FrontmatterParser
             Sources = dto.Sources is { Count: > 0 } ? dto.Sources : [],
             Title = string.IsNullOrWhiteSpace(dto.Title) ? null : dto.Title,
             PageId = string.IsNullOrWhiteSpace(dto.PageId) ? null : dto.PageId,
+
+            // Blank collapses to null exactly as Title and PageId do above; the value is otherwise
+            // untouched. No trim, no case fold, no `@` — see PageFrontmatter.Owner for why that
+            // refusal is load-bearing rather than an oversight.
+            Owner = string.IsNullOrWhiteSpace(dto.Owner) ? null : dto.Owner,
             Publish = dto.Publish ?? true,
         };
     }
@@ -140,6 +145,8 @@ public static class FrontmatterParser
         public string? Title { get; set; }
 
         public string? PageId { get; set; }
+
+        public string? Owner { get; set; }
 
         public bool? Publish { get; set; }
     }

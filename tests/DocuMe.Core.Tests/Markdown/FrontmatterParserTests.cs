@@ -153,6 +153,66 @@ public sealed class FrontmatterParserTests
         parsed.Frontmatter.Publish.ShouldBeTrue();
     }
 
+    /// <summary>
+    /// <c>owner:</c> (§5.2) is carried exactly as written: no <c>@</c> prepended, no case folded, no
+    /// shape validated. Pinned as three spellings a real repo uses, because the failure this refusal
+    /// avoids is silent — normalizing <c>alice</c> into <c>@alice</c> would notify whichever account
+    /// holds that handle on the forge, which in the email and display-name cases is a stranger.
+    /// </summary>
+    [Theory]
+    [InlineData("\"@moberghr/lending\"", "@moberghr/lending")]
+    [InlineData("Alice Smith", "Alice Smith")]
+    [InlineData("mirko.budimir@moberg.hr", "mirko.budimir@moberg.hr")]
+    [InlineData("alice", "alice")]
+    public void Parse_reads_owner_verbatim(string written, string expected)
+    {
+        var parsed = FrontmatterParser.Parse(
+            $"""
+            ---
+            owner: {written}
+            ---
+
+            # Owned Page
+            """);
+
+        parsed.Frontmatter.Owner.ShouldBe(expected);
+    }
+
+    [Fact]
+    public void Parse_leaves_owner_null_when_the_key_is_absent()
+    {
+        var parsed = FrontmatterParser.Parse(
+            """
+            ---
+            title: Ownerless Page
+            ---
+
+            # Ownerless Page
+            """);
+
+        parsed.Frontmatter.Owner.ShouldBeNull();
+
+        // A page with no frontmatter at all has no owner either.
+        FrontmatterParser.Parse("# Plain Page\n\nBody.\n").Frontmatter.Owner.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Parse_leaves_owner_null_when_the_value_is_blank()
+    {
+        // Same collapse Title and PageId already do: an empty key is an author who started to fill it
+        // in, and a report that grouped pages under the owner "" would read as a real bucket.
+        var parsed = FrontmatterParser.Parse(
+            """
+            ---
+            owner: "   "
+            ---
+
+            # Blank Owner
+            """);
+
+        parsed.Frontmatter.Owner.ShouldBeNull();
+    }
+
     [Fact]
     public void Parse_defaults_publish_to_true_when_the_key_is_absent()
     {

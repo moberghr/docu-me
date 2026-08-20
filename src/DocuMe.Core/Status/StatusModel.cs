@@ -90,8 +90,16 @@ public static class StatusModel
         var report = PublishPipeline.Plan(config, tree, state);
         var urlBase = PageUrlBase(config.Confluence.BaseUrl, config.Confluence.SpaceKey);
 
+        // The one fact a row needs that the plan does not carry: PlannedPage is what a publish would do
+        // to a page, and who owns it changes nothing about that. Joined by path here rather than added
+        // to the plan, so the publish contract stays about publishing.
+        var owners = tree.Pages.ToDictionary(
+            page => page.Path,
+            page => page.Parsed.Frontmatter.Owner,
+            StringComparer.Ordinal);
+
         var pages = report.Pages
-            .Select(page => MapPage(page, state, urlBase))
+            .Select(page => MapPage(page, state, urlBase, owners.GetValueOrDefault(page.Path)))
             .ToList();
 
         var checks = new List<StatusCheck>
@@ -141,7 +149,13 @@ public static class StatusModel
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown publish action."),
     };
 
-    private static StatusPage MapPage(PlannedPage page, DocumeState state, string? urlBase)
+    // `owner` is the page's owner: frontmatter (§5.2) or null, passed in rather than looked up: the tree
+    // is Build's input, and this mapper's subject is one planned page.
+    private static StatusPage MapPage(
+        PlannedPage page,
+        DocumeState state,
+        string? urlBase,
+        string? owner)
     {
         state.Pages.TryGetValue(page.Path, out var current);
 
@@ -155,6 +169,7 @@ public static class StatusModel
         return new StatusPage(
             page.Path,
             page.Title,
+            owner,
             SyncOf(page.Action),
             pageId,
             url,

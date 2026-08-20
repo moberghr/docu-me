@@ -115,6 +115,7 @@ sources:
   - src/DocuMe.Core/State/StateStore.cs
 title: Publish Pipeline
 pageId: "123456"
+owner: "@moberghr/docs"
 ---
 ```
 
@@ -123,7 +124,28 @@ pageId: "123456"
 | `sources` | no, but drift needs it | Code paths the page derives from, as globs relative to the repo root |
 | `title` | no | Overrides the title. Defaults to the first H1, which is dropped from the body because Confluence renders the page title itself |
 | `pageId` | no | Set by publish. Pre-seed it to adopt a page that already exists in Confluence |
+| `owner` | no | A single string naming who owns the page. `docume drift` groups the affected pages by it in the PR comment, and the dashboard shows it in a column |
 | `publish` | no | Defaults to `true`. Set `publish: false` to hold the page back as a draft: the publish plan reports it but never writes it, drift ignores it, and a previously published copy stays frozen in Confluence until the flag flips back. Not an orphan, because the file still exists |
+
+**`owner` is carried verbatim.** DocuMe never prepends `@`, never changes the case and never resolves
+the value against a forge or a directory, so **write the handle the way your forge mentions people**.
+The refusal is deliberate: a tool that turned `alice` into `@alice` would notify whichever account
+happens to hold that name, a stranger in the ordinary case where a repo's convention is an email or a
+display name. An owner written without the mention syntax reaches the PR comment as plain text, pings
+nobody, and is visibly wrong to the person reading it. What that syntax is, and who owns which page,
+is your repo's knowledge rather than the tool's. Verbatim stops where a handle stops: the PR comment
+collapses line endings and neutralizes `<`, `[` and `]` before it prints the handle, because each of the
+three would let a crafted `owner` forge a verdict, hide the report behind a `<details>`, or post a
+clickable link to anywhere, inside a comment the bot signs. No forge handle contains any of them, and
+that is the whole test — `_` and `*` are left alone precisely because `@my_org/team` and `_platform_` are
+made of them, so your mention is unaffected.
+
+Verbatim goes for the grouping too: owners are compared byte for byte, so `owner: "@alice "` and
+`owner: "@alice"` are two owners and get two identical-looking headings in the same comment. Quote a
+handle only as tightly as you mean it.
+
+[Approval and drift](../10-concepts/approval-and-drift.md) covers what the owner then does: the
+grouped PR comment, the count of affected pages that carry none, and the dashboard column.
 
 Frontmatter is stripped before conversion, so none of it appears in the published body or in the
 content hash.

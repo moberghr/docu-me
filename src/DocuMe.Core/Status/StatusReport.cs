@@ -87,6 +87,14 @@ public sealed record StatusCheck(string Name, StatusCheckOutcome Outcome, string
 /// </summary>
 /// <param name="Path">Wiki-root-relative markdown path — the <c>state.json</c> key.</param>
 /// <param name="Title">The resolved Confluence title.</param>
+/// <param name="Owner">
+/// The page's <c>owner:</c> frontmatter (§5.2) exactly as the author wrote it, or <c>null</c> when it
+/// declares none — the dashboard's Owner column, which answers "who do I ask about this page?" without
+/// opening the repo (<c>docs/specs/2026-08-20-page-owners.md</c> §2). Read off the tree rather than out
+/// of state, because ownership is a fact about the repo as it stands now: an owner changed in a commit
+/// shows up before the next publish records anything. Carried, never interpreted — see
+/// <see cref="Markdown.PageFrontmatter.Owner"/> for why prepending <c>@</c> would name a stranger.
+/// </param>
 /// <param name="Sync">How the published page compares to the repo.</param>
 /// <param name="PageId">The Confluence page id, or <c>null</c> when the page has never been published.</param>
 /// <param name="Url">
@@ -118,6 +126,7 @@ public sealed record StatusCheck(string Name, StatusCheckOutcome Outcome, string
 public sealed record StatusPage(
     string Path,
     string Title,
+    string? Owner,
     StatusSync Sync,
     string? PageId,
     string? Url,

@@ -351,7 +351,7 @@ public sealed class WorkflowShellTests : IDisposable
             ChangedFileCount = 3,
             PageCount = 4,
             PagesWithSourcesCount = 2,
-            Pages = [new DriftedPage("index.md", "Home", [match])],
+            Pages = [new DriftedPage("index.md", "Home", Owner: null, [match])],
         };
 
         var run = RunRefreshStep(repo, "Check for drift", report.ToJson());
