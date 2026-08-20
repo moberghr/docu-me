@@ -224,7 +224,20 @@ public sealed record DashboardPage
         }
 
         OpenTable(renderer);
-        WriteRow(renderer, "th", "Page", "Review", "Approved by", "Approved on", "Stale", "Published");
+
+        // Owner next to the page and before its review state (spec §2): the standing view exists to
+        // answer "who do I ask about this page?", and the answer is worth nothing three columns from the
+        // page it belongs to.
+        WriteRow(
+            renderer,
+            "th",
+            "Page",
+            "Owner",
+            "Review",
+            "Approved by",
+            "Approved on",
+            "Stale",
+            "Published");
 
         foreach (var page in Report.Pages)
         {
@@ -232,7 +245,11 @@ public sealed record DashboardPage
 
             WriteTitleCell(renderer, page);
 
-            renderer.Write("<td>").WriteEscaped(ApprovalCell(page)).Write("</td>").Write('\n')
+            // Escaped, unlike the same value in the PR comment: there the bytes have to reach a forge
+            // intact for a mention to notify anybody, and here a single raw `&` makes Confluence reject
+            // the whole body. Nothing on this page is a mention, so there is nothing to preserve.
+            renderer.Write("<td>").WriteEscaped(Text(page.Owner)).Write("</td>").Write('\n')
+                .Write("<td>").WriteEscaped(ApprovalCell(page)).Write("</td>").Write('\n')
                 .Write("<td>").WriteEscaped(Text(page.ApprovedBy)).Write("</td>").Write('\n')
                 .Write("<td>").WriteEscaped(Text(page.ApprovedAt)).Write("</td>").Write('\n')
                 .Write("<td>")

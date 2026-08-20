@@ -155,6 +155,30 @@ public sealed class StatusModelTests : IDisposable
         report.HasDrift.ShouldBeTrue();
     }
 
+    /// <summary>
+    /// The <c>owner:</c> a page declares (§5.2) reaches its status row, which is what puts it on the
+    /// dashboard (SC9). Read off the tree the report was built from, not out of state: ownership is a
+    /// fact about the repo as it is right now, so an owner changed in a commit shows up before the next
+    /// publish records anything.
+    /// </summary>
+    [Fact]
+    public void An_owner_in_frontmatter_reaches_the_page_row_verbatim()
+    {
+        Write(
+            "guides/setup.md",
+            "---\ntitle: Setup Guide\nowner: \"@moberghr/lending\"\n---\n\n# Setup\n\nPlain prose.");
+
+        var report = Build(new DocumeState(), stateExists: false);
+
+        // Verbatim, for the reason PageFrontmatter.Owner gives: normalizing `alice` into `@alice` would
+        // name whichever account holds that handle on the forge.
+        Page(report, "guides/setup.md").Owner.ShouldBe("@moberghr/lending");
+
+        // A page that declares none carries null rather than an empty string, so "unowned" has one
+        // spelling everywhere the value is read.
+        Page(report, "README.md").Owner.ShouldBeNull();
+    }
+
     [Fact]
     public void Approval_counts_come_from_state()
     {

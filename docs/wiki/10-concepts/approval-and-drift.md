@@ -156,6 +156,55 @@ Four limits are worth stating rather than discovering:
 > published. It claims nothing about whether the body is correct, and it moves nothing in the approval
 > state machine at the top of this page.
 
+## Who a drift report is addressed to
+
+A drift report that names exactly the right pages is still a notice pinned to a wall. The engineer who
+changed `src/Loans/Rate.cs` did not write `domains/loans.md` and has very likely never opened it. So a
+page may name its owner in frontmatter:
+
+```yaml
+---
+title: Loans Domain
+owner: "@moberghr/lending"
+sources:
+  - src/Loans/**
+---
+```
+
+`docume drift --format github-comment` then groups the affected pages under their owner, one heading
+per owner and ordinal by the owner string, so the comment a bot rewrites in place on every push comes
+out in the same order every time. A handle the forge recognises becomes a real mention on the pull
+request, which is the whole difference between a finding somebody is told about and one they have to
+go looking for.
+
+The value is carried verbatim. DocuMe never prepends `@`, never changes the case and never resolves it
+against anything, so **write the handle the way your forge mentions people**. Turning `alice` into
+`@alice` would notify whichever account holds that name, and how a mention is spelled is a fact about
+your forge rather than one the tool can know. An owner written without the mention syntax appears in
+the comment as plain text and mentions nobody, which is at least visible to whoever reads it. What a
+handle cannot contain is the exception: the comment collapses line endings and neutralizes `<`, `[` and
+`]` before printing the handle, so a crafted `owner:` cannot forge a verdict, hide the report behind a
+`<details>`, or turn its own heading into a clickable link, inside a comment the bot signs. No forge
+handle carries any of them, and `_` and `*` are left alone for the same reason in reverse.
+
+Pages that declare no owner are disclosed rather than dropped. They group last under **No owner**,
+whose heading states how many they are and says the drift is addressed to nobody, and the verdict line
+under the table states the same count. `--format json` carries `owner` per page alongside
+`unownedCount`; an unowned page carries no `owner` key at all, so "unowned" has exactly one spelling
+on the wire. The dashboard's per-page table has an Owner column, marked `—` where there is none, the
+same marker its neighbouring columns use.
+
+The grouping is a partition of the affected pages rather than a second pass over the wiki: every
+affected page appears under exactly one heading. A page the report already held out is therefore never
+routed, because routing reads the affected list a sealed verdict or a `drift-ignore` pattern already
+kept it out of.
+
+> [!NOTE]
+> A stale owner outlives the person. Nothing here validates a handle, and DocuMe cannot know that
+> somebody left the team, so an owner keeps being named until a human edits the frontmatter. The
+> dashboard column is what makes that noticeable: a name nobody recognises sits in the standing view
+> where somebody will eventually read it.
+
 ## Marking pages stale
 
 `docume drift --mark` adds the `stale` label to every affected page, sets `stale: true` in state, and
@@ -169,6 +218,6 @@ refreshes the dashboard.
 ## The dashboard
 
 `docume dashboard` publishes one page — `Documentation Status` by default — listing every page with
-its approval state, staleness and last publish. It is generated from state plus the live labels, and
-it is deliberately **not** tracked in state itself: a page DocuMe publishes but does not own would
-otherwise look like an orphan to `publish --prune` and be deleted.
+its owner, approval state, staleness and last publish. It is generated from state plus the live
+labels, and it is deliberately **not** tracked in state itself: a page DocuMe publishes but does not
+own would otherwise look like an orphan to `publish --prune` and be deleted.

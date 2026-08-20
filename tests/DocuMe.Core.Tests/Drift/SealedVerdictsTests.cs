@@ -324,5 +324,5 @@ public sealed class SealedVerdictsTests
     };
 
     private static DriftedPage Page(string path, string title) =>
-        new(path, title, [new SourceMatch("src/**", ["src/Thing.cs"])]);
+        new(path, title, Owner: null, [new SourceMatch("src/**", ["src/Thing.cs"])]);
 }

@@ -45,6 +45,42 @@
 - **Why:** the both-ways uniqueness check is what keeps the wiki page's derived table honest; a bare word
   rots the day another skill shares vocabulary.
 
+## 2026-08-20 — a containment argument is a hypothesis until a hostile value goes through the real parser
+
+- What happened: `DriftComment` rendered untrusted repo strings into a PR comment a bot signs, and four
+  separate places in the code justified not escaping them with prose reasoning — "it is alone on its
+  line, and CommonMark cannot carry emphasis across a line break", "paths are wrapped in code spans,
+  which is the stronger guarantee", "git reports a newline-bearing path quoted, so no path here carries
+  one". Every one read as rigorous. Every one was false or half-false, and it took three review
+  iterations to find that out, because each pass fixed the instance it was handed and re-derived a
+  containment argument for the siblings. The git claim survived longest precisely because **half of it
+  was true**: git does C-quote a line break unconditionally, so whoever checked the newline half found it
+  sound and stopped. It does not quote a backtick at all.
+- Rule: state the rule as a **test**, never as a count, and prove containment with a test rather than a
+  sentence. "Exactly two characters are neutralized" is the sentence a future reader cites to refuse the
+  third. Write instead: *neutralize a character when no legitimate value can contain it AND leaving it
+  alone lets the input say something the tool never said.* And when a finding names one sink, enumerate
+  every value reaching that renderer and classify each — the enumeration found 13 author-controllable
+  strings where three rounds of instance-fixing had reasoned about 7.
+- Why: an assertion in a doc comment is load-bearing for the next maintainer's decision and is checked by
+  nothing. A test that feeds the hostile value through the REAL parser is the only thing that makes a
+  containment claim a fact.
+- When it applies: any untrusted string rendered into a markup surface — and specifically any sentence in
+  this repo that explains why a value does *not* need escaping.
+
+## 2026-08-20 — a pinned positional record parameter always widens the manifest
+
+- What happened: rounds 8 and 9 both pinned a new **positional** parameter on a record (`PublishedPage`,
+  then `DriftedPage`). C# requires defaults to be trailing, so every existing construction site stops
+  compiling, and in both rounds the implementer had to make mechanical edits in test files no batch
+  owned — `WorkflowShellTests` and `StatusModelTests` among them.
+- Rule: before pinning a positional parameter in a plan, `grep` for the type's construction sites and put
+  every one in the change manifest as a mechanical entry. Choosing `{ get; init; }` instead avoids it
+  entirely, but positional is sometimes right (it stops a caller silently forgetting a value) — so the
+  choice is fine, the surprise is not.
+- Why: it reads as scope drift at the Phase 3.5 check when it is really an unlisted consequence of the
+  approved contract, and it costs the implementer a decision it should not have to make mid-batch.
+
 ## 2026-08-19 — a sentinel every failure mode collapses to must never be a positive verdict
 
 - What happened: the sealed-verdict spec said a page whose `sources` globs match no file should seal the

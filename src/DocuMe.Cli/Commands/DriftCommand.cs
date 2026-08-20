@@ -942,9 +942,18 @@ internal static class DriftCommand
             ? "The mark plan follows."
             : "Advisory — nothing was changed or marked.";
 
+        // The routing gap, disclosed in the one line a reader takes in whether or not they read the
+        // table (docs/specs/2026-08-20-page-owners.md §2). A count rather than a flag, because the
+        // proportion is the fact: "2 of 2 unowned" and "1 of 40" raise the same boolean and are not the
+        // same problem. Silent at zero, like the three narrowings below it — the disclosure exists for
+        // the pages this report cannot address, and there is nothing to say when there are none.
+        var unowned = report.UnownedCount > 0
+            ? $"{report.UnownedCount} page(s) carry no 'owner:' (§5.2), so nobody is named for them. "
+            : string.Empty;
+
         AnsiConsole.MarkupLine(
             $"[yellow]{report.AffectedCount} of {report.PagesWithSourcesCount} page(s) with declared "
-            + $"sources may need review.[/] [grey]{advisory}[/]");
+            + $"sources may need review.[/] [grey]{unowned}{advisory}[/]");
     }
 
     /// <summary>

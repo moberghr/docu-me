@@ -334,6 +334,60 @@ public sealed class GitRepositoryTests : IDisposable
         (await GitRepository.TryReadHeadAsync(_dir, TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
+    /// <summary>
+    /// What git's path quoting actually contains, pinned by execution rather than by a doc comment. Three
+    /// rounds of review retired a markdown-injection finding on the strength of "git quotes it", so the
+    /// boundary is worth a test: git C-quotes a byte that would break a line, in <c>diff --name-only</c>
+    /// and in <c>ls-files</c> alike, and it leaves a <strong>backtick</strong> exactly as it is.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is a fact about git, not a claim any DocuMe output depends on.</strong>
+    /// <c>DriftComment.Code</c> neutralizes every path it renders regardless, precisely so this file's
+    /// behaviour is not load-bearing for another file's safety. What the test protects is the reasoning:
+    /// a future reader who wants to lean on the quoting can see here how far it goes.
+    /// </para>
+    /// <para>
+    /// <c>core.quotePath</c> is <strong>not</strong> the switch for any of this — it governs whether
+    /// non-ASCII bytes are octal-escaped, and control bytes are C-quoted either way. Both invocations
+    /// below are asserted under the setting turned off, which is the hostile direction; passing
+    /// <c>-c core.quotePath=true</c> in <see cref="GitRepository"/> would therefore buy no containment
+    /// this test does not already show is unconditional.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Quotes_a_line_break_in_a_path_and_leaves_a_backtick_alone()
+    {
+        const string windows = "Neither a line break nor a backtick is a legal filename byte on Windows; "
+            + "the fact under test is about the platforms this suite's CI runs on.";
+
+        Assert.SkipWhen(OperatingSystem.IsWindows(), windows);
+
+        Git("config", "core.quotePath", "false");
+        Write("src/plain.cs", "one");
+        var sha = Commit("first");
+
+        Write("src/break\nhere.cs", "two");
+        Write("src/back`tick.cs", "three");
+        Commit("second");
+
+        var changed = await GitRepository.ChangedFilesSinceAsync(
+            Path.Combine(_dir, "src"), sha, TestContext.Current.CancellationToken);
+
+        // The line break never reaches the caller as a line break: git renders the whole path as one
+        // C-quoted token, so `Lines` still sees one path per line.
+        changed.ShouldBe([@"""break\nhere.cs""", "back`tick.cs"], ignoreOrder: true);
+        changed.ShouldAllBe(path => !path.Contains('\n', StringComparison.Ordinal));
+
+        // And the backtick is untouched — an ordinary printable byte, which is why a producer-side
+        // containment argument could never have covered the code-span half of the class.
+        var tracked = await GitRepository.TrackedFilesAsync(
+            Path.Combine(_dir, "src"), TestContext.Current.CancellationToken);
+
+        tracked.ShouldContain("back`tick.cs");
+        tracked.ShouldContain(@"""break\nhere.cs""");
+    }
+
     /// <summary>Commits everything in the tree and answers the new commit's sha.</summary>
     private string Commit(string message)
     {

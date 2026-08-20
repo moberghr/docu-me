@@ -84,6 +84,31 @@ public sealed class DashboardPageTests
         rows.ShouldNotContain($"<td>{DashboardPage.ApprovedMarker} approved</td>");
     }
 
+    /// <summary>
+    /// SC9: the standing view answers "who do I ask about this page?" without opening the repo. The
+    /// value is the one the frontmatter carries, and a page that declares no owner gets the same
+    /// none-marker the approval columns beside it already use — never a blank cell, and never a guess.
+    /// </summary>
+    [Fact]
+    public void Render_CarriesAnOwnerColumn()
+    {
+        var rows = PagesSection(Page(Report()).Render());
+
+        // Between the page and its review status, so a reader scanning for "who owns the drifted one"
+        // reads the two facts side by side.
+        rows.ShouldContain("<th>Page</th>\n<th>Owner</th>\n<th>Review</th>");
+
+        rows.ShouldContain(
+            "<ac:link-body>Getting started</ac:link-body></ac:link></td>\n"
+            + "<td>@moberghr/lending</td>\n"
+            + $"<td>{DashboardPage.ApprovedMarker} approved</td>");
+
+        // The unowned page: the same none-marker the review cell beside it uses, never an empty cell.
+        rows.ShouldContain(
+            $"<td>Draft page</td>\n<td>{DashboardPage.NoneMarker}</td>\n"
+            + $"<td>{DashboardPage.NoneMarker} no review recorded</td>");
+    }
+
     [Fact]
     public void Render_DistinguishesNeedsReviewFromNoRecordAtAll()
     {
@@ -112,11 +137,13 @@ public sealed class DashboardPageTests
     [Fact]
     public void Render_EscapesEveryConsumerString()
     {
-        // Titles come back from Confluence (untrusted, CLAUDE.md §0.2) and approver names come out of a
-        // committed file a human can hand-edit. Both reach the markup, in text and in an attribute.
+        // Titles come back from Confluence (untrusted, CLAUDE.md §0.2), and approver names and owners
+        // come out of a committed file a human can hand-edit. All of them reach the markup, in text and
+        // in an attribute.
         var hostile = ApprovedPage() with
         {
             Title = "R&D <script> \"quoted\"",
+            Owner = "R&D <team>",
             ApprovedBy = "a & b <c>",
         };
 
@@ -125,6 +152,11 @@ public sealed class DashboardPageTests
         body.ShouldContain("ri:content-title=\"R&amp;D &lt;script&gt; &quot;quoted&quot;\"");
         body.ShouldContain("<ac:link-body>R&amp;D &lt;script&gt; \"quoted\"</ac:link-body>");
         body.ShouldContain("<td>a &amp; b &lt;c&gt;</td>");
+
+        // The owner is verbatim in the PR comment, which is markdown a forge resolves mentions from;
+        // here it is one cell of a storage-format document Confluence rejects outright if a single `&`
+        // goes through raw, so it takes the same escaping every other consumer string on this page does.
+        body.ShouldContain("<td>R&amp;D &lt;team&gt;</td>");
         body.ShouldNotContain("<script>");
 
         Should.NotThrow(() => XDocument.Parse(Wrap(body)));
@@ -268,6 +300,7 @@ public sealed class DashboardPageTests
     private static StatusPage ApprovedPage() => new(
         "10-intro/README.md",
         "Getting started",
+        "@moberghr/lending",
         StatusSync.InSync,
         "131100",
         "https://example.atlassian.net/wiki/spaces/DOCUMESBX/pages/131100",
@@ -290,6 +323,7 @@ public sealed class DashboardPageTests
         new(
             "20-guides/README.md",
             "Guides",
+            null,
             StatusSync.Drifted,
             "131101",
             null,
@@ -304,6 +338,7 @@ public sealed class DashboardPageTests
         new(
             "30-ops/README.md",
             "Operations",
+            null,
             StatusSync.InSync,
             "131102",
             null,
@@ -318,6 +353,7 @@ public sealed class DashboardPageTests
         new(
             "40-new/README.md",
             "Draft page",
+            null,
             StatusSync.Unpublished,
             null,
             null,

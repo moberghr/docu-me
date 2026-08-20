@@ -75,6 +75,16 @@ public sealed class CliDriftTests : IDisposable
 
     private const string RatesGlob = "src/rates/*.cs";
 
+    /// <summary>
+    /// The two owner spellings this suite writes into frontmatter (spec §3.1). Deliberately unalike: a
+    /// team handle a forge resolves into a mention, and a display name that resolves to nobody anywhere.
+    /// Both have to reach the comment as written, and the second is the one a tool "helpfully"
+    /// normalizing would turn into a notification for a stranger.
+    /// </summary>
+    private const string LimitsOwner = "@moberghr/lending";
+
+    private const string RatesOwner = "Alice Smith";
+
     /// <summary>The date <see cref="Seal"/> stamps, so the disclosure can be asserted verbatim.</summary>
     private const string SealedOn = "2026-08-19T09:12:44Z";
 
@@ -1165,6 +1175,161 @@ public sealed class CliDriftTests : IDisposable
     }
 
     /// <summary>
+    /// SC4 and SC6 through the format a reviewer actually reads: the affected pages sit under their
+    /// owner, and each owner reaches the comment exactly as its page's frontmatter spells it. This is the
+    /// layer where the feature either works or does not — a handle that survives the renderer but not the
+    /// parse would still notify nobody.
+    /// </summary>
+    [Fact]
+    public void The_pr_comment_groups_the_affected_pages_under_their_owner()
+    {
+        var work = Seeded(nameof(The_pr_comment_groups_the_affected_pages_under_their_owner));
+
+        Own(work, LimitsPath, LimitsOwner);
+        Own(work, RatesPath, RatesOwner);
+
+        var run = Invoke(work, "drift", "--format", "github-comment");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        run.Output.ShouldContain($"**Owner:** {LimitsOwner}", customMessage: run.Diagnostics);
+        run.Output.ShouldContain($"**Owner:** {RatesOwner}", customMessage: run.Diagnostics);
+
+        // Each page under the heading that names it, ordinal by owner — '@' sorts below 'A', so the
+        // team handle's group comes first however the pages arrived.
+        var lending = run.Output.IndexOf($"**Owner:** {LimitsOwner}", StringComparison.Ordinal);
+        var alice = run.Output.IndexOf($"**Owner:** {RatesOwner}", StringComparison.Ordinal);
+
+        lending.ShouldBeLessThan(alice, run.Diagnostics);
+        run.Output.IndexOf($"`{LimitsPath}`", StringComparison.Ordinal).ShouldBeInRange(lending, alice);
+        run.Output.IndexOf($"`{RatesPath}`", StringComparison.Ordinal).ShouldBeGreaterThan(alice);
+
+        // Verbatim: no `@` bolted onto the display name, and nothing said about an owner nobody lacks.
+        run.Output.ShouldNotContain($"@{RatesOwner}", customMessage: run.Diagnostics);
+        run.Output.ShouldNotContain("No owner", customMessage: run.Diagnostics);
+    }
+
+    /// <summary>
+    /// SC7: the verdict line says how many affected pages this report cannot route. A count rather than
+    /// a flag, because the proportion is the fact — "2 of 2 unowned" and "1 of 40" raise the same boolean
+    /// and are not the same problem.
+    /// </summary>
+    [Fact]
+    public void The_verdict_line_says_how_many_affected_pages_have_no_owner()
+    {
+        var work = Seeded(nameof(The_verdict_line_says_how_many_affected_pages_have_no_owner));
+
+        // The seeded pages declare no owner at all, which is every repo on the day this ships.
+        var run = Invoke(work, "drift");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+        run.Flowed.ShouldContain("2 of 2 page(s) with declared sources may need review.", customMessage: run.Diagnostics);
+        run.Flowed.ShouldContain("2 page(s) carry no 'owner:'", customMessage: run.Diagnostics);
+
+        // And the disclosure is not boilerplate: with both pages owned it has nothing to report.
+        Own(work, LimitsPath, LimitsOwner);
+        Own(work, RatesPath, RatesOwner);
+
+        var owned = Invoke(work, "drift");
+
+        owned.Code.ShouldBe(0, owned.Diagnostics);
+        owned.Flowed.ShouldNotContain("carry no 'owner:'", customMessage: owned.Diagnostics);
+    }
+
+    /// <summary>
+    /// SC8: <c>--format json</c> carries the owner per page and the unowned count, so a CI step that
+    /// routes drift itself reads the same two facts the comment renders rather than parsing the comment.
+    /// A page with no owner carries no <c>owner</c> key at all — <c>DocumeJson.Options</c> drops nulls,
+    /// and an empty string would be a second spelling of "unowned".
+    /// </summary>
+    [Fact]
+    public void A_json_report_carries_each_pages_owner_and_the_unowned_count()
+    {
+        var work = Seeded(nameof(A_json_report_carries_each_pages_owner_and_the_unowned_count));
+
+        Own(work, LimitsPath, LimitsOwner);
+
+        var run = Invoke(work, "drift", "--format", "json");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        using var document = JsonDocument.Parse(run.Output);
+        var root = document.RootElement;
+
+        root.GetProperty("affectedCount").GetInt32().ShouldBe(2, run.Diagnostics);
+        root.GetProperty("unownedCount").GetInt32().ShouldBe(1, run.Diagnostics);
+
+        var pages = root.GetProperty("pages");
+
+        pages[0].GetProperty("path").GetString().ShouldBe(LimitsPath, run.Diagnostics);
+        pages[0].GetProperty("owner").GetString().ShouldBe(LimitsOwner, run.Diagnostics);
+
+        pages[1].GetProperty("path").GetString().ShouldBe(RatesPath, run.Diagnostics);
+        pages[1].TryGetProperty("owner", out _).ShouldBeFalse(run.Diagnostics);
+    }
+
+    /// <summary>
+    /// SC10, end to end: a page its own seal held out is never routed to an owner. It falls out of the
+    /// design — routing consumes <c>Pages</c> and a sealed page left that list before the renderer saw
+    /// it — and is asserted anyway, because "it falls out" is exactly the kind of claim that quietly
+    /// stops being true. Both pages carry an owner here, so the sealed one's absence is a decision rather
+    /// than a page that had nothing to say.
+    /// </summary>
+    /// <remarks>
+    /// The second half is SC7 held against SC10, which is the one interaction
+    /// <see cref="DocuMe.Core.Drift.DriftReport.UnownedCount"/> exists to survive: a page that is both
+    /// sealed and unowned must be counted by neither. Nothing else pins it —
+    /// <see cref="The_verdict_line_says_how_many_affected_pages_have_no_owner"/> seals nothing and the
+    /// first half here owns everything — so a refactor that stamped the count in <c>DriftPlanner.Plan</c>,
+    /// before <c>SealedVerdicts.Apply</c> rewrites <c>Pages</c>, would go green while the verdict line
+    /// disclosed an unowned page the report above it does not list.
+    /// </remarks>
+    [Fact]
+    public void A_sealed_page_is_never_routed_to_its_owner()
+    {
+        var work = Seeded(nameof(A_sealed_page_is_never_routed_to_its_owner));
+
+        Own(work, LimitsPath, LimitsOwner);
+        Own(work, RatesPath, RatesOwner);
+        Seal(work, LimitsPath);
+
+        var run = Invoke(work, "drift", "--format", "github-comment");
+
+        run.Code.ShouldBe(0, run.Diagnostics);
+
+        var routed = $"A sealed page was routed to its owner.{Environment.NewLine}{run.Diagnostics}";
+
+        run.Output.ShouldNotContain($"**Owner:** {LimitsOwner}", customMessage: routed);
+        run.Output.ShouldContain($"**Owner:** {RatesOwner}", customMessage: run.Diagnostics);
+
+        // Held out, not hidden: the page is still disclosed, under the seal that held it out.
+        run.Output.ShouldContain(
+            $"- **{LimitsTitle}** — `{LimitsPath}` (sealed {SealedOn})",
+            customMessage: run.Diagnostics);
+
+        // And it is counted out of the verdict the groups sit under.
+        run.Output.ShouldContain(
+            "This PR touches sources for **1 wiki page** of 2 with declared sources:",
+            customMessage: run.Diagnostics);
+
+        // Counted out of the other verdict too. With its `owner:` taken away the sealed page is the only
+        // owner-less page in the wiki, and the disclosure has to stay silent: it speaks for the affected
+        // pages this report cannot route, and a page held out of the report is not one of them.
+        Unown(work, LimitsPath);
+
+        var verdict = Invoke(work, "drift");
+
+        verdict.Code.ShouldBe(0, verdict.Diagnostics);
+        verdict.Flowed.ShouldContain(
+            "1 of 2 page(s) with declared sources may need review.",
+            customMessage: verdict.Diagnostics);
+
+        verdict.Flowed.ShouldNotContain(
+            "carry no 'owner:'",
+            customMessage: $"A sealed page was counted as unowned.{Environment.NewLine}{verdict.Diagnostics}");
+    }
+
+    /// <summary>
     /// The per-page Stale cell as <see cref="DocuMe.Core.Dashboard.DashboardPage"/> renders it. Lowercase, which is
     /// what keeps it distinct from <see cref="SummaryStaleCell"/> under an ordinal count.
     /// </summary>
@@ -1287,6 +1452,29 @@ public sealed class CliDriftTests : IDisposable
         _ => throw new ArgumentOutOfRangeException(nameof(path), path, "The fixture seeds two pages."),
     };
 
+    /// <summary>The title the seeded page at <paramref name="path"/> carries.</summary>
+    private static string Title(string path) => path switch
+    {
+        LimitsPath => LimitsTitle,
+        RatesPath => RatesTitle,
+        _ => throw new ArgumentOutOfRangeException(nameof(path), path, "The fixture seeds two pages."),
+    };
+
+    /// <summary>
+    /// Rewrites a seeded page with an <c>owner:</c> in its frontmatter (§5.2), as a consumer repo would.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not committed, and it does not need to be: the drift range is a diff between two
+    /// revisions, so an uncommitted page edit changes nothing about which files count as changed, while
+    /// the frontmatter itself is read off the working tree the way <c>docume</c> reads every page.
+    /// </remarks>
+    private static void Own(string work, string path, string owner) =>
+        Write(work, $"docs/wiki/{path}", Page(Title(path), Glob(path), owner));
+
+    /// <summary>Rewrites a seeded page without an <c>owner:</c>, undoing <see cref="Own"/>.</summary>
+    private static void Unown(string work, string path) =>
+        Write(work, $"docs/wiki/{path}", Page(Title(path), Glob(path)));
+
     /// <summary>Flags one page stale in the seeded state, as a previous <c>--mark</c> would have left it.</summary>
     private static void MarkStale(string work, string path)
     {
@@ -1323,11 +1511,15 @@ public sealed class CliDriftTests : IDisposable
         File.WriteAllText(path, config.ToJsonString());
     }
 
-    /// <summary>One wiki page declaring the glob that makes it drift when its source moves (§5.2).</summary>
-    private static string Page(string title, string glob) => $"""
+    /// <summary>
+    /// One wiki page declaring the glob that makes it drift when its source moves (§5.2), and optionally
+    /// the owner that drift routes it to. The owner is written quoted, because a handle opening with
+    /// <c>@</c> is a reserved indicator in a bare YAML scalar.
+    /// </summary>
+    private static string Page(string title, string glob, string? owner = null) => $"""
         ---
         sources:
-          - {glob}
+          - {glob}{(owner is null ? string.Empty : $"\nowner: \"{owner}\"")}
         ---
 
         # {title}
