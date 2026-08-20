@@ -67,16 +67,24 @@ internal static class ShippedTree
         ["docs/plans"] = "dated implementation records. CARRIES A CLAIM, and correcting a promise must "
             + "not mean rewriting what was planned on the day.",
         ["docs/specs"] = "dated specifications, excluded for the same reason as docs/plans. CARRIES A CLAIM.",
-        ["docs/assets"] = "the stylesheet and brand SVGs the docs/*.html pages reference. Presentation "
-            + "only: it carries no prose, so it can state nothing about configuration. The pages "
-            + "themselves are outside this sweep structurally — .html and .css are not swept Extensions "
-            + "— and their claims are held by the same wiki pages they are written from.",
+        ["docs/assets"] = "the stylesheet, brand SVGs and architecture diagrams the docs/*.html pages "
+            + "and the README reference. The diagrams do carry prose, but it names commands and files "
+            + "rather than configuration, so there is still no config claim here to hold; the command "
+            + "names are declared narrative by CliReferencePageTests, which sweeps the same commands "
+            + "where the pages and the README spell them out. "
+            + "The pages themselves are outside this sweep structurally — .html, .css and .svg are not "
+            + "swept Extensions — and their claims are held by the same wiki pages they are written from.",
         ["AGENTS.md"] = "the cross-tool restatement of CLAUDE.md, generated for agents that do not read "
             + "CLAUDE.md. Same classification as CLAUDE.md and for the same reason: standards for "
             + "working on DocuMe, not on a consumer's repo. It is in the global gitignore, so `git "
             + "status` never shows it and only this sweep, which walks the filesystem, sees it at all.",
 
         ["CLAUDE.md"] = "engineering standards for agents working on DocuMe, not on a consumer's repo.",
+        ["LICENSING.md"] = "the dual-license terms, AGPLv3 or commercial. It makes a legal promise "
+            + "rather than a technical one: it names no config field and no command, so there is "
+            + "nothing here for either sweep to hold against the tree.",
+        ["CLA.md"] = "the contributor license agreement, addressed to someone opening a pull request "
+            + "against DocuMe rather than to a consumer of it. Same classification as LICENSING.md.",
         ["CODE_INDEX.md"] = "a generated map of this repository's own source.",
         ["GATES.md"] = "human-gate instructions for Mirko. CARRIES A CLAIM: three `confluence.*` loop "
             + "state keys, none of them a DocumeConfig field.",

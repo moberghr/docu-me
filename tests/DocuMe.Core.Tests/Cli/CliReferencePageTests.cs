@@ -99,6 +99,13 @@ public sealed partial class CliReferencePageTests
         "tasks",         // MTK's lessons and todo list: notes about building DocuMe.
         "tools",         // the build loop's own bookkeeping, archives and method notes.
         "tests",         // this suite, and the golden corpus whose sample prose cites the tool.
+
+        // The architecture diagrams the README and the landing page embed. Their labels name commands,
+        // but as illustration rather than as lines anyone copies: they carry decorative separators and
+        // no options, so parsing them as invocations would measure the drawing, not the contract. The
+        // three commands they name (`publish`, `sync`, `drift`) are each swept in README.md,
+        // docs/index.html and docs/how-it-works.html, so a rename still turns this suite red.
+        "docs/assets",
     ];
 
     /// <summary>

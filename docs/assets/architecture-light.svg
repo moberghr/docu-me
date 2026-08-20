@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 610" width="1240" height="610" role="img" aria-label="DocuMe architecture: Claude Code skills write pages as pull requests into your repository; the docume CLI publishes the repository to Confluence and reads labels and comments back.">
+  <rect x="0" y="0" width="1240" height="610" fill="#FFFFFF"/>
+
+  <!-- ============ LANE 1 — GENERATIVE TIER ============ -->
+  <rect x="32" y="44" width="1176" height="136" rx="14" fill="#F8FAFC" stroke="#430cda" stroke-opacity="0.45" stroke-dasharray="6 5"/>
+  <circle cx="58" cy="74" r="4" fill="#430cda"/>
+  <text x="72" y="79" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1.4" fill="#430cda">GENERATIVE TIER</text>
+  <text x="234" y="79" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#717A80">Claude Code plugin  ·  judgement  ·  no Confluence credentials</text>
+
+  <rect x="56"  y="100" width="128" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <text x="120" y="127" text-anchor="middle" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="13" fill="#121212">/docs-loop</text>
+  <rect x="196" y="100" width="170" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <text x="281" y="127" text-anchor="middle" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="13" fill="#121212">/docs-processes</text>
+  <rect x="378" y="100" width="154" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <text x="455" y="127" text-anchor="middle" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="13" fill="#121212">/docs-refresh</text>
+  <rect x="544" y="100" width="162" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <text x="625" y="127" text-anchor="middle" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="13" fill="#121212">/docs-feedback</text>
+
+  <text x="1184" y="118" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#121212">output is always a pull request</text>
+  <text x="1184" y="138" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#717A80">a human merges it, or nothing publishes</text>
+
+  <!-- arrow: skills -> repo -->
+  <line x1="200" y1="180" x2="200" y2="223" stroke="#717A80" stroke-width="1.6"/>
+  <path d="M 200,232 L 193.5,221 L 206.5,221 Z" fill="#717A80"/>
+  <text x="220" y="208" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#717A80">reviewed, then merged</text>
+
+  <!-- ============ LANE 2 — REPOSITORY ============ -->
+  <rect x="32" y="232" width="1176" height="136" rx="14" fill="#F8FAFC" stroke="#E1E7EB"/>
+  <circle cx="58" cy="262" r="4" fill="#430cda"/>
+  <text x="72" y="267" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1.4" fill="#430cda">YOUR REPOSITORY</text>
+  <text x="240" y="267" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#717A80">the source of truth  ·  markdown in, page tree out</text>
+
+  <rect x="56"  y="288" width="156" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <text x="134" y="315" text-anchor="middle" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="13" fill="#121212">docs/wiki/**.md</text>
+  <rect x="224" y="288" width="162" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <text x="305" y="315" text-anchor="middle" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="13" fill="#121212">_meta/state.json</text>
+  <rect x="398" y="288" width="122" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <text x="459" y="315" text-anchor="middle" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="13" fill="#121212">docume.json</text>
+  <rect x="532" y="288" width="146" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <text x="605" y="315" text-anchor="middle" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="13" fill="#121212">_meta/STYLE.md</text>
+  <rect x="690" y="288" width="146" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <text x="763" y="315" text-anchor="middle" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="13" fill="#121212">sources: globs</text>
+
+  <text x="1184" y="306" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#121212">content is authored here and nowhere else</text>
+  <text x="1184" y="326" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#717A80">hand edits in Confluence are overwritten on republish</text>
+
+  <!-- arrow down: repo -> confluence -->
+  <line x1="200" y1="368" x2="200" y2="423" stroke="#430cda" stroke-width="1.8"/>
+  <path d="M 200,432 L 193.5,421 L 206.5,421 Z" fill="#430cda"/>
+  <text x="220" y="392" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="13" font-weight="700" fill="#430cda">docume publish</text>
+  <text x="220" y="410" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="11" fill="#717A80">parents first, attachments hashed</text>
+
+  <!-- centre pill -->
+  <rect x="440" y="380" width="344" height="38" rx="19" fill="#F1EBFE" stroke="#430cda" stroke-opacity="0.35"/>
+  <text x="612" y="404" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12.5" fill="#430cda">the CLI is the only thing that calls the API</text>
+
+  <!-- arrow up: confluence -> repo -->
+  <line x1="1040" y1="432" x2="1040" y2="377" stroke="#430cda" stroke-width="1.8"/>
+  <path d="M 1040,368 L 1033.5,379 L 1046.5,379 Z" fill="#430cda"/>
+  <text x="1020" y="392" text-anchor="end" font-family="JetBrains Mono, SFMono-Regular, Consolas, monospace" font-size="13" font-weight="700" fill="#430cda">docume sync  ·  docume drift</text>
+  <text x="1020" y="410" text-anchor="end" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="11" fill="#717A80">labels and comments, back into the repo</text>
+
+  <!-- ============ LANE 3 — CONFLUENCE ============ -->
+  <rect x="32" y="432" width="1176" height="148" rx="14" fill="#F8FAFC" stroke="#E1E7EB"/>
+  <circle cx="58" cy="462" r="4" fill="#430cda"/>
+  <text x="72" y="467" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1.4" fill="#430cda">CONFLUENCE CLOUD</text>
+  <text x="252" y="467" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#717A80">the read surface  ·  where humans approve and comment</text>
+
+  <rect x="56"  y="488" width="136" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <text x="124" y="515" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#121212">published pages</text>
+  <rect x="204" y="488" width="140" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <circle cx="224" cy="510" r="4.5" fill="#16a34a"/>
+  <text x="238" y="515" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#121212">approved label</text>
+  <rect x="356" y="488" width="120" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <circle cx="376" cy="510" r="4.5" fill="#d97706"/>
+  <text x="390" y="515" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#121212">stale label</text>
+  <rect x="488" y="488" width="152" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <text x="564" y="515" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#121212">reviewer comments</text>
+  <rect x="652" y="488" width="172" height="44" rx="10" fill="#FFFFFF" stroke="#E1E7EB"/>
+  <text x="738" y="515" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" fill="#121212">Documentation Status</text>
+
+  <text x="56" y="558" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" fill="#717A80">Approval lives in state.json, and the injected banner is excluded from the content hash, so a machine edit never costs a human's approval.</text>
+</svg>

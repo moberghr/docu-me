@@ -43,10 +43,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # GitHub Packages, per §12 ("nuget.org when opened up" — add a second push step then; the
-      # packages themselves need no change). No new secret: GITHUB_TOKEN is enough for the owner's
-      # own feed, which is why this is the default and not nuget.org.
+      # GitHub Packages. GITHUB_TOKEN is enough for the owner's own feed, which is why it needs no
+      # secret. It is no longer the only feed: §12's "nuget.org when opened up" is the second push
+      # step below, and the packages themselves needed no change for it.
       FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+      # Job level, not step level: a step's own `env:` is not dependably in scope for that step's
+      # `if:`, and the nuget.org push is gated on this being non-empty.
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
       PACKAGES: ${{ github.workspace }}/artifacts
     steps:
       - uses: actions/checkout@v4
@@ -107,6 +110,22 @@ jobs:
       - name: Push to GitHub Packages
         run: dotnet nuget push "$PACKAGES/*.nupkg" --source "$FEED" --api-key "$GH_TOKEN" --skip-duplicate
 
+      # The public feed, now that the repository is public: `dotnet tool install --global DocuMe.Cli`
+      # with no feed setup and no PAT is the install story the README documents, and GitHub Packages
+      # cannot serve it because that feed authenticates every read. Both pushes run: the GitHub feed
+      # stays the one the scaffolded workflows restore a pinned version from.
+      #
+      # Skipped, not failed, when NUGET_API_KEY is absent, so a release still cuts before the key is
+      # set. `continue-on-error` is deliberately NOT used: with the key present, a rejected push is a
+      # release that must go red rather than one that quietly ships to one feed only.
+      - name: Push to nuget.org
+        if: env.NUGET_API_KEY != ''
+        run: |
+          dotnet nuget push "$PACKAGES/*.nupkg" \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "$NUGET_API_KEY" \
+            --skip-duplicate
+
       - name: Cut the GitHub Release
         env:
           TAG: ${{ github.ref_name }}
@@ -136,11 +155,22 @@ jobs:
           ## Install
 
           \`\`\`
+          dotnet tool install --global DocuMe.Cli --version $VERSION
+          \`\`\`
+
+          From nuget.org, which needs no feed setup and no token.
+
+          <details><summary>From GitHub Packages instead</summary>
+
+          \`\`\`
           dotnet tool install --global DocuMe.Cli --version $VERSION --add-source $FEED
           \`\`\`
 
-          GitHub Packages authenticates every read, including public ones: the feed needs a PAT with
-          \`read:packages\` in your NuGet config before that line works.
+          That feed authenticates every read, including public ones, so it needs a PAT with
+          \`read:packages\` in your NuGet config first. It is also the feed the scaffolded workflows
+          restore from.
+
+          </details>
 
           Or, pinned per repository (what \`docume init\` scaffolds): \`.config/dotnet-tools.json\` +
           \`dotnet tool restore\`.
