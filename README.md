@@ -157,7 +157,7 @@ instead of Claude Code; the choice is recorded in `docume.json` and a re-run kee
 |---|---|
 | `docume.json` | Config: space, base URL, workflow agent rail, wiki root, label names, mermaid renderer path |
 | `docs/wiki/README.md` | The wiki's root page |
-| `docs/wiki/_meta/STYLE.md` | Your authoring conventions. **Fill this in** — it is what the skills read |
+| `docs/wiki/_meta/STYLE.md` | Your authoring conventions. **Fill this in**: it is what the skills read |
 | `docs/wiki/_meta/state.json` | Machine-owned: page ids, versions, content hashes, approvals. Committed |
 | `.github/workflows/docs-drift-pr.yml` | Comments on a PR that touches code a page derives from |
 | `.github/workflows/docs-drift.yml` | Marks pages stale after a deploy |
