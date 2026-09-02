@@ -1,0 +1,413 @@
+{
+  "slug": "wiki-structure",
+  "date": "2026-09-02",
+  "scope": "new-feature",
+  "baseline_area": "publishing",
+  "security_impact": "page-identity-transfer",
+  "skill_precedence_gate": "pass",
+  "open_decisions": [],
+  "change_manifest": [
+    {
+      "path": "src/DocuMe.Core/Publishing/StructureReport.cs",
+      "action": "create",
+      "purpose": "StructureFinding + StructureReport.Of(paths, homePage, maxChildren). Pure; orphaned-directory and wide-parent only.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/Config/DocumeConfig.cs",
+      "action": "modify",
+      "purpose": "WikiConfig.MaxChildren, default 12.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "schema/docume.schema.json",
+      "action": "modify",
+      "purpose": "wiki.maxChildren, positive integer, default 12.",
+      "mechanical": true,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/Status/StatusReport.cs",
+      "action": "modify",
+      "purpose": "StatusReport.Structure so --json carries findings structurally, not only as a check detail string.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/Status/StatusModel.cs",
+      "action": "modify",
+      "purpose": "Compute the structure findings in Build and emit the summary StatusCheck. Not in StatusProbes: the check is pure and StatusProbes is the I/O class.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Cli/Commands/StatusCommand.cs",
+      "action": "modify",
+      "purpose": "Render the structure findings under the check line, naming the README.md to create.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Publishing/StructureReportTests.cs",
+      "action": "create",
+      "purpose": "SC1, SC2.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Status/StatusModelTests.cs",
+      "action": "modify",
+      "purpose": "SC3 — check present, findings carried, runs offline.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Config/ConfigLoaderTests.cs",
+      "action": "modify",
+      "purpose": "SC4 — default and explicit maxChildren.",
+      "mechanical": false,
+      "batch": 1
+    },
+    {
+      "path": "src/DocuMe.Core/Markdown/PageFrontmatter.cs",
+      "action": "modify",
+      "purpose": "movedFrom: single string, wiki-root-relative path, blank collapses to null like Title and PageId.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Core/Markdown/FrontmatterParser.cs",
+      "action": "modify",
+      "purpose": "DTO member + mapping; normalize separators to forward slashes only.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Core/State/DocumeState.cs",
+      "action": "modify",
+      "purpose": "PageState.MovedTo — a tombstone row: no pageId, never published, never adopted.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Core/State/PublishPlan.cs",
+      "action": "modify",
+      "purpose": "Consume movedFrom in PublishPlanner before the orphan comparison: rekey, leave a tombstone, throw on the five ambiguous claims. PagePublishPlan gains the resolved Title; Move widens to parent-or-title.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Core/Publishing/PrunePlan.cs",
+      "action": "modify",
+      "purpose": "Tombstones are not orphans. A rekeyed path must never reach PlannedPrune.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Core/Publishing/PublishExecutor.cs",
+      "action": "modify",
+      "purpose": "Move branch: reposition as today when only the parent differs; titled update against the same id when the title differs. Approval untouched either way.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Core/Sync/StateRebuilder.cs",
+      "action": "modify",
+      "purpose": "Skip tombstones — adopting one duplicates a live page id.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "src/DocuMe.Core/Markdown/PageLinkResolver.cs",
+      "action": "modify",
+      "purpose": "Resolve a link to a moved page's old path through its tombstone.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Markdown/FrontmatterParserTests.cs",
+      "action": "modify",
+      "purpose": "movedFrom present, absent, blank, backslash-separated.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/State/PublishPlannerTests.cs",
+      "action": "modify",
+      "purpose": "SC5, SC6, SC8, SC9 — plus the ordering invariant: the rekey happens before the orphan comparison.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Publishing/PrunePlannerTests.cs",
+      "action": "modify",
+      "purpose": "SC5 — a moved path never reaches PlannedPrune, with --prune armed.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Sync/StateRebuilderTests.cs",
+      "action": "modify",
+      "purpose": "SC6 — a tombstone is not adopted.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Markdown/PageLinkResolverTests.cs",
+      "action": "modify",
+      "purpose": "SC7.",
+      "mechanical": false,
+      "batch": 2
+    },
+    {
+      "path": "plugin/skills/docs-restructure/SKILL.md",
+      "action": "create",
+      "purpose": "The skill that owns tree shape: propose, write index pages, add movedFrom, one PR, never page prose.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "plugin/skills/docs-loop/SKILL.md",
+      "action": "modify",
+      "purpose": "The restructure exclusion points at /docs-restructure instead of at a human.",
+      "mechanical": true,
+      "batch": 3
+    },
+    {
+      "path": "tests/DocuMe.Core.Tests/Plugin/SkillManifestTests.cs",
+      "action": "modify",
+      "purpose": "SC10 — the new skill is registered and well-formed.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "README.md",
+      "action": "modify",
+      "purpose": "movedFrom in the frontmatter reference; the structure check in the status section; /docs-restructure in the skill list.",
+      "mechanical": false,
+      "batch": 3
+    },
+    {
+      "path": "CHANGELOG.md",
+      "action": "modify",
+      "purpose": "Entry.",
+      "mechanical": true,
+      "batch": 3
+    }
+  ],
+  "public_contracts": [
+    {
+      "kind": "persisted-schema",
+      "signature": "page frontmatter → movedFrom: <wiki-root-relative path>",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "persisted-schema",
+      "signature": "state.json → pages[<oldPath>].movedTo: <newPath> (tombstone; no pageId)",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "persisted-schema",
+      "signature": "docume.json → wiki.maxChildren: <int, default 12>",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "library-type",
+      "signature": "DocuMe.Core.Publishing.StructureFinding / StructureReport.Of(paths, homePage, maxChildren)",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "library-type",
+      "signature": "DocuMe.Core.Status.StatusReport.Structure",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "library-type",
+      "signature": "DocuMe.Core.State.PagePublishPlan.Title (positional)",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "library-type",
+      "signature": "DocuMe.Core.State.PagePublishAction.Move — widened from parent-differs to parent-or-title-differs",
+      "change": "modified",
+      "surface": "external"
+    },
+    {
+      "kind": "output-format",
+      "signature": "docume status → structure check; --json → structure[]",
+      "change": "new",
+      "surface": "external"
+    },
+    {
+      "kind": "skill",
+      "signature": "/docs-restructure",
+      "change": "new",
+      "surface": "external"
+    }
+  ],
+  "plan": {
+    "batches": [
+      {
+        "id": 1,
+        "title": "The tree has a shape and status says so",
+        "files": [
+          "src/DocuMe.Core/Publishing/StructureReport.cs",
+          "src/DocuMe.Core/Config/DocumeConfig.cs",
+          "schema/docume.schema.json",
+          "src/DocuMe.Core/Status/StatusReport.cs",
+          "src/DocuMe.Core/Status/StatusModel.cs",
+          "src/DocuMe.Cli/Commands/StatusCommand.cs",
+          "tests/DocuMe.Core.Tests/Publishing/StructureReportTests.cs",
+          "tests/DocuMe.Core.Tests/Status/StatusModelTests.cs",
+          "tests/DocuMe.Core.Tests/Config/ConfigLoaderTests.cs"
+        ],
+        "acceptance": "SC1, SC2, SC3, SC4. Build clean. Read-only: writes nothing to Confluence and nothing to state.",
+        "boundary": "Reports the shape. Changes no page and moves nothing."
+      },
+      {
+        "id": 2,
+        "title": "A page keeps its identity through a move",
+        "files": [
+          "src/DocuMe.Core/Markdown/PageFrontmatter.cs",
+          "src/DocuMe.Core/Markdown/FrontmatterParser.cs",
+          "src/DocuMe.Core/State/DocumeState.cs",
+          "src/DocuMe.Core/State/PublishPlan.cs",
+          "src/DocuMe.Core/Publishing/PrunePlan.cs",
+          "src/DocuMe.Core/Publishing/PublishExecutor.cs",
+          "src/DocuMe.Core/Sync/StateRebuilder.cs",
+          "src/DocuMe.Core/Markdown/PageLinkResolver.cs",
+          "tests/DocuMe.Core.Tests/Markdown/FrontmatterParserTests.cs",
+          "tests/DocuMe.Core.Tests/State/PublishPlannerTests.cs",
+          "tests/DocuMe.Core.Tests/Publishing/PrunePlannerTests.cs",
+          "tests/DocuMe.Core.Tests/Sync/StateRebuilderTests.cs",
+          "tests/DocuMe.Core.Tests/Markdown/PageLinkResolverTests.cs"
+        ],
+        "acceptance": "SC5, SC6, SC7, SC8, SC9. The rekey-before-orphan ordering has its own asserting test, not a comment.",
+        "boundary": "The CLI can move a page. No skill asks it to yet."
+      },
+      {
+        "id": 3,
+        "title": "/docs-restructure owns tree shape",
+        "files": [
+          "plugin/skills/docs-restructure/SKILL.md",
+          "plugin/skills/docs-loop/SKILL.md",
+          "tests/DocuMe.Core.Tests/Plugin/SkillManifestTests.cs",
+          "README.md",
+          "CHANGELOG.md"
+        ],
+        "acceptance": "SC10. Plugin tests pass.",
+        "boundary": "Documentation and skill prose. No production code."
+      }
+    ]
+  },
+  "test_manifest": [
+    {
+      "id": "SC1",
+      "kind": "unit",
+      "target": "StructureReportTests",
+      "assertion": "Every directory with publishable pages and no index is named, with page count and resolved ancestor."
+    },
+    {
+      "id": "SC2",
+      "kind": "unit",
+      "target": "StructureReportTests",
+      "assertion": "Parents wider than maxChildren are named, root included; default 12."
+    },
+    {
+      "id": "SC3",
+      "kind": "unit",
+      "target": "StatusModelTests",
+      "assertion": "structure check emitted; findings on StatusReport.Structure; produced with no probes run."
+    },
+    {
+      "id": "SC4",
+      "kind": "unit",
+      "target": "ConfigLoaderTests",
+      "assertion": "maxChildren absent → 12; present → honoured; schema accepts it."
+    },
+    {
+      "id": "SC5",
+      "kind": "unit",
+      "target": "PublishPlannerTests, PrunePlannerTests",
+      "assertion": "movedFrom on a live entry → Move, state rekeyed with every field carried, old path absent from PrunePlan."
+    },
+    {
+      "id": "SC6",
+      "kind": "unit",
+      "target": "PublishPlannerTests, StateRebuilderTests",
+      "assertion": "Tombstone written; a second identical run is a no-op; rebuild-state does not adopt it."
+    },
+    {
+      "id": "SC7",
+      "kind": "unit",
+      "target": "PageLinkResolverTests",
+      "assertion": "A link to a moved page's old path resolves to the new page."
+    },
+    {
+      "id": "SC8",
+      "kind": "unit",
+      "target": "PublishPlannerTests",
+      "assertion": "Five ambiguous claims throw with paths named; an unresolvable movedFrom warns and plans Create."
+    },
+    {
+      "id": "SC9",
+      "kind": "unit",
+      "target": "PublishPlannerTests",
+      "assertion": "Title changed, body unchanged → Move, new title written, approval survives."
+    },
+    {
+      "id": "SC10",
+      "kind": "unit",
+      "target": "SkillManifestTests",
+      "assertion": "docs-restructure registered and well-formed; docs-loop's exclusion points at it."
+    }
+  ],
+  "out_of_scope": [
+    "Synthesizing index pages — PageHierarchy's refusal stands.",
+    "wiki.structure declared taxonomy in docume.json — belongs in the consumer's _meta/STYLE.md (rule §9.5).",
+    "order: frontmatter for path-independent sibling ordering — separate spec.",
+    "Git rename detection — GitRepository passes --no-renames deliberately.",
+    "Mass in-tree link rewriting on a move — the tombstone covers correctness.",
+    "Deleting tombstones — a verb that removes identity records needs --prune-grade care.",
+    "Failing a build on structure findings — Warning, with --json for repos that want to gate.",
+    "The AurServices content work: 17 index pages and the business-tier regrouping are that repo's PRs."
+  ],
+  "assumptions": [
+    "The Confluence move API repositions without renaming, so a title change is a titled update against the same id.",
+    "A page's sealed verdict is bound to content and sources, not path, so a rekey carries it correctly.",
+    "wiki.homePage stays one index name applied per directory; per-directory overrides are not contemplated.",
+    "Reparenting notifies watchers once per moved page; the AurServices Phase 1 run accepts that cost deliberately."
+  ],
+  "risks": [
+    {
+      "risk": "movedFrom consumed after PrunePlanner reads state would present the old path as an orphan; a --prune in the same session trashes the page the move was meant to preserve.",
+      "mitigation": "Plan-time ordering invariant with a dedicated asserting test, not a comment."
+    },
+    {
+      "risk": "Reparenting 70 AurServices pages fires a watcher notification each.",
+      "mitigation": "One deliberate publish rather than a drip; called out in the Phase 1 PR body."
+    },
+    {
+      "risk": "wide-parent's threshold of 12 is a guess and may nag.",
+      "mitigation": "Configurable, Warning-level; a bad default costs one line in docume.json."
+    },
+    {
+      "risk": "A crafted movedFrom transfers an approved page's id to new content.",
+      "mitigation": "A new body moves the content hash and InvalidatesApproval strips the label (§6.2 step 7); the five hard errors keep any transfer from being silent."
+    }
+  ],
+  "delta": {
+    "driver": "AurServices Confluence cutover 2026-09-02: 146 pages published, every check green, 54 on the space root.",
+    "supersedes": [],
+    "follows": "2026-08-20-page-owners"
+  },
+  "amendments": []
+}
