@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DocuMe.Core.Config;
 using DocuMe.Core.Markdown;
 using DocuMe.Core.Publishing;
@@ -321,6 +322,47 @@ public sealed class StatusModelTests : IDisposable
 
         Check(report, StatusModel.StructureCheck).Outcome.ShouldBe(StatusCheckOutcome.Warning);
         report.Structure.ShouldNotBeNull().HasFindings.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// SC3's other half, and the half a reader of the previous test does not get: the findings have to
+    /// survive serialization under the names a consumer greps for. Asserting the in-memory report proves
+    /// the model; only <c>ToJson</c> proves the contract, and <c>--json</c> is what <c>/docs-restructure</c>
+    /// and a CI gate actually read.
+    /// </summary>
+    [Fact]
+    public void The_structure_findings_survive_into_the_json_contract()
+    {
+        using var document = JsonDocument.Parse(Build(Published()).ToJson());
+
+        var structure = document.RootElement.GetProperty("structure");
+        var orphan = structure.GetProperty("orphanedDirectories").EnumerateArray().ShouldHaveSingleItem();
+
+        orphan.GetProperty("directory").GetString().ShouldBe("guides");
+        orphan.GetProperty("pageCount").GetInt32().ShouldBe(1);
+        orphan.GetProperty("resolvedParent").GetString().ShouldBe("README.md");
+        orphan.GetProperty("indexPath").GetString().ShouldBe("guides/README.md");
+
+        structure.GetProperty("wideParents").GetArrayLength().ShouldBe(0);
+        structure.GetProperty("hasFindings").GetBoolean().ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// The space root is spelled as an absent <c>parent</c> key rather than a null or a sentinel, so "the
+    /// root" has exactly one representation on the wire — the same spelling an unowned page uses.
+    /// </summary>
+    [Fact]
+    public void A_root_wide_parent_carries_no_parent_key_at_all()
+    {
+        var report = StructureReport.Of(["a.md", "b.md", "c.md"], homePage: null, maxChildren: 2);
+
+        using var document = JsonDocument.Parse(
+            JsonSerializer.Serialize(report, DocuMe.Core.Json.DocumeJson.Options));
+
+        var wide = document.RootElement.GetProperty("wideParents").EnumerateArray().ShouldHaveSingleItem();
+
+        wide.TryGetProperty("parent", out _).ShouldBeFalse();
+        wide.GetProperty("childCount").GetInt32().ShouldBe(3);
     }
 
     /// <summary>

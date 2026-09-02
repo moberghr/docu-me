@@ -67,7 +67,11 @@ public sealed class StructureReportTests
 
         var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
 
-        report.OrphanedDirectories.Select(directory => directory.ResolvedParent).ShouldAllBe(parent => parent == null);
+        // The count first: ShouldAllBe over an empty list passes, so without this the assertion below
+        // would hold just as well if the check had found nothing at all.
+        report.OrphanedDirectories.Select(directory => directory.Directory)
+            .ShouldBe(["20-integrations", "30-infrastructure"]);
+        report.OrphanedDirectories.ShouldAllBe(directory => directory.ResolvedParent == null);
     }
 
     /// <summary>
@@ -114,9 +118,15 @@ public sealed class StructureReportTests
     }
 
     /// <summary>
-    /// Direct pages only. A directory whose pages all live one level further down is not holding pages,
-    /// and naming it would ask for an index page nothing would hang under.
+    /// Direct pages only: a directory whose pages all live one level further down is not holding pages.
     /// </summary>
+    /// <remarks>
+    /// The narrower of two readings of SC1's "every directory with publishable pages", and the one the
+    /// spec's own arithmetic supports: fifteen AurServices directories holding seventy pages is a count of
+    /// directories that hold pages directly. It leaves one shape unreported — <c>a</c> in a tree of
+    /// <c>README.md</c> plus <c>a/b/README.md</c> has no index and no direct pages, so nothing is said
+    /// while <c>a/b</c>'s index hangs two levels up. Recorded rather than hidden; see the plan.
+    /// </remarks>
     [Fact]
     public void Counts_the_pages_directly_in_the_directory_and_not_its_descendants()
     {
@@ -202,6 +212,62 @@ public sealed class StructureReportTests
         report.OrphanedDirectories
             .Select(directory => directory.Directory)
             .ShouldBe(["a-first", "m-middle", "z-last"]);
+
+        // The same claim for the other list, which the summary said and only the first list proved. It
+        // needs an indexed tree: in the tree above every page resolves to the space root, so there is one
+        // parent group and one group cannot demonstrate an order. Ordinally the root sorts first, then
+        // "README.md" ahead of the section indexes, because 'R' precedes 'a'.
+        string[] indexed =
+        [
+            "README.md",
+            "z-last/README.md", "z-last/page.md",
+            "a-first/README.md", "a-first/page.md",
+            "m-middle/README.md", "m-middle/page.md",
+        ];
+
+        StructureReport.Of(indexed, homePage: null, maxChildren: 0)
+            .WideParents
+            .Select(parent => parent.Parent)
+            .ShouldBe([null, "README.md", "a-first/README.md", "m-middle/README.md", "z-last/README.md"]);
+    }
+
+    /// <summary>
+    /// Ordinal grouping, so two directories differing only in case stay two directories. Confluence
+    /// titles are case-insensitive and a filesystem may be too, but the path set is the contract here and
+    /// folding them would silently merge two findings into one wrong count.
+    /// </summary>
+    [Fact]
+    public void Directories_differing_only_by_case_are_two_directories()
+    {
+        string[] tree = ["README.md", "Guides/setup.md", "guides/install.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+
+        report.OrphanedDirectories
+            .Select(directory => directory.Directory)
+            .ShouldBe(["Guides", "guides"]);
+    }
+
+    /// <summary>
+    /// The index name comes from <c>wiki.homePage</c> and nowhere else: a directory holding a
+    /// conventionally-named <c>README.md</c> under a config that calls the index <c>index.md</c> has no
+    /// index page, and saying otherwise would be the resolver and the check disagreeing.
+    /// </summary>
+    [Fact]
+    public void A_readme_is_not_an_index_page_when_the_config_names_a_different_one()
+    {
+        string[] tree = ["index.md", "10-domains/README.md", "10-domains/loans.md"];
+
+        var report = StructureReport.Of(tree, homePage: "index.md", maxChildren: Twelve);
+
+        var orphan = report.OrphanedDirectories.ShouldHaveSingleItem();
+
+        orphan.Directory.ShouldBe("10-domains");
+        orphan.IndexPath.ShouldBe("10-domains/index.md");
+
+        // Both pages in it are ordinary pages under this config, README.md included.
+        orphan.PageCount.ShouldBe(2);
+        orphan.ResolvedParent.ShouldBe("index.md");
     }
 
     /// <summary>The widest parent, for the check's one-line summary. Null when there are no pages at all.</summary>
