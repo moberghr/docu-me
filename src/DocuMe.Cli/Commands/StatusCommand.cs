@@ -3,6 +3,7 @@ using System.Text.Json;
 using DocuMe.Core.Config;
 using DocuMe.Core.Confluence;
 using DocuMe.Core.Markdown;
+using DocuMe.Core.Publishing;
 using DocuMe.Core.State;
 using DocuMe.Core.Status;
 using Spectre.Console;
@@ -295,10 +296,54 @@ internal static class StatusCommand
 
         foreach (var check in report.Checks)
         {
-            table.AddRow(check.Name.EscapeMarkup(), Verdict(check.Outcome), check.Detail.EscapeMarkup());
+            var detail = string.Equals(check.Name, StatusModel.StructureCheck, StringComparison.Ordinal)
+                ? StructureDetail(check.Detail, report.Structure)
+                : check.Detail.EscapeMarkup();
+
+            table.AddRow(check.Name.EscapeMarkup(), Verdict(check.Outcome), detail);
         }
 
         AnsiConsole.Write(table);
+    }
+
+    /// <summary>
+    /// The structure check's detail, with one line per finding under the summary
+    /// (<c>docs/specs/2026-09-02-wiki-structure.md</c> §3.1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Every finding, never the first N.</strong> The AurServices tree had fifteen of them, and a
+    /// list that quietly stopped at five would read as a complete inventory when it was not — the same
+    /// rule the per-page table follows.
+    /// </para>
+    /// <para>
+    /// Each line names the file to create. That is the intervention: the fix was seventeen
+    /// <c>README.md</c> files, and the reason nobody wrote them is that nothing ever asked for them by
+    /// name.
+    /// </para>
+    /// </remarks>
+    private static string StructureDetail(string summary, StructureReport? structure)
+    {
+        var lines = new List<string> { summary.EscapeMarkup() };
+
+        foreach (var directory in structure?.OrphanedDirectories ?? [])
+        {
+            var where = directory.Directory.Length == 0 ? "<wiki root>" : directory.Directory;
+            var under = directory.ResolvedParent ?? "<space root>";
+
+            lines.Add(
+                $"{where.EscapeMarkup()} ({directory.PageCount} page{(directory.PageCount == 1 ? string.Empty : "s")}) "
+                + $"→ filed under {under.EscapeMarkup()}; create {directory.IndexPath.EscapeMarkup()}");
+        }
+
+        foreach (var parent in structure?.WideParents ?? [])
+        {
+            var who = parent.Parent ?? "<space root>";
+
+            lines.Add($"{who.EscapeMarkup()} has {parent.ChildCount} children");
+        }
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     /// <summary>

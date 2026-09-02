@@ -82,6 +82,12 @@
           "type": "string",
           "description": "Index filename. Applies per directory, not only at the root: a directory's index page is the parent of its pages in Confluence.",
           "default": "README.md"
+        },
+        "maxChildren": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many children one parent may have before `docume status`'s structure check warns. A warning only: nothing fails a build over it.",
+          "default": 12
         }
       }
     },

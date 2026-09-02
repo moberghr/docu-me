@@ -85,6 +85,23 @@ public sealed record WikiConfig
 
     /// <summary>File whose body becomes the tree root page.</summary>
     public string HomePage { get; init; } = "README.md";
+
+    /// <summary>
+    /// How many children one parent may have before <c>docume status</c>'s structure check says so
+    /// (<c>docs/specs/2026-09-02-wiki-structure.md</c> §3.1).
+    /// </summary>
+    /// <remarks>
+    /// An opinion with a number on it, and the number is a guess. It is configurable and it only ever
+    /// produces a <see cref="Status.StatusCheckOutcome.Warning"/>, so a repo that genuinely wants a flat
+    /// section raises it in one line rather than arguing with the tool. The check reads this key and
+    /// nothing else: there is deliberately no declared taxonomy in <c>docume.json</c>, because a declared
+    /// structure that drifts from the tree is a second source of truth, and where a new page belongs is
+    /// the consumer's editorial judgement in <c>_meta/STYLE.md</c> (rule §9.5, §3.2).
+    /// </remarks>
+    public int MaxChildren { get; init; } = DefaultMaxChildren;
+
+    /// <summary>The default <see cref="MaxChildren"/>, owned here so the check and the config cannot disagree.</summary>
+    public const int DefaultMaxChildren = 12;
 }
 
 /// <summary>An excluded file republished anyway under a chosen title (PLAN.md §5.1).</summary>

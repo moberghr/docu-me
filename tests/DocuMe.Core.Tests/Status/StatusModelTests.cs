@@ -89,7 +89,17 @@ public sealed class StatusModelTests : IDisposable
             .ShouldBe($"https://example.atlassian.net/wiki/spaces/{SpaceKey}/pages/page-README.md");
 
         Check(report, StatusModel.StateCheck).Outcome.ShouldBe(StatusCheckOutcome.Ok);
-        report.WorstCheck.ShouldBe(StatusCheckOutcome.Ok);
+
+        // Nothing about the SYNC is wrong, which is what this test is about. The tree's SHAPE is: this
+        // fixture's `guides/` holds a page and no index page, so `guides/setup.md` is filed under the root
+        // README rather than under a guides page — the AurServices shape in miniature. The structure check
+        // is the only warning here, and it is a warning on purpose.
+        report.WorstCheck.ShouldBe(StatusCheckOutcome.Warning);
+        Check(report, StatusModel.StructureCheck).Outcome.ShouldBe(StatusCheckOutcome.Warning);
+        report.Checks
+            .Where(check => check.Outcome != StatusCheckOutcome.Ok)
+            .Select(check => check.Name)
+            .ShouldBe([StatusModel.StructureCheck]);
     }
 
     [Fact]
@@ -273,9 +283,59 @@ public sealed class StatusModelTests : IDisposable
                 StatusModel.TreeCheck,
                 StatusModel.ConverterCheck,
                 StatusModel.StateCheck,
+                StatusModel.StructureCheck,
                 StatusModel.SpaceLockCheck,
                 "node",
             ]);
+    }
+
+    /// <summary>
+    /// SC3: the check is rendered and the findings are carried structurally, so a repo that wants to gate
+    /// on tree shape reads them out of <c>--json</c> rather than parsing the detail sentence.
+    /// </summary>
+    [Fact]
+    public void The_structure_check_carries_its_findings_structurally()
+    {
+        var report = Build(Published());
+
+        var orphan = report.Structure.ShouldNotBeNull().OrphanedDirectories.ShouldHaveSingleItem();
+
+        orphan.Directory.ShouldBe("guides");
+        orphan.PageCount.ShouldBe(1);
+        orphan.ResolvedParent.ShouldBe("README.md");
+        orphan.IndexPath.ShouldBe("guides/README.md");
+
+        // The detail sentence is a summary of exactly that, and it says nothing the findings do not.
+        Check(report, StatusModel.StructureCheck).Detail.ShouldContain("no index page");
+    }
+
+    /// <summary>
+    /// SC3, the half that matters on a laptop with no token: the structure check is a pure function of the
+    /// paths, so it answers with no credentials and no network. It is the only check with findings that
+    /// does.
+    /// </summary>
+    [Fact]
+    public void The_structure_check_answers_with_no_environment_checks_at_all()
+    {
+        var report = StatusModel.Build(Paths(stateExists: true), Config(), Tree(), Published());
+
+        Check(report, StatusModel.StructureCheck).Outcome.ShouldBe(StatusCheckOutcome.Warning);
+        report.Structure.ShouldNotBeNull().HasFindings.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// An indexed tree says so rather than staying silent: "no findings" and "the check did not run" are
+    /// different answers, and only one of them is evidence.
+    /// </summary>
+    [Fact]
+    public void An_indexed_tree_reports_a_healthy_structure_check()
+    {
+        Write("guides/README.md", "# Guides\n\nThe section map.");
+
+        var report = Build(new DocumeState(), stateExists: false);
+
+        Check(report, StatusModel.StructureCheck).Outcome.ShouldBe(StatusCheckOutcome.Ok);
+        report.Structure.ShouldNotBeNull().HasFindings.ShouldBeFalse();
     }
 
     [Fact]

@@ -43,7 +43,8 @@ environment and from nowhere else.
     "extraPages": [
       { "path": "_meta/GAPS.md", "title": "Open Questions for the Team" }
     ],
-    "homePage": "README.md"
+    "homePage": "README.md",
+    "maxChildren": 12
   },
   "labels": { "approved": "approved", "stale": "stale" },
   "dashboard": { "title": "Documentation Status" },
@@ -73,12 +74,17 @@ workflows were scaffolded for (`claude` or `copilot`), so a re-run without `--ag
 choice. Absent also means `claude`, which is the rail every repo scaffolded before the copilot rail
 existed is on.
 
-Two are worth a second look:
+Three are worth a second look:
 
 - **`wiki.homePage`** names the index file of *every* directory, not only the root. `a/b/page.md` hangs
   under `a/b/README.md`, which hangs under `a/README.md`. A directory with no index page is skipped
   rather than synthesized: its children hang from the nearest index above it, because inventing a page
   no author wrote would break the one-way rule.
+- **`wiki.maxChildren`** is the one number the structure check takes. `docume status` warns when a
+  parent has more children than this, and when a directory holds pages but no index page, naming the
+  `README.md` to create in each case. It is a warning and only ever a warning: a flat tree publishes
+  perfectly well, and what is wrong with it is a judgement about readers. A section that is genuinely
+  meant to be flat raises the number rather than arguing with the check.
 - **`confluence.protectedSpaces`** is a write lock, and it starts empty: a fresh `docume init` locks
   nothing. A space listed here is refused, and the only way past it is `--allow-protected-space` for a
   single run. There is no config value that grants it permanently, so removing the lock is a reviewed

@@ -202,6 +202,19 @@ public sealed record StatusReport
     public IReadOnlyList<StatusCheck> Checks { get; init; } = [];
 
     /// <summary>
+    /// The shape of the tree (<c>docs/specs/2026-09-02-wiki-structure.md</c> §3.1): directories holding
+    /// pages nobody indexed, and parents wider than <c>wiki.maxChildren</c>.
+    /// </summary>
+    /// <remarks>
+    /// Carried structurally rather than only as the structure check's detail string, so a repo that wants
+    /// to gate on tree shape can read it out of <c>--json</c> and <c>/docs-restructure</c> can plan from
+    /// it. The check itself is a <see cref="StatusCheckOutcome.Warning"/> and never a
+    /// <see cref="StatusCheckOutcome.Problem"/>: a flat tree publishes perfectly well, and what is wrong
+    /// with it is a judgement about readers that DocuMe does not get to fail a build over.
+    /// </remarks>
+    public StructureReport? Structure { get; init; }
+
+    /// <summary>
     /// Data §6.5's dashboard shows that this build cannot compute, and why. Derived from what the
     /// report actually holds, so an entry disappears once the milestone behind it lands.
     /// </summary>
