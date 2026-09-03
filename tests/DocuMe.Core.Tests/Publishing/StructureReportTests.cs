@@ -68,9 +68,10 @@ public sealed class StructureReportTests
         var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
 
         // The count first: ShouldAllBe over an empty list passes, so without this the assertion below
-        // would hold just as well if the check had found nothing at all.
+        // would hold just as well if the check had found nothing at all. The wiki root is in the list
+        // because it has no index page either — which is precisely why these pages reach the space root.
         report.OrphanedDirectories.Select(directory => directory.Directory)
-            .ShouldBe(["20-integrations", "30-infrastructure"]);
+            .ShouldBe([string.Empty, "20-integrations", "30-infrastructure"]);
         report.OrphanedDirectories.ShouldAllBe(directory => directory.ResolvedParent == null);
     }
 
@@ -118,26 +119,56 @@ public sealed class StructureReportTests
     }
 
     /// <summary>
-    /// Direct pages only: a directory whose pages all live one level further down is not holding pages.
+    /// Every skipped level, not only the one the pages sit in. <c>a</c> holds nothing of its own and is
+    /// still a missing level: without <c>a/README.md</c> the section it should be does not exist as a
+    /// page, and everything below it reaches past it.
     /// </summary>
     /// <remarks>
-    /// The narrower of two readings of SC1's "every directory with publishable pages", and the one the
-    /// spec's own arithmetic supports: fifteen AurServices directories holding seventy pages is a count of
-    /// directories that hold pages directly. It leaves one shape unreported — <c>a</c> in a tree of
-    /// <c>README.md</c> plus <c>a/b/README.md</c> has no index and no direct pages, so nothing is said
-    /// while <c>a/b</c>'s index hangs two levels up. Recorded rather than hidden; see the plan.
+    /// The wider of two readings of SC1's "every directory with publishable pages", chosen because the
+    /// narrow one lets the check fall silent on a tree that still skips levels: report <c>a/b</c> only,
+    /// watch somebody write <c>a/b/README.md</c>, and the check goes quiet while that index still hangs
+    /// two levels up. Silence on a broken tree is the failure this whole feature exists to end.
     /// </remarks>
     [Fact]
-    public void Counts_the_pages_directly_in_the_directory_and_not_its_descendants()
+    public void Reports_every_level_the_tree_skips_and_not_only_the_one_holding_the_pages()
     {
         string[] tree = ["README.md", "a/b/page.md"];
 
         var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
 
+        report.OrphanedDirectories.Select(directory => directory.Directory).ShouldBe(["a", "a/b"]);
+
+        var intermediate = report.OrphanedDirectories[0];
+
+        intermediate.PageCount.ShouldBe(1);
+        intermediate.DirectPageCount.ShouldBe(0);
+        intermediate.IndexPath.ShouldBe("a/README.md");
+
+        // Where a/README.md WOULD hang, which is the question a reader is asking: the root index, reached
+        // past the level that is missing.
+        intermediate.ResolvedParent.ShouldBe("README.md");
+
+        report.OrphanedDirectories[1].DirectPageCount.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// The shape the narrow reading missed entirely: an indexed leaf directory under an unindexed one
+    /// reports nothing at all about the level that is gone, because the leaf has its index and the
+    /// intermediate has no pages of its own.
+    /// </summary>
+    [Fact]
+    public void An_indexed_directory_under_an_unindexed_one_still_reports_the_missing_level()
+    {
+        string[] tree = ["README.md", "a/b/README.md", "a/b/page.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+
         var orphan = report.OrphanedDirectories.ShouldHaveSingleItem();
 
-        orphan.Directory.ShouldBe("a/b");
-        orphan.PageCount.ShouldBe(1);
+        orphan.Directory.ShouldBe("a");
+        orphan.PageCount.ShouldBe(2);
+        orphan.DirectPageCount.ShouldBe(0);
+        orphan.IndexPath.ShouldBe("a/README.md");
     }
 
     /// <summary>SC2: the width finding, and the root counts as a parent.</summary>
@@ -211,7 +242,7 @@ public sealed class StructureReportTests
 
         report.OrphanedDirectories
             .Select(directory => directory.Directory)
-            .ShouldBe(["a-first", "m-middle", "z-last"]);
+            .ShouldBe([string.Empty, "a-first", "m-middle", "z-last"]);
 
         // The same claim for the other list, which the summary said and only the first list proved. It
         // needs an indexed tree: in the tree above every page resolves to the space root, so there is one
@@ -314,7 +345,9 @@ public sealed class StructureReportTests
             maxChildren: 1,
             reIncludedPaths: new HashSet<string>(StringComparer.Ordinal) { "_meta/GAPS.md" });
 
-        report.OrphanedDirectories.ShouldHaveSingleItem().Directory.ShouldBe("_meta");
+        // The root is in the list on its own merits: no index page, and the pages beneath it are not all
+        // re-included. `_meta` is the finding this test is about.
+        report.OrphanedDirectories.Select(directory => directory.Directory).ShouldBe([string.Empty, "_meta"]);
         report.WideParents.ShouldHaveSingleItem().ChildCount.ShouldBe(2);
     }
 

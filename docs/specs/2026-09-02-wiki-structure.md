@@ -88,6 +88,14 @@ files, and the reason nobody wrote them is that nothing ever asked for them by n
 - `orphaned-directory` — a directory with publishable pages and no index page. Carries the directory,
   the page count, and the ancestor its pages actually hang under, because "these ten pages are on the
   space root" is the sentence that makes a reader act.
+  *(Amended 2026-09-03 during batch 1, after a `gpt-5.6-sol` review of PR #13: "with publishable pages"
+  means **under** the directory, not only in it. A directory holding nothing of its own is still a
+  skipped level when a page lives below it — with no `a/README.md`, `a/b/README.md` hangs off whatever
+  index is above `a`. The narrow reading let the check fall silent on a tree that still skipped levels:
+  report `a/b` only, watch somebody write `a/b/README.md`, and the check goes quiet while that index
+  still hangs two levels up. The finding carries a direct-page count alongside the total, which is what
+  separates "ten pages are loose here" from "this level is missing". On the AurServices tree the two
+  readings produce identical output; the difference is only visible in a nested one.)*
 - `wide-parent` — a parent with more than `wiki.maxChildren` children, `<root>` included. Default 12,
   configurable, and a repo that genuinely wants a flat section raises it rather than arguing with it.
 
@@ -207,9 +215,10 @@ pointer at this skill.
 
 ## 4. Success criteria
 
-- **SC1** — `StructureReport` names every directory with publishable pages and no index page, carrying
-  the directory, the page count and the ancestor its pages resolve to. Pure function of (paths,
-  homePage); no state, no network.
+- **SC1** — `StructureReport` names every directory with publishable pages beneath it and no index page,
+  carrying the directory, the page count, how many of those pages are in it directly, and the ancestor
+  its own index page would hang under. Pure function of (paths, homePage); no state, no network.
+  *(Amended 2026-09-03 — see §3.1.)*
 - **SC2** — It names every parent whose child count exceeds `wiki.maxChildren`, `<root>` included, and
   the default is 12.
 - **SC3** — `docume status` renders a `structure` check and `--json` carries the findings structurally.

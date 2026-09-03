@@ -331,8 +331,13 @@ internal static class StatusCommand
             var where = directory.Directory.Length == 0 ? "<wiki root>" : directory.Directory;
             var under = directory.ResolvedParent ?? "<space root>";
 
+            // "beneath" when the directory holds nothing of its own: that finding is a missing level rather
+            // than a loose pile, and "a (2 pages)" for a directory with no pages in it reads as a lie.
+            var pages = $"{directory.PageCount} page{(directory.PageCount == 1 ? string.Empty : "s")}"
+                + (directory.DirectPageCount == 0 ? " beneath" : string.Empty);
+
             lines.Add(
-                $"{where.EscapeMarkup()} ({directory.PageCount} page{(directory.PageCount == 1 ? string.Empty : "s")}) "
+                $"{where.EscapeMarkup()} ({pages}) "
                 + $"→ filed under {under.EscapeMarkup()}; create {directory.IndexPath.EscapeMarkup()}");
         }
 

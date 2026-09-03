@@ -43,15 +43,30 @@ is ~10 files, not 5.
 
 **Acceptance:** SC1–SC4. Read-only: writes nothing to Confluence and nothing to state.
 
+**SC1 was widened during the batch** (2026-09-03, after the `gpt-5.6-sol` review of PR #13): a directory
+counts when publishable pages live *beneath* it, not only in it, so every level a tree skips is named.
+The narrow reading let the check fall silent on a tree that still skipped one. Spec and sidecar amended.
+
 **Boundary:** reports the shape. Changes no page and moves nothing.
 
 **Pinned contract:**
 
 ```csharp
-public sealed record StructureFinding(string Kind, string Directory, int PageCount, string? ResolvedAncestor);
-public static StructureReport Of(IReadOnlySet<string> paths, string? homePage, int maxChildren);
-public int MaxChildren { get; init; } = 12;   // WikiConfig
+public sealed record OrphanedDirectory(
+    string Directory, int PageCount, int DirectPageCount, string? ResolvedParent, string IndexPath);
+public sealed record WideParent(string? Parent, int ChildCount);   // null Parent = the space root
+public static StructureReport Of(
+    IEnumerable<string> pagePaths, string? homePage, int maxChildren, IReadOnlySet<string>? reIncludedPaths = null);
+public int MaxChildren { get; init; } = DefaultMaxChildren;   // WikiConfig, 12
 ```
+
+Two typed lists rather than one `StructureFinding` with a `Kind`: a discriminator leaves
+`ResolvedParent` meaningful for one kind and dead for the other. `--json` carries
+`structure.orphanedDirectories` and `structure.wideParents`, which is what `/docs-restructure` plans from.
+
+`reIncludedPaths` is the `wiki.extraPages` set. A directory whose pages are all re-inclusions is exempt
+from the index finding: its directory is excluded, so the index page the check would ask for could not
+publish. Those pages still count as children for `wide-parent`, because in Confluence they are.
 
 `Of` takes the same two inputs `PageHierarchy.Resolve` takes (`PageHierarchy.cs:49`) plus the number, so
 it is pure by construction and runs under `--offline`. It lands in `StatusModel.Build`, never in

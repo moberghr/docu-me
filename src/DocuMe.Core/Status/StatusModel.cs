@@ -293,12 +293,11 @@ public static class StatusModel
 
         if (structure.OrphanedDirectories.Count > 0)
         {
+            // Directories only, no page total: the counts nest, so a page under two unindexed levels is
+            // beneath both findings and summing them would report more pages than the wiki has.
             var count = structure.OrphanedDirectories.Count;
-            var pages = structure.OrphanedDirectories.Sum(directory => directory.PageCount);
 
-            parts.Add(
-                $"{count} director{(count == 1 ? "y holds" : "ies hold")} {pages} page{(pages == 1 ? string.Empty : "s")} "
-                + "and no index page");
+            parts.Add($"{count} director{(count == 1 ? "y holds" : "ies hold")} pages but no index page");
         }
 
         if (structure.WideParents.Count > 0)

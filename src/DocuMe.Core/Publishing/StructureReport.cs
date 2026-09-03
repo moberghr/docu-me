@@ -1,29 +1,44 @@
 namespace DocuMe.Core.Publishing;
 
 /// <summary>
-/// A directory that holds publishable pages and has no index page, so its pages are filed under an
-/// ancestor that is not their own directory (<c>docs/specs/2026-09-02-wiki-structure.md</c> §3.1).
+/// A directory with publishable pages under it and no index page, so the tree skips a level there
+/// (<c>docs/specs/2026-09-02-wiki-structure.md</c> §3.1).
 /// </summary>
+/// <remarks>
+/// <strong>Under it, not only in it.</strong> A directory holding nothing directly is still a skipped
+/// level when a page lives below it: with no <c>a/README.md</c>, <c>a/b/README.md</c> hangs off whatever
+/// index is above <c>a</c>, and the section it should have sat in does not exist as a page. Counting only
+/// direct pages would let the check fall silent on a tree that still skips levels — the same silence the
+/// whole feature exists to end — so it reports every level, and
+/// <see cref="DirectPageCount"/> is what separates "ten pages are loose here" from "this level is
+/// missing".
+/// </remarks>
 /// <param name="Directory">
 /// Wiki-root-relative directory path, <c>/</c>-separated and with no trailing slash. The empty string is
 /// the wiki root itself, which is a directory like any other and is the one whose missing index page
 /// files pages directly on the space root.
 /// </param>
-/// <param name="PageCount">
-/// Publishable pages directly in the directory. Descendants are excluded: they hang under their own
-/// directory's index page when it exists, and are their own finding when it does not.
+/// <param name="PageCount">Publishable pages anywhere beneath the directory, its own included.</param>
+/// <param name="DirectPageCount">
+/// Of those, the ones in the directory itself. Zero means the level is missing rather than crowded.
 /// </param>
 /// <param name="ResolvedParent">
-/// The page these pages actually hang under, or <c>null</c> for the space root. The half that makes the
-/// finding actionable — "filed under the root index" and "filed under the space root" are different
-/// problems, and only the second one puts ten integrations pages in an alphabetical pile.
+/// Where this directory's index page would hang if it existed, or <c>null</c> for the space root — which
+/// is where the pages beneath it are reaching past it to. The half that makes the finding actionable:
+/// "filed under the root index" and "filed under the space root" are different problems, and only the
+/// second one puts ten integrations pages in one alphabetical pile.
 /// </param>
 /// <param name="IndexPath">
 /// The file to create, wiki-root-relative. Named rather than described because the AurServices fix was
 /// seventeen <c>README.md</c> files and the reason nobody wrote them is that nothing ever asked for them
 /// by name.
 /// </param>
-public sealed record OrphanedDirectory(string Directory, int PageCount, string? ResolvedParent, string IndexPath);
+public sealed record OrphanedDirectory(
+    string Directory,
+    int PageCount,
+    int DirectPageCount,
+    string? ResolvedParent,
+    string IndexPath);
 
 /// <summary>
 /// A parent with more children than <c>wiki.maxChildren</c> (§3.1).
@@ -121,16 +136,17 @@ public sealed record StructureReport
         var indexName = PageHierarchy.IndexName(homePage);
         var parents = PageHierarchy.Resolve(paths, homePage);
 
-        // Every page in a directory with no index page resolves to the same ancestor, because the walk
-        // starts one level up for all of them, so any one page's parent is the whole directory's parent.
-        var orphaned = paths
-            .GroupBy(DirectoryOf, StringComparer.Ordinal)
+        // The ancestor is computed for the DIRECTORY — where its index page would hang if somebody wrote
+        // it — rather than read off one of its pages. Same answer for a directory whose pages are all
+        // loose in it, and the only answer that means anything for one whose pages are further down.
+        var orphaned = PagesByDirectory(paths)
             .Where(directory => !paths.Contains(IndexIn(directory.Key, indexName)))
-            .Where(directory => !directory.All(reIncluded.Contains))
+            .Where(directory => !directory.Value.All(reIncluded.Contains))
             .Select(directory => new OrphanedDirectory(
                 directory.Key,
-                directory.Count(),
-                parents[directory.Min(StringComparer.Ordinal)!],
+                directory.Value.Count,
+                directory.Value.Count(page => DirectoryOf(page).Equals(directory.Key, StringComparison.Ordinal)),
+                PageHierarchy.ParentOf(IndexIn(directory.Key, indexName), paths, homePage),
                 IndexIn(directory.Key, indexName)))
             .OrderBy(directory => directory.Directory, StringComparer.Ordinal)
             .ToList();
@@ -147,6 +163,42 @@ public sealed record StructureReport
             orphaned,
             widths.Where(parent => parent.ChildCount > maxChildren).ToList(),
             widths.Count == 0 ? 0 : widths.Max(parent => parent.ChildCount));
+    }
+
+    /// <summary>
+    /// Every directory any page lives in or under, the wiki root included, mapped to the pages beneath it.
+    /// </summary>
+    /// <remarks>
+    /// A page is recorded against its own directory and against every directory above it, so a level with
+    /// nothing of its own still appears — which is the whole point: that level is exactly the one a tree
+    /// skips silently.
+    /// </remarks>
+    private static Dictionary<string, List<string>> PagesByDirectory(IEnumerable<string> paths)
+    {
+        var beneath = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+
+        foreach (var path in paths)
+        {
+            // Walks up to and INCLUDING the wiki root: the root's own directory is the empty string, so the
+            // loop records it and then stops, which is why the condition is on the previous step's value.
+            var directory = DirectoryOf(path);
+            var atRoot = false;
+
+            while (!atRoot)
+            {
+                if (!beneath.TryGetValue(directory, out var pages))
+                {
+                    pages = [];
+                    beneath[directory] = pages;
+                }
+
+                pages.Add(path);
+                atRoot = directory.Length == 0;
+                directory = DirectoryOf(directory);
+            }
+        }
+
+        return beneath;
     }
 
     /// <summary>The index page of one directory, wiki-root-relative. <c>""</c> is the wiki root.</summary>
