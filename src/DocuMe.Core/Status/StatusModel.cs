@@ -61,6 +61,12 @@ public static class StatusModel
     public const string SpaceLockCheck = "space lock";
 
     /// <summary>
+    /// Name of the check that answers "does this tree have a shape a reader can follow?"
+    /// (<c>docs/specs/2026-09-02-wiki-structure.md</c> §3.1).
+    /// </summary>
+    public const string StructureCheck = "structure";
+
+    /// <summary>
     /// Builds the report.
     /// </summary>
     /// <param name="paths">Where the inputs came from.</param>
@@ -102,11 +108,21 @@ public static class StatusModel
             .Select(page => MapPage(page, state, urlBase, owners.GetValueOrDefault(page.Path)))
             .ToList();
 
+        // Computed here and not in StatusProbes: the shape of the tree is a pure function of the paths,
+        // and StatusProbes is the class that touches the world. That is also what makes this the one
+        // check with findings a reader gets under --offline.
+        var structure = StructureReport.Of(
+            tree.Pages.Select(page => page.Path),
+            config.Wiki.HomePage,
+            config.Wiki.MaxChildren,
+            ReIncluded(config.Wiki));
+
         var checks = new List<StatusCheck>
         {
             Tree(paths.WikiRoot, report),
             Converter(report),
             StateConsistency(paths, report),
+            Structure(structure),
             SpaceLock(config.Confluence, report),
         };
 
@@ -130,6 +146,7 @@ public static class StatusModel
             Failures = report.Failures,
             Orphans = report.OrphanPages,
             Checks = checks,
+            Structure = structure,
             NotYetAvailable = Gaps(pages),
         };
     }
@@ -241,6 +258,56 @@ public static class StatusModel
         var detail = $"state and the tree agree on {report.Pages.Count} page(s); no orphans.";
 
         return new StatusCheck(StateCheck, StatusCheckOutcome.Ok, detail);
+    }
+
+    /// <summary>
+    /// The <c>wiki.extraPages</c> paths, normalized the way tree paths are (§5.1) — the pages whose
+    /// directory is excluded and which are in the tree only because the config names them one by one.
+    /// </summary>
+    private static HashSet<string> ReIncluded(WikiConfig wiki) =>
+        wiki.ExtraPages
+            .Select(extra => extra.Path)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => path!.Replace('\\', '/').Trim('/'))
+            .ToHashSet(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The tree's shape (§3.1). Always a <see cref="StatusCheckOutcome.Warning"/> when it finds anything:
+    /// a flat tree publishes perfectly well, and DocuMe does not fail a repo's build over a judgement
+    /// about readers. The detail is a summary; <see cref="StatusReport.Structure"/> carries the findings.
+    /// </summary>
+    private static StatusCheck Structure(StructureReport structure)
+    {
+        var widest = structure.WidestParentChildCount;
+
+        if (!structure.HasFindings)
+        {
+            var healthy = widest == 0
+                ? "no pages, so nothing to file."
+                : $"every directory with pages has an index page; the widest parent has {widest} children.";
+
+            return new StatusCheck(StructureCheck, StatusCheckOutcome.Ok, healthy);
+        }
+
+        var parts = new List<string>();
+
+        if (structure.OrphanedDirectories.Count > 0)
+        {
+            // Directories only, no page total: the counts nest, so a page under two unindexed levels is
+            // beneath both findings and summing them would report more pages than the wiki has.
+            var count = structure.OrphanedDirectories.Count;
+
+            parts.Add(
+                $"{count} director{(count == 1 ? "y has" : "ies have")} pages beneath "
+                + $"{(count == 1 ? "it" : "them")} but no index page");
+        }
+
+        if (structure.WideParents.Count > 0)
+        {
+            parts.Add($"the widest parent has {widest} children");
+        }
+
+        return new StatusCheck(StructureCheck, StatusCheckOutcome.Warning, $"{string.Join("; ", parts)}.");
     }
 
     private static StatusCheck SpaceLock(ConfluenceConfig confluence, PublishReport report)

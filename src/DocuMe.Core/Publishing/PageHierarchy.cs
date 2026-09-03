@@ -260,7 +260,7 @@ public static class PageHierarchy
         return null;
     }
 
-    private static string IndexName(string? homePage)
+    internal static string IndexName(string? homePage)
     {
         var normalized = homePage?.Replace('\\', '/').Trim('/');
 

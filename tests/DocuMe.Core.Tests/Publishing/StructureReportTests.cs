@@ -1,0 +1,446 @@
+using DocuMe.Core.Publishing;
+using Shouldly;
+
+namespace DocuMe.Core.Tests.Publishing;
+
+/// <summary>
+/// The shape of the tree, as a pure function of the publishable paths
+/// (<c>docs/specs/2026-09-02-wiki-structure.md</c> §3.1). Two findings and deliberately no more: a
+/// directory holding pages with no index page, and a parent wider than <c>wiki.maxChildren</c>.
+/// </summary>
+/// <remarks>
+/// The driver is the AurServices cutover: 146 pages published, every check green, and 54 of them in one
+/// flat pile on the space root. Nothing was wrong with any page; the tree had a shape and nothing modelled
+/// it. These tests pin the sentence that makes a reader act — "these ten pages are on the space root" —
+/// rather than any particular wording of it.
+/// </remarks>
+public sealed class StructureReportTests
+{
+    /// <summary>The default this suite asserts against; <c>WikiConfig.DefaultMaxChildren</c> owns the value.</summary>
+    private const int Twelve = 12;
+
+    /// <summary>
+    /// Two directories with pages, one of them indexed. <c>20-integrations</c> is the orphan: its pages
+    /// walk past their own directory and land on the root index.
+    /// </summary>
+    private static readonly string[] MixedTree =
+    [
+        "README.md",
+        "10-domains/README.md",
+        "10-domains/loans.md",
+        "20-integrations/payments.md",
+        "20-integrations/billing.md",
+    ];
+
+    [Fact]
+    public void Names_a_directory_that_holds_pages_and_has_no_index_page()
+    {
+        var report = StructureReport.Of(MixedTree, homePage: null, maxChildren: Twelve);
+
+        var orphan = report.OrphanedDirectories.ShouldHaveSingleItem();
+
+        orphan.Directory.ShouldBe("20-integrations");
+        orphan.PageCount.ShouldBe(2);
+        orphan.IndexPath.ShouldBe("20-integrations/README.md");
+    }
+
+    /// <summary>
+    /// The ancestor the pages actually hang under, which is the half that makes the finding actionable:
+    /// "filed under the root index" and "filed under the space root" are different problems.
+    /// </summary>
+    [Fact]
+    public void Names_the_ancestor_the_orphaned_directorys_pages_resolve_to()
+    {
+        var report = StructureReport.Of(MixedTree, homePage: null, maxChildren: Twelve);
+
+        report.OrphanedDirectories.ShouldHaveSingleItem().ResolvedParent.ShouldBe("README.md");
+    }
+
+    /// <summary>
+    /// The AurServices shape: no root index either, so the orphaned directories' pages walk all the way
+    /// out to the space root. <c>ResolvedParent</c> is null there, and null is how the report spells it.
+    /// </summary>
+    [Fact]
+    public void A_page_with_no_index_page_above_it_at_all_resolves_to_the_space_root()
+    {
+        string[] tree = ["20-integrations/payments.md", "30-infrastructure/dns.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+
+        // The count first: ShouldAllBe over an empty list passes, so without this the assertion below
+        // would hold just as well if the check had found nothing at all. The wiki root is in the list
+        // because it has no index page either — which is precisely why these pages reach the space root.
+        report.OrphanedDirectories.Select(directory => directory.Directory)
+            .ShouldBe([string.Empty, "20-integrations", "30-infrastructure"]);
+        report.OrphanedDirectories.ShouldAllBe(directory => directory.ResolvedParent == null);
+    }
+
+    /// <summary>
+    /// The wiki root is a directory like any other. It is also the one whose missing index page put 54
+    /// AurServices pages on the space root, so exempting it would hide the finding that mattered most.
+    /// </summary>
+    [Fact]
+    public void The_wiki_root_holding_pages_with_no_index_page_is_itself_a_finding()
+    {
+        string[] tree = ["overview.md", "operations.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+
+        var orphan = report.OrphanedDirectories.ShouldHaveSingleItem();
+
+        orphan.Directory.ShouldBe(string.Empty);
+        orphan.IndexPath.ShouldBe("README.md");
+        orphan.PageCount.ShouldBe(2);
+    }
+
+    /// <summary>An indexed directory is not a finding, which is the whole negative half of the check.</summary>
+    [Fact]
+    public void A_directory_with_an_index_page_is_not_a_finding()
+    {
+        var report = StructureReport.Of(MixedTree, homePage: null, maxChildren: Twelve);
+
+        report.OrphanedDirectories
+            .Select(directory => directory.Directory)
+            .ShouldNotContain("10-domains");
+    }
+
+    /// <summary>
+    /// <c>wiki.homePage</c> decides what an index page is called, and the check has to read the same key
+    /// <see cref="PageHierarchy"/> reads or it would report directories that are indexed.
+    /// </summary>
+    [Fact]
+    public void Honours_a_custom_home_page_name()
+    {
+        string[] tree = ["index.md", "10-domains/index.md", "10-domains/loans.md"];
+
+        var report = StructureReport.Of(tree, homePage: "index.md", maxChildren: Twelve);
+
+        report.OrphanedDirectories.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Every skipped level, not only the one the pages sit in. <c>a</c> holds nothing of its own and is
+    /// still a missing level: without <c>a/README.md</c> the section it should be does not exist as a
+    /// page, and everything below it reaches past it.
+    /// </summary>
+    /// <remarks>
+    /// The wider of two readings of SC1's "every directory with publishable pages", chosen because the
+    /// narrow one lets the check fall silent on a tree that still skips levels: report <c>a/b</c> only,
+    /// watch somebody write <c>a/b/README.md</c>, and the check goes quiet while that index still hangs
+    /// two levels up. Silence on a broken tree is the failure this whole feature exists to end.
+    /// </remarks>
+    [Fact]
+    public void Reports_every_level_the_tree_skips_and_not_only_the_one_holding_the_pages()
+    {
+        string[] tree = ["README.md", "a/b/page.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+
+        report.OrphanedDirectories.Select(directory => directory.Directory).ShouldBe(["a", "a/b"]);
+
+        var intermediate = report.OrphanedDirectories[0];
+
+        intermediate.PageCount.ShouldBe(1);
+        intermediate.DirectPageCount.ShouldBe(0);
+        intermediate.IndexPath.ShouldBe("a/README.md");
+
+        // Where a/README.md WOULD hang, which is the question a reader is asking: the root index, reached
+        // past the level that is missing.
+        intermediate.ResolvedParent.ShouldBe("README.md");
+
+        report.OrphanedDirectories[1].DirectPageCount.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// The shape the narrow reading missed entirely: an indexed leaf directory under an unindexed one
+    /// reports nothing at all about the level that is gone, because the leaf has its index and the
+    /// intermediate has no pages of its own.
+    /// </summary>
+    [Fact]
+    public void An_indexed_directory_under_an_unindexed_one_still_reports_the_missing_level()
+    {
+        string[] tree = ["README.md", "a/b/README.md", "a/b/page.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+
+        var orphan = report.OrphanedDirectories.ShouldHaveSingleItem();
+
+        orphan.Directory.ShouldBe("a");
+        orphan.PageCount.ShouldBe(2);
+        orphan.DirectPageCount.ShouldBe(0);
+        orphan.IndexPath.ShouldBe("a/README.md");
+    }
+
+    /// <summary>SC2: the width finding, and the root counts as a parent.</summary>
+    [Fact]
+    public void Names_a_parent_with_more_children_than_the_limit()
+    {
+        var tree = Enumerable.Range(1, 5).Select(n => $"page-{n}.md").Append("README.md").ToArray();
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: 4);
+
+        var wide = report.WideParents.ShouldHaveSingleItem();
+
+        wide.Parent.ShouldBe("README.md");
+        wide.ChildCount.ShouldBe(5);
+    }
+
+    /// <summary>
+    /// The space root is a parent with no page behind it, spelled as a null <c>Parent</c> — the same
+    /// "absent key on the wire" spelling an unowned page uses, so root has exactly one representation.
+    /// </summary>
+    [Fact]
+    public void The_space_root_counts_as_a_parent()
+    {
+        var tree = Enumerable.Range(1, 3).Select(n => $"page-{n}.md").ToArray();
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: 2);
+
+        report.WideParents.ShouldHaveSingleItem().Parent.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// "More than" and not "at least": a repo that sets the number to what it has should not be told its
+    /// tree is too wide.
+    /// </summary>
+    [Fact]
+    public void Exactly_the_limit_is_not_a_finding()
+    {
+        var tree = Enumerable.Range(1, 4).Select(n => $"page-{n}.md").Append("README.md").ToArray();
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: 4);
+
+        report.WideParents.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// A healthy tree produces nothing, which is what lets the check say <c>Ok</c> rather than "no
+    /// findings, probably".
+    /// </summary>
+    [Fact]
+    public void A_fully_indexed_narrow_tree_reports_nothing()
+    {
+        string[] tree = ["README.md", "10-domains/README.md", "10-domains/loans.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+
+        report.OrphanedDirectories.ShouldBeEmpty();
+        report.WideParents.ShouldBeEmpty();
+        report.HasFindings.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Ordinal order, both lists, because the check's output is read by a human scanning for their
+    /// directory and by a skill diffing two runs. Neither survives a set's enumeration order.
+    /// </summary>
+    [Fact]
+    public void Findings_come_out_in_ordinal_path_order()
+    {
+        string[] tree = ["z-last/page.md", "a-first/page.md", "m-middle/page.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+
+        report.OrphanedDirectories
+            .Select(directory => directory.Directory)
+            .ShouldBe([string.Empty, "a-first", "m-middle", "z-last"]);
+
+        // The same claim for the other list, which the summary said and only the first list proved. It
+        // needs an indexed tree: in the tree above every page resolves to the space root, so there is one
+        // parent group and one group cannot demonstrate an order. Ordinally the root sorts first, then
+        // "README.md" ahead of the section indexes, because 'R' precedes 'a'.
+        string[] indexed =
+        [
+            "README.md",
+            "z-last/README.md", "z-last/page.md",
+            "a-first/README.md", "a-first/page.md",
+            "m-middle/README.md", "m-middle/page.md",
+        ];
+
+        StructureReport.Of(indexed, homePage: null, maxChildren: 0)
+            .WideParents
+            .Select(parent => parent.Parent)
+            .ShouldBe([null, "README.md", "a-first/README.md", "m-middle/README.md", "z-last/README.md"]);
+    }
+
+    /// <summary>
+    /// Ordinal grouping, so two directories differing only in case stay two directories. Confluence
+    /// titles are case-insensitive and a filesystem may be too, but the path set is the contract here and
+    /// folding them would silently merge two findings into one wrong count.
+    /// </summary>
+    [Fact]
+    public void Directories_differing_only_by_case_are_two_directories()
+    {
+        string[] tree = ["README.md", "Guides/setup.md", "guides/install.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+
+        report.OrphanedDirectories
+            .Select(directory => directory.Directory)
+            .ShouldBe(["Guides", "guides"]);
+    }
+
+    /// <summary>
+    /// The index name comes from <c>wiki.homePage</c> and nowhere else: a directory holding a
+    /// conventionally-named <c>README.md</c> under a config that calls the index <c>index.md</c> has no
+    /// index page, and saying otherwise would be the resolver and the check disagreeing.
+    /// </summary>
+    [Fact]
+    public void A_readme_is_not_an_index_page_when_the_config_names_a_different_one()
+    {
+        string[] tree = ["index.md", "10-domains/README.md", "10-domains/loans.md"];
+
+        var report = StructureReport.Of(tree, homePage: "index.md", maxChildren: Twelve);
+
+        var orphan = report.OrphanedDirectories.ShouldHaveSingleItem();
+
+        orphan.Directory.ShouldBe("10-domains");
+        orphan.IndexPath.ShouldBe("10-domains/index.md");
+
+        // Both pages in it are ordinary pages under this config, README.md included.
+        orphan.PageCount.ShouldBe(2);
+        orphan.ResolvedParent.ShouldBe("index.md");
+    }
+
+    /// <summary>The widest parent, for the check's one-line summary. Null when there are no pages at all.</summary>
+    [Fact]
+    public void Reports_the_widest_parent_for_the_summary_line()
+    {
+        var report = StructureReport.Of(MixedTree, homePage: null, maxChildren: Twelve);
+
+        // README.md parents 10-domains/README.md, 20-integrations/payments.md and .../billing.md.
+        report.WidestParentChildCount.ShouldBe(3);
+    }
+
+    /// <summary>
+    /// The dogfood wiki caught this one: <c>_meta/</c> is excluded and <c>_meta/GAPS.md</c> is in the tree
+    /// only because <c>wiki.extraPages</c> re-includes it, so demanding <c>_meta/README.md</c> is advice
+    /// nobody can take — the file would be excluded and the directory would still have no index.
+    /// </summary>
+    [Fact]
+    public void A_directory_holding_only_re_included_pages_is_not_an_orphaned_directory()
+    {
+        string[] tree = ["README.md", "_meta/GAPS.md"];
+
+        var report = StructureReport.Of(
+            tree,
+            homePage: null,
+            maxChildren: Twelve,
+            reIncludedPaths: new HashSet<string>(StringComparer.Ordinal) { "_meta/GAPS.md" });
+
+        report.OrphanedDirectories.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// The exemption is about the directory, not the page: a re-included page still hangs somewhere, and a
+    /// directory that also holds ordinary pages is still missing an index page for them.
+    /// </summary>
+    [Fact]
+    public void A_re_included_page_still_counts_as_a_child_and_does_not_exempt_its_neighbours()
+    {
+        string[] tree = ["_meta/GAPS.md", "_meta/notes.md"];
+
+        var report = StructureReport.Of(
+            tree,
+            homePage: null,
+            maxChildren: 1,
+            reIncludedPaths: new HashSet<string>(StringComparer.Ordinal) { "_meta/GAPS.md" });
+
+        // The root is in the list on its own merits: no index page, and the pages beneath it are not all
+        // re-included. `_meta` is the finding this test is about.
+        report.OrphanedDirectories.Select(directory => directory.Directory).ShouldBe([string.Empty, "_meta"]);
+        report.WideParents.ShouldHaveSingleItem().ChildCount.ShouldBe(2);
+    }
+
+    /// <summary>
+    /// The wiki root is never exempted by the re-inclusion rule, even when every page in the tree is a
+    /// re-inclusion. <c>wiki.exclude</c> can hide a subtree; it cannot exclude the root the wiki is rooted
+    /// at, so a missing root index is always a file somebody can usefully write — and a wiki whose only
+    /// page is re-included has no home page at all, which is worth saying rather than swallowing.
+    /// </summary>
+    [Fact]
+    public void The_wiki_root_is_not_exempted_by_a_subtree_of_re_inclusions()
+    {
+        string[] tree = ["_meta/GAPS.md"];
+
+        var report = StructureReport.Of(
+            tree,
+            homePage: null,
+            maxChildren: Twelve,
+            reIncludedPaths: new HashSet<string>(StringComparer.Ordinal) { "_meta/GAPS.md" });
+
+        // `_meta` is exempt and the root is not.
+        report.OrphanedDirectories.ShouldHaveSingleItem().Directory.ShouldBe(string.Empty);
+        report.OrphanedDirectories[0].IndexPath.ShouldBe("README.md");
+    }
+
+    /// <summary>
+    /// An excluded subtree nested a level down is still exempt: the rule is about the directory whose
+    /// index could not publish, not about how deep it sits.
+    /// </summary>
+    [Fact]
+    public void A_nested_directory_of_only_re_inclusions_is_still_exempt()
+    {
+        string[] tree = ["README.md", "a/README.md", "a/_meta/GAPS.md"];
+
+        var report = StructureReport.Of(
+            tree,
+            homePage: null,
+            maxChildren: Twelve,
+            reIncludedPaths: new HashSet<string>(StringComparer.Ordinal) { "a/_meta/GAPS.md" });
+
+        report.OrphanedDirectories.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Both at once: pages loose in the directory and more of them further down. The two counts differ,
+    /// and the difference is what stops the total being read as a direct-page count.
+    /// </summary>
+    [Fact]
+    public void A_directory_with_pages_of_its_own_and_more_below_carries_both_counts()
+    {
+        string[] tree = ["README.md", "a/loose.md", "a/b/deep.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+
+        var mixed = report.OrphanedDirectories
+            .Where(directory => string.Equals(directory.Directory, "a", StringComparison.Ordinal))
+            .ShouldHaveSingleItem();
+
+        mixed.PageCount.ShouldBe(2);
+        mixed.DirectPageCount.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// <c>ResolvedParent</c> is a fact about the directory, not about every page counted beside it. The
+    /// directory's own loose pages do resolve there — they have no nearer index — but a page under a
+    /// deeper index does not, which is why the rendered line talks about the index page rather than the
+    /// pages.
+    /// </summary>
+    [Fact]
+    public void ResolvedParent_describes_the_directorys_index_and_not_every_page_beneath_it()
+    {
+        string[] tree = ["README.md", "a/b/README.md", "a/b/page.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+        var parents = PageHierarchy.Resolve(tree);
+
+        var missing = report.OrphanedDirectories.ShouldHaveSingleItem();
+
+        missing.ResolvedParent.ShouldBe("README.md");
+        missing.PageCount.ShouldBe(2);
+
+        // One of the two counted pages genuinely hangs somewhere else, which is the claim the old wording
+        // got wrong.
+        parents["a/b/README.md"].ShouldBe("README.md");
+        parents["a/b/page.md"].ShouldBe("a/b/README.md");
+    }
+
+    [Fact]
+    public void An_empty_tree_is_not_a_finding()
+    {
+        var report = StructureReport.Of([], homePage: null, maxChildren: Twelve);
+
+        report.HasFindings.ShouldBeFalse();
+        report.WidestParentChildCount.ShouldBe(0);
+    }
+}

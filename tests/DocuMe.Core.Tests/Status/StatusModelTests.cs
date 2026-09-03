@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DocuMe.Core.Config;
 using DocuMe.Core.Markdown;
 using DocuMe.Core.Publishing;
@@ -89,7 +90,17 @@ public sealed class StatusModelTests : IDisposable
             .ShouldBe($"https://example.atlassian.net/wiki/spaces/{SpaceKey}/pages/page-README.md");
 
         Check(report, StatusModel.StateCheck).Outcome.ShouldBe(StatusCheckOutcome.Ok);
-        report.WorstCheck.ShouldBe(StatusCheckOutcome.Ok);
+
+        // Nothing about the SYNC is wrong, which is what this test is about. The tree's SHAPE is: this
+        // fixture's `guides/` holds a page and no index page, so `guides/setup.md` is filed under the root
+        // README rather than under a guides page — the AurServices shape in miniature. The structure check
+        // is the only warning here, and it is a warning on purpose.
+        report.WorstCheck.ShouldBe(StatusCheckOutcome.Warning);
+        Check(report, StatusModel.StructureCheck).Outcome.ShouldBe(StatusCheckOutcome.Warning);
+        report.Checks
+            .Where(check => check.Outcome != StatusCheckOutcome.Ok)
+            .Select(check => check.Name)
+            .ShouldBe([StatusModel.StructureCheck]);
     }
 
     [Fact]
@@ -273,9 +284,127 @@ public sealed class StatusModelTests : IDisposable
                 StatusModel.TreeCheck,
                 StatusModel.ConverterCheck,
                 StatusModel.StateCheck,
+                StatusModel.StructureCheck,
                 StatusModel.SpaceLockCheck,
                 "node",
             ]);
+    }
+
+    /// <summary>
+    /// SC3: the check is rendered and the findings are carried structurally, so a repo that wants to gate
+    /// on tree shape reads them out of <c>--json</c> rather than parsing the detail sentence.
+    /// </summary>
+    [Fact]
+    public void The_structure_check_carries_its_findings_structurally()
+    {
+        var report = Build(Published());
+
+        var orphan = report.Structure.ShouldNotBeNull().OrphanedDirectories.ShouldHaveSingleItem();
+
+        orphan.Directory.ShouldBe("guides");
+        orphan.PageCount.ShouldBe(1);
+        orphan.ResolvedParent.ShouldBe("README.md");
+        orphan.IndexPath.ShouldBe("guides/README.md");
+
+        // The detail sentence is a summary of exactly that, and it says nothing the findings do not. It
+        // says "beneath" because findings nest: a directory in the list may hold nothing of its own.
+        Check(report, StatusModel.StructureCheck).Detail
+            .ShouldBe("1 directory has pages beneath it but no index page.");
+    }
+
+    /// <summary>
+    /// SC3, the half that matters on a laptop with no token: the structure check is a pure function of the
+    /// paths, so it answers with no credentials and no network. It is the only check with findings that
+    /// does.
+    /// </summary>
+    [Fact]
+    public void The_structure_check_answers_with_no_environment_checks_at_all()
+    {
+        var report = StatusModel.Build(Paths(stateExists: true), Config(), Tree(), Published());
+
+        Check(report, StatusModel.StructureCheck).Outcome.ShouldBe(StatusCheckOutcome.Warning);
+        report.Structure.ShouldNotBeNull().HasFindings.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// SC3's other half, and the half a reader of the previous test does not get: the findings have to
+    /// survive serialization under the names a consumer greps for. Asserting the in-memory report proves
+    /// the model; only <c>ToJson</c> proves the contract, and <c>--json</c> is what <c>/docs-restructure</c>
+    /// and a CI gate actually read.
+    /// </summary>
+    [Fact]
+    public void The_structure_findings_survive_into_the_json_contract()
+    {
+        using var document = JsonDocument.Parse(Build(Published()).ToJson());
+
+        var structure = document.RootElement.GetProperty("structure");
+        var orphan = structure.GetProperty("orphanedDirectories").EnumerateArray().ShouldHaveSingleItem();
+
+        orphan.GetProperty("directory").GetString().ShouldBe("guides");
+        orphan.GetProperty("pageCount").GetInt32().ShouldBe(1);
+        orphan.GetProperty("directPageCount").GetInt32().ShouldBe(1);
+        orphan.GetProperty("resolvedParent").GetString().ShouldBe("README.md");
+        orphan.GetProperty("indexPath").GetString().ShouldBe("guides/README.md");
+
+        structure.GetProperty("wideParents").GetArrayLength().ShouldBe(0);
+        structure.GetProperty("hasFindings").GetBoolean().ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A missing level reaches the wire with its two counts disagreeing, which is the whole signal that
+    /// separates it from a crowded directory. The integration path carried only direct-page findings
+    /// before, so nothing here would have caught a <c>directPageCount</c> that never left the model.
+    /// </summary>
+    [Fact]
+    public void A_missing_level_reaches_the_json_with_no_direct_pages()
+    {
+        Write("guides/deep/README.md", "# Deep\n\nAn indexed section under an unindexed one.");
+
+        using var document = JsonDocument.Parse(Build(new DocumeState(), stateExists: false).ToJson());
+
+        var orphan = document.RootElement
+            .GetProperty("structure")
+            .GetProperty("orphanedDirectories")
+            .EnumerateArray()
+            .ShouldHaveSingleItem();
+
+        orphan.GetProperty("directory").GetString().ShouldBe("guides");
+        orphan.GetProperty("pageCount").GetInt32().ShouldBe(2);
+        orphan.GetProperty("directPageCount").GetInt32().ShouldBe(1);
+        orphan.GetProperty("indexPath").GetString().ShouldBe("guides/README.md");
+    }
+
+    /// <summary>
+    /// The space root is spelled as an absent <c>parent</c> key rather than a null or a sentinel, so "the
+    /// root" has exactly one representation on the wire — the same spelling an unowned page uses.
+    /// </summary>
+    [Fact]
+    public void A_root_wide_parent_carries_no_parent_key_at_all()
+    {
+        var report = StructureReport.Of(["a.md", "b.md", "c.md"], homePage: null, maxChildren: 2);
+
+        using var document = JsonDocument.Parse(
+            JsonSerializer.Serialize(report, DocuMe.Core.Json.DocumeJson.Options));
+
+        var wide = document.RootElement.GetProperty("wideParents").EnumerateArray().ShouldHaveSingleItem();
+
+        wide.TryGetProperty("parent", out _).ShouldBeFalse();
+        wide.GetProperty("childCount").GetInt32().ShouldBe(3);
+    }
+
+    /// <summary>
+    /// An indexed tree says so rather than staying silent: "no findings" and "the check did not run" are
+    /// different answers, and only one of them is evidence.
+    /// </summary>
+    [Fact]
+    public void An_indexed_tree_reports_a_healthy_structure_check()
+    {
+        Write("guides/README.md", "# Guides\n\nThe section map.");
+
+        var report = Build(new DocumeState(), stateExists: false);
+
+        Check(report, StatusModel.StructureCheck).Outcome.ShouldBe(StatusCheckOutcome.Ok);
+        report.Structure.ShouldNotBeNull().HasFindings.ShouldBeFalse();
     }
 
     [Fact]

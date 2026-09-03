@@ -169,7 +169,8 @@ Three things the tree above deliberately does *not* say, each of which an earlie
     "extraPages": [                      // publish selected _meta files anyway
       { "path": "_meta/GAPS.md", "title": "Open Questions for the Team" }
     ],
-    "homePage": "README.md"             // becomes the tree root page body
+    "homePage": "README.md",            // becomes the tree root page body
+    "maxChildren": 12                    // structure check warns above this; a warning, never a failure
   },
   "labels": { "approved": "approved", "stale": "stale" },
   "dashboard": { "title": "Documentation Status" },

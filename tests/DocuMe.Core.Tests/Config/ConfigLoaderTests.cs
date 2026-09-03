@@ -48,6 +48,28 @@ public sealed class ConfigLoaderTests : IDisposable
         config.Mermaid.Renderer.ShouldBe("tools/render-mermaid.mjs");
         config.Wiki.HomePage.ShouldBe("README.md");
         config.Wiki.Exclude.ShouldContain("_meta/**");
+        config.Wiki.MaxChildren.ShouldBe(WikiConfig.DefaultMaxChildren);
+    }
+
+    /// <summary>
+    /// SC4: the one number the structure check takes. A repo that means its wide section raises it here,
+    /// which is the whole answer to "12 is a guess" — it costs a line of config rather than a code change.
+    /// </summary>
+    [Fact]
+    public void Load_ExplicitMaxChildren_OverridesTheDefault()
+    {
+        var path = WriteConfig(
+            """
+            {
+              "confluence": {
+                "baseUrl": "https://kvika.atlassian.net/wiki",
+                "spaceKey": "AUR"
+              },
+              "wiki": { "root": "docs/wiki", "maxChildren": 40 }
+            }
+            """);
+
+        ConfigLoader.Load(path).Wiki.MaxChildren.ShouldBe(40);
     }
 
     [Fact]
