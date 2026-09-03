@@ -61,9 +61,9 @@ sources:
 
 ```
 $ docume status
-structure  warning  15 directories hold pages but no index page; the widest parent has 54 children.
-                    docs/wiki/20-integrations (10 pages) → filed under <root>; create 20-integrations/README.md
-                    docs/wiki/30-infrastructure (10 pages) → filed under <root>; create 30-infrastructure/README.md
+structure  warning  15 directories have pages beneath them but no index page; the widest parent has 54 children.
+                    20-integrations (10 pages) → create 20-integrations/README.md, which hangs under <space root>
+                    30-infrastructure (10 pages) → create 30-infrastructure/README.md, which hangs under <space root>
                     …
 ```
 
@@ -95,7 +95,14 @@ files, and the reason nobody wrote them is that nothing ever asked for them by n
   report `a/b` only, watch somebody write `a/b/README.md`, and the check goes quiet while that index
   still hangs two levels up. The finding carries a direct-page count alongside the total, which is what
   separates "ten pages are loose here" from "this level is missing". On the AurServices tree the two
-  readings produce identical output; the difference is only visible in a nested one.)*
+  readings produce identical output; the difference is only visible in a nested one.
+
+  A second `gpt-5.6-sol` pass over the widened code moved two more things. The wiki root is never exempted
+  by the re-inclusion rule, however few pages a tree has: `wiki.exclude` can hide a subtree but cannot
+  exclude the root, so a missing root index is always a file somebody can write. And the rendered line
+  says "create X, which hangs under Y" rather than "filed under Y", because Y is where the new index page
+  attaches — a fact about the directory, not about every page counted beside it, one of which may hang
+  under a deeper index.)*
 - `wide-parent` — a parent with more than `wiki.maxChildren` children, `<root>` included. Default 12,
   configurable, and a repo that genuinely wants a flat section raises it rather than arguing with it.
 

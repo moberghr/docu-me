@@ -307,6 +307,30 @@ internal static class StatusCommand
     }
 
     /// <summary>
+    /// How much is beneath one orphaned directory, said precisely enough that the count cannot be read as
+    /// something it is not.
+    /// </summary>
+    /// <remarks>
+    /// Three shapes, because one wording cannot carry all three honestly. "N pages" is a directory whose
+    /// pages are all loose in it, the crowded case. "N pages beneath" is a missing level, holding nothing
+    /// of its own. "N pages beneath, M in it" is both at once, and saying only "N pages" there would keep
+    /// the old direct-page implication over a number that no longer means it.
+    /// </remarks>
+    private static string Counted(OrphanedDirectory directory)
+    {
+        var pages = $"{directory.PageCount} page{(directory.PageCount == 1 ? string.Empty : "s")}";
+
+        if (directory.DirectPageCount == directory.PageCount)
+        {
+            return pages;
+        }
+
+        return directory.DirectPageCount == 0
+            ? $"{pages} beneath"
+            : $"{pages} beneath, {directory.DirectPageCount} in it";
+    }
+
+    /// <summary>
     /// The structure check's detail, with one line per finding under the summary
     /// (<c>docs/specs/2026-09-02-wiki-structure.md</c> §3.1).
     /// </summary>
@@ -331,14 +355,13 @@ internal static class StatusCommand
             var where = directory.Directory.Length == 0 ? "<wiki root>" : directory.Directory;
             var under = directory.ResolvedParent ?? "<space root>";
 
-            // "beneath" when the directory holds nothing of its own: that finding is a missing level rather
-            // than a loose pile, and "a (2 pages)" for a directory with no pages in it reads as a lie.
-            var pages = $"{directory.PageCount} page{(directory.PageCount == 1 ? string.Empty : "s")}"
-                + (directory.DirectPageCount == 0 ? " beneath" : string.Empty);
-
+            // "create X, which hangs under Y" rather than "filed under Y": Y is where this directory's index
+            // page will attach, which is a fact about the DIRECTORY. The pages counted beside it are not
+            // all filed there — one under a deeper index hangs from that instead — and the older wording
+            // claimed they were.
             lines.Add(
-                $"{where.EscapeMarkup()} ({pages}) "
-                + $"→ filed under {under.EscapeMarkup()}; create {directory.IndexPath.EscapeMarkup()}");
+                $"{where.EscapeMarkup()} ({Counted(directory)}) → create {directory.IndexPath.EscapeMarkup()}, "
+                + $"which hangs under {under.EscapeMarkup()}");
         }
 
         foreach (var parent in structure?.WideParents ?? [])

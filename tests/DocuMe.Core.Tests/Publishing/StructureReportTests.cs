@@ -351,6 +351,90 @@ public sealed class StructureReportTests
         report.WideParents.ShouldHaveSingleItem().ChildCount.ShouldBe(2);
     }
 
+    /// <summary>
+    /// The wiki root is never exempted by the re-inclusion rule, even when every page in the tree is a
+    /// re-inclusion. <c>wiki.exclude</c> can hide a subtree; it cannot exclude the root the wiki is rooted
+    /// at, so a missing root index is always a file somebody can usefully write — and a wiki whose only
+    /// page is re-included has no home page at all, which is worth saying rather than swallowing.
+    /// </summary>
+    [Fact]
+    public void The_wiki_root_is_not_exempted_by_a_subtree_of_re_inclusions()
+    {
+        string[] tree = ["_meta/GAPS.md"];
+
+        var report = StructureReport.Of(
+            tree,
+            homePage: null,
+            maxChildren: Twelve,
+            reIncludedPaths: new HashSet<string>(StringComparer.Ordinal) { "_meta/GAPS.md" });
+
+        // `_meta` is exempt and the root is not.
+        report.OrphanedDirectories.ShouldHaveSingleItem().Directory.ShouldBe(string.Empty);
+        report.OrphanedDirectories[0].IndexPath.ShouldBe("README.md");
+    }
+
+    /// <summary>
+    /// An excluded subtree nested a level down is still exempt: the rule is about the directory whose
+    /// index could not publish, not about how deep it sits.
+    /// </summary>
+    [Fact]
+    public void A_nested_directory_of_only_re_inclusions_is_still_exempt()
+    {
+        string[] tree = ["README.md", "a/README.md", "a/_meta/GAPS.md"];
+
+        var report = StructureReport.Of(
+            tree,
+            homePage: null,
+            maxChildren: Twelve,
+            reIncludedPaths: new HashSet<string>(StringComparer.Ordinal) { "a/_meta/GAPS.md" });
+
+        report.OrphanedDirectories.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Both at once: pages loose in the directory and more of them further down. The two counts differ,
+    /// and the difference is what stops the total being read as a direct-page count.
+    /// </summary>
+    [Fact]
+    public void A_directory_with_pages_of_its_own_and_more_below_carries_both_counts()
+    {
+        string[] tree = ["README.md", "a/loose.md", "a/b/deep.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+
+        var mixed = report.OrphanedDirectories
+            .Where(directory => string.Equals(directory.Directory, "a", StringComparison.Ordinal))
+            .ShouldHaveSingleItem();
+
+        mixed.PageCount.ShouldBe(2);
+        mixed.DirectPageCount.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// <c>ResolvedParent</c> is a fact about the directory, not about every page counted beside it. The
+    /// directory's own loose pages do resolve there — they have no nearer index — but a page under a
+    /// deeper index does not, which is why the rendered line talks about the index page rather than the
+    /// pages.
+    /// </summary>
+    [Fact]
+    public void ResolvedParent_describes_the_directorys_index_and_not_every_page_beneath_it()
+    {
+        string[] tree = ["README.md", "a/b/README.md", "a/b/page.md"];
+
+        var report = StructureReport.Of(tree, homePage: null, maxChildren: Twelve);
+        var parents = PageHierarchy.Resolve(tree);
+
+        var missing = report.OrphanedDirectories.ShouldHaveSingleItem();
+
+        missing.ResolvedParent.ShouldBe("README.md");
+        missing.PageCount.ShouldBe(2);
+
+        // One of the two counted pages genuinely hangs somewhere else, which is the claim the old wording
+        // got wrong.
+        parents["a/b/README.md"].ShouldBe("README.md");
+        parents["a/b/page.md"].ShouldBe("a/b/README.md");
+    }
+
     [Fact]
     public void An_empty_tree_is_not_a_finding()
     {

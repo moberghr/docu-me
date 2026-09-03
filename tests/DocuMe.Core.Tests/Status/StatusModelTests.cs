@@ -306,8 +306,10 @@ public sealed class StatusModelTests : IDisposable
         orphan.ResolvedParent.ShouldBe("README.md");
         orphan.IndexPath.ShouldBe("guides/README.md");
 
-        // The detail sentence is a summary of exactly that, and it says nothing the findings do not.
-        Check(report, StatusModel.StructureCheck).Detail.ShouldContain("no index page");
+        // The detail sentence is a summary of exactly that, and it says nothing the findings do not. It
+        // says "beneath" because findings nest: a directory in the list may hold nothing of its own.
+        Check(report, StatusModel.StructureCheck).Detail
+            .ShouldBe("1 directory has pages beneath it but no index page.");
     }
 
     /// <summary>
@@ -340,11 +342,36 @@ public sealed class StatusModelTests : IDisposable
 
         orphan.GetProperty("directory").GetString().ShouldBe("guides");
         orphan.GetProperty("pageCount").GetInt32().ShouldBe(1);
+        orphan.GetProperty("directPageCount").GetInt32().ShouldBe(1);
         orphan.GetProperty("resolvedParent").GetString().ShouldBe("README.md");
         orphan.GetProperty("indexPath").GetString().ShouldBe("guides/README.md");
 
         structure.GetProperty("wideParents").GetArrayLength().ShouldBe(0);
         structure.GetProperty("hasFindings").GetBoolean().ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// A missing level reaches the wire with its two counts disagreeing, which is the whole signal that
+    /// separates it from a crowded directory. The integration path carried only direct-page findings
+    /// before, so nothing here would have caught a <c>directPageCount</c> that never left the model.
+    /// </summary>
+    [Fact]
+    public void A_missing_level_reaches_the_json_with_no_direct_pages()
+    {
+        Write("guides/deep/README.md", "# Deep\n\nAn indexed section under an unindexed one.");
+
+        using var document = JsonDocument.Parse(Build(new DocumeState(), stateExists: false).ToJson());
+
+        var orphan = document.RootElement
+            .GetProperty("structure")
+            .GetProperty("orphanedDirectories")
+            .EnumerateArray()
+            .ShouldHaveSingleItem();
+
+        orphan.GetProperty("directory").GetString().ShouldBe("guides");
+        orphan.GetProperty("pageCount").GetInt32().ShouldBe(2);
+        orphan.GetProperty("directPageCount").GetInt32().ShouldBe(1);
+        orphan.GetProperty("indexPath").GetString().ShouldBe("guides/README.md");
     }
 
     /// <summary>

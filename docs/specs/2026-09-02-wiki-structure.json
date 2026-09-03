@@ -416,6 +416,13 @@
       "driver": "gpt-5.6-sol review of PR #13 flagged the intermediate-directory case as an SC1 gap.",
       "change": "orphaned-directory means a directory with publishable pages BENEATH it and no index page, not only one holding pages directly. The finding gains directPageCount alongside pageCount, and resolvedParent is computed for the directory's would-be index page rather than read off one of its pages.",
       "why": "The narrow reading let the check fall silent on a tree that still skipped levels: report a/b only, somebody writes a/b/README.md, and the check goes quiet while that index still hangs two levels up. Identical output on the AurServices tree; the difference shows only in nested trees."
+    },
+    {
+      "date": "2026-09-03",
+      "during": "batch 1",
+      "driver": "Second gpt-5.6-sol pass, over the widened code this time.",
+      "change": "The wiki root is never exempted by the re-inclusion rule. The rendered finding says 'create X, which hangs under Y' instead of 'filed under Y', and carries three count shapes: 'N pages', 'N pages beneath', 'N pages beneath, M in it'. The summary line says 'have pages beneath them' rather than 'hold pages'.",
+      "why": "wiki.exclude can hide a subtree but cannot exclude the root, so exempting the root silenced a real finding on a wiki whose only page is re-included. And resolvedParent is where the new index page attaches, a fact about the directory: with findings now nesting, one of the pages counted beside it may hang under a deeper index, so 'filed under' claimed something untrue."
     }
   ]
 }

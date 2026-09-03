@@ -23,11 +23,17 @@ namespace DocuMe.Core.Publishing;
 /// Of those, the ones in the directory itself. Zero means the level is missing rather than crowded.
 /// </param>
 /// <param name="ResolvedParent">
-/// Where this directory's index page would hang if it existed, or <c>null</c> for the space root — which
-/// is where the pages beneath it are reaching past it to. The half that makes the finding actionable:
-/// "filed under the root index" and "filed under the space root" are different problems, and only the
-/// second one puts ten integrations pages in one alphabetical pile.
+/// Where this directory's index page would hang once somebody writes it, or <c>null</c> for the space
+/// root. The half that makes the finding actionable: a level missing under the root index and one missing
+/// under the space root are different problems, and only the second puts ten integrations pages in one
+/// alphabetical pile.
 /// </param>
+/// <remarks>
+/// It is a fact about the DIRECTORY, not about every page counted in <see cref="PageCount"/>. The
+/// directory's own loose pages do resolve here — they have no nearer index — but a page further down
+/// hangs under whatever index sits between, so reading this as "all of these pages are filed there" is
+/// wrong whenever <see cref="DirectPageCount"/> is short of <see cref="PageCount"/>.
+/// </remarks>
 /// <param name="IndexPath">
 /// The file to create, wiki-root-relative. Named rather than described because the AurServices fix was
 /// seventeen <c>README.md</c> files and the reason nobody wrote them is that nothing ever asked for them
@@ -117,12 +123,19 @@ public sealed record StructureReport
     /// finding, so a repo that sets the number to what it has is not told its own tree is too wide.
     /// </param>
     /// <param name="reIncludedPaths">
-    /// Pages that are in the tree only because <c>wiki.extraPages</c> named them (§5.1). A directory
-    /// holding nothing else is never an orphaned directory: its directory is excluded, so the index page
-    /// this check would ask for could not publish even if somebody wrote it, and advice that cannot be
-    /// taken is worse than silence. They still count as children under whatever parents them, because in
-    /// Confluence they really are.
+    /// Pages that are in the tree only because <c>wiki.extraPages</c> named them (§5.1). A directory whose
+    /// every page is one of these is never an orphaned directory: to have needed re-including at all they
+    /// must have been excluded, so the index page this check would ask for could not publish even if
+    /// somebody wrote it, and advice that cannot be taken is worse than silence. They still count as
+    /// children under whatever parents them, because in Confluence they really are.
     /// </param>
+    /// <remarks>
+    /// <strong>The wiki root is never exempt by that rule</strong>, however few pages a tree has and
+    /// however all of them got in. <c>wiki.exclude</c> can hide a subtree; it cannot exclude the root the
+    /// wiki is rooted at, so a missing root index is always a file somebody can usefully write. Exempting
+    /// it would silence the finding on a wiki whose only page is a re-included one, and that wiki has no
+    /// home page at all.
+    /// </remarks>
     public static StructureReport Of(
         IEnumerable<string> pagePaths,
         string? homePage,
@@ -141,7 +154,7 @@ public sealed record StructureReport
         // loose in it, and the only answer that means anything for one whose pages are further down.
         var orphaned = PagesByDirectory(paths)
             .Where(directory => !paths.Contains(IndexIn(directory.Key, indexName)))
-            .Where(directory => !directory.Value.All(reIncluded.Contains))
+            .Where(directory => directory.Key.Length == 0 || !directory.Value.All(reIncluded.Contains))
             .Select(directory => new OrphanedDirectory(
                 directory.Key,
                 directory.Value.Count,

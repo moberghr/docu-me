@@ -297,7 +297,9 @@ public static class StatusModel
             // beneath both findings and summing them would report more pages than the wiki has.
             var count = structure.OrphanedDirectories.Count;
 
-            parts.Add($"{count} director{(count == 1 ? "y holds" : "ies hold")} pages but no index page");
+            parts.Add(
+                $"{count} director{(count == 1 ? "y has" : "ies have")} pages beneath "
+                + $"{(count == 1 ? "it" : "them")} but no index page");
         }
 
         if (structure.WideParents.Count > 0)
