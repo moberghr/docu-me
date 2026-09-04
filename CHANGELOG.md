@@ -28,6 +28,17 @@ it scaffolds asks every question the generation skills answer to.
 
 ### Added
 
+- **`docume status` learned that a tree has a shape.** A new `structure` check names every directory with
+  publishable pages beneath it and no index page, carrying how many pages are under it, how many are in it
+  directly, and where its index page would hang once written; and every parent with more children than the
+  new `wiki.maxChildren`, which defaults to 12 and is the one number the check takes. It is computed from
+  the publishable paths and `wiki.homePage` alone, so it needs no credentials, no network and no state, and
+  it answers under `--offline` like nothing else in the check table. It is a warning and never a problem: a
+  flat tree publishes perfectly well, and what is wrong with it is a judgement about readers, which DocuMe
+  does not get to fail a build over. Every line names the exact `README.md` to create, which is the whole
+  intervention — a wiki that published 146 pages with 54 of them in one flat pile on the space root needs
+  seventeen index files, and the reason nobody wrote them is that nothing ever asked for them by name.
+  `--json` carries the findings under `structure` for a repo that would rather gate on them than read them.
 - **Publish names the hand edits it overwrites.** A live page whose version is ahead of the one
   `_meta/state.json` recorded was edited in Confluence, and the body write that follows discards that
   edit. Overwriting is the design, because the repo is the source of truth; doing it without a word was

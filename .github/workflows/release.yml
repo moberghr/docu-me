@@ -190,13 +190,31 @@ jobs:
           \`\`\`
           EOF
 
+          # ADOPT AN EXISTING RELEASE RATHER THAN FAILING ON ONE. `gh release create` exits 1 when the
+          # release is already there, and v0.3.0 is what that costs: a release cut by hand minutes before
+          # the tag push meant this step failed AFTER both packages had reached the feed, which took the
+          # floating-tag move below down with it and left `@v0` advertising the previous release while the
+          # new one was live. Everything above this point is irreversible by the time we get here, so the
+          # one recoverable failure mode has to be recovered from rather than reported.
+          #
+          # It is also what makes a re-run work. A release that fails after the feed push can be re-run on
+          # the same tag: `--skip-duplicate` already makes the push a no-op, and this makes the release.
+          #
           # --generate-notes appends the commit log below the notes above; --verify-tag refuses to
-          # invent a tag if this ever runs somewhere the tag does not exist.
-          gh release create "$TAG" "$PACKAGES"/*.nupkg \
-            --title "$TAG" \
-            --notes-file "$notes" \
-            --generate-notes \
-            --verify-tag
+          # invent a tag if this ever runs somewhere the tag does not exist. Neither has an equivalent on
+          # `gh release edit`, so the adopt path writes the notes it built and leaves the commit log to
+          # whatever the existing release already carries.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::A release for $TAG already existed; uploading this run's packages to it."
+            gh release upload "$TAG" "$PACKAGES"/*.nupkg --clobber
+            gh release edit "$TAG" --title "$TAG" --notes-file "$notes"
+          else
+            gh release create "$TAG" "$PACKAGES"/*.nupkg \
+              --title "$TAG" \
+              --notes-file "$notes" \
+              --generate-notes \
+              --verify-tag
+          fi
 
           cat "$notes" >> "$GITHUB_STEP_SUMMARY"
 

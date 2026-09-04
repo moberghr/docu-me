@@ -429,6 +429,55 @@ public sealed class ReleaseWorkflowTests : IDisposable
         unexpanded.ShouldBeFalse("The asset glob reached gh unexpanded, so the release would carry no packages.");
     }
 
+    /// <summary>
+    /// A release that already exists is adopted, not fallen over. This is what v0.3.0 cost: a release cut
+    /// by hand minutes before the tag push made <c>gh release create</c> exit 1 AFTER both packages had
+    /// reached the feed, which took the floating-tag move down with it and left <c>@v0</c> advertising the
+    /// previous release while the new one was live.
+    /// </summary>
+    /// <remarks>
+    /// Everything above this step is irreversible by the time it runs — a package on the feed cannot be
+    /// unpublished — so the one recoverable failure mode has to be recovered from. It is also what makes a
+    /// re-run work: <c>--skip-duplicate</c> already makes the feed push a no-op on a second run, and this
+    /// makes the release step one.
+    /// </remarks>
+    [Fact]
+    public void A_release_that_already_exists_is_adopted_rather_than_failing_the_run()
+    {
+        var release = RunReleaseNotes("v1.2.3", "1.2.3", releaseExists: true);
+
+        release.Code.ShouldBe(0, release.Diagnostics);
+
+        release.Argv.ShouldContain("upload", "The adopt path no longer uploads this run's packages.");
+        release.Argv.ShouldContain(
+            "--clobber",
+            "Without --clobber an asset of the same name from an earlier attempt fails the upload.");
+        release.Argv.ShouldNotContain(
+            "create",
+            "The step still tries to create a release it has just been told exists.");
+
+        var assets = release.Argv.Where(argument => argument.EndsWith(".nupkg", StringComparison.Ordinal)).ToList();
+        assets.Count.ShouldBe(2, $"Both packages must reach the existing release: {string.Join(' ', release.Argv)}");
+
+        release.Argv.ShouldContain("--notes-file", "The adopt path stopped writing the notes it built.");
+    }
+
+    /// <summary>
+    /// The other branch, asserted so the adopt path cannot quietly become the only one. A first release
+    /// must still be created, with the guards the create path alone can carry.
+    /// </summary>
+    [Fact]
+    public void A_release_that_does_not_exist_yet_is_created_and_not_uploaded_to()
+    {
+        var release = RunReleaseNotes("v1.2.3", "1.2.3");
+
+        release.Code.ShouldBe(0, release.Diagnostics);
+        release.Argv.ShouldContain("create", "A tag with no release must still get one.");
+        release.Argv.ShouldNotContain(
+            "upload",
+            "The step uploaded to a release it had just been told does not exist.");
+    }
+
     // ---- the floating major tag (rule §8.2a) --------------------------------------------------------
 
     /// <summary>
@@ -619,7 +668,11 @@ public sealed class ReleaseWorkflowTests : IDisposable
     /// Runs the shipped release-notes step with a <c>gh</c> on <c>PATH</c> that only records its argument
     /// list, so the notes file and the asset glob are inspectable without cutting a release.
     /// </summary>
-    private ReleaseRun RunReleaseNotes(string tag, string version, string? tree = null)
+    private ReleaseRun RunReleaseNotes(
+        string tag,
+        string version,
+        string? tree = null,
+        bool releaseExists = false)
     {
         var work = tree ?? NewVersionTree();
         var runnerTemp = Path.Combine(work, "runner-temp");
@@ -631,7 +684,7 @@ public sealed class ReleaseWorkflowTests : IDisposable
 
         var argv = Path.Combine(work, "gh-argv.txt");
         var environment = BaseEnvironment(work);
-        environment["PATH"] = $"{StubGh(work, argv)}{Path.PathSeparator}{environment["PATH"]}";
+        environment["PATH"] = $"{StubGh(work, argv, releaseExists)}{Path.PathSeparator}{environment["PATH"]}";
         environment["RUNNER_TEMP"] = runnerTemp;
         environment["TAG"] = tag;
         environment["VERSION"] = version;
@@ -809,12 +862,24 @@ public sealed class ReleaseWorkflowTests : IDisposable
     /// <c>*.nupkg</c> glob's expansion is visible: a release that uploads the literal pattern is a release
     /// with no assets on it.
     /// </summary>
-    private static string StubGh(string root, string argv)
+    /// <summary>
+    /// A <c>gh</c> that records every invocation and answers <c>release view</c> the way the runner would.
+    /// </summary>
+    /// <param name="releaseExists">
+    /// What <c>gh release view</c> reports. The step branches on it, and the two branches are different
+    /// commands, so a stub that always said "found" or always said "missing" could only ever test one.
+    /// </param>
+    private static string StubGh(string root, string argv, bool releaseExists = false)
     {
         var bin = Path.Combine(root, "stub-bin");
+
+        // Appends: the step can now call gh more than once, and overwriting would leave only the last.
         var script = $"""
             #!/bin/bash
-            printf '%s\n' "$@" > '{argv}'
+            printf '%s\n' "$@" >> '{argv}'
+            if [ "$1" = "release" ] && [ "$2" = "view" ]; then
+              exit {(releaseExists ? 0 : 1)}
+            fi
             exit 0
             """;
         var path = CreateFile(bin, "gh", script);
