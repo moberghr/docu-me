@@ -37,6 +37,7 @@ concurrency:
 permissions:
   contents: write # create the GitHub Release (and read the repo)
   packages: write # push to GitHub Packages
+  id-token: write # NuGet trusted publishing: the OIDC token NuGet/login trades for a push key
 
 jobs:
   release:
@@ -47,9 +48,6 @@ jobs:
       # secret. It is no longer the only feed: §12's "nuget.org when opened up" is the second push
       # step below, and the packages themselves needed no change for it.
       FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
-      # Job level, not step level: a step's own `env:` is not dependably in scope for that step's
-      # `if:`, and the nuget.org push is gated on this being non-empty.
-      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
       PACKAGES: ${{ github.workspace }}/artifacts
     steps:
       - uses: actions/checkout@v4
@@ -106,6 +104,17 @@ jobs:
       - name: Pack
         run: dotnet pack DocuMe.slnx --configuration Release --no-build --output "$PACKAGES"
 
+      # nuget.org by trusted publishing, the way Moberg's other packages ship: no stored API key.
+      # NuGet/login trades this run's OIDC token for a push key that lives one hour, and only if the
+      # Moberg account on nuget.org has a trusted publishing policy naming this repository and this
+      # workflow file. BEFORE EITHER PUSH, on purpose: a missing or wrong policy then fails a release
+      # that has published nothing, instead of one already on GitHub Packages and absent from nuget.org.
+      - name: Log in to nuget.org
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
       # --skip-duplicate so a re-run after a failed release step is a no-op here rather than a 409.
       - name: Push to GitHub Packages
         run: dotnet nuget push "$PACKAGES/*.nupkg" --source "$FEED" --api-key "$GH_TOKEN" --skip-duplicate
@@ -113,13 +122,12 @@ jobs:
       # The public feed, now that the repository is public: `dotnet tool install --global DocuMe.Cli`
       # with no feed setup and no PAT is the install story the README documents, and GitHub Packages
       # cannot serve it because that feed authenticates every read. Both pushes run: the GitHub feed
-      # stays the one the scaffolded workflows restore a pinned version from.
-      #
-      # Skipped, not failed, when NUGET_API_KEY is absent, so a release still cuts before the key is
-      # set. `continue-on-error` is deliberately NOT used: with the key present, a rejected push is a
-      # release that must go red rather than one that quietly ships to one feed only.
+      # stays the one the scaffolded workflows restore a pinned version from. `continue-on-error` is
+      # deliberately NOT used: a rejected push is a release that must go red rather than one that
+      # quietly ships to one feed only.
       - name: Push to nuget.org
-        if: env.NUGET_API_KEY != ''
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
           dotnet nuget push "$PACKAGES/*.nupkg" \
             --source https://api.nuget.org/v3/index.json \
