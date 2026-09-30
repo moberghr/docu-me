@@ -8,6 +8,19 @@ One version covers everything: the `DocuMe.Cli` and `DocuMe.Core` packages and t
 ship off a single `vX.Y.Z` tag, so a heading here describes all three. The version at the top of this file
 is the one `Directory.Build.props` declares, whether or not its tag has been pushed yet.
 
+## [0.3.1] - 2026-09-30
+
+The first release on nuget.org. The code is the same as 0.3.0; only the release workflow changed.
+
+### Packaging
+
+- `DocuMe.Cli` and `DocuMe.Core` are published to nuget.org, owned by the Moberg organization, as well as
+  to GitHub Packages. `dotnet tool install --global DocuMe.Cli` now works with no feed setup and no token.
+  The push uses NuGet trusted publishing (`NuGet/login`), so no API key is stored in the repository.
+- A GitHub Release that already exists for the tag is now reused, with this run's packages uploaded to it.
+  Before, the release step failed after the packages were already on the feed, which also left
+  `moberghr/docu-me/actions@v0` pointing at the previous release.
+
 ## [0.3.0] - 2026-08-20
 
 Two reports got honest in this release. Publish now says what it overwrites, stamps what it wrote, and
